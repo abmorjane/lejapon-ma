@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { ChevronDown, Plus, Search, User, Upload, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, FileScan, Plus, Search, User, Upload, Trash2 } from "lucide-react";
 import { fmtDate } from "@/lib/format";
 import { fmtMAD } from "@/lib/format";
 import { Link } from "react-router-dom";
@@ -14,12 +14,18 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { LoyaltyBadge, tierLabel } from "../components/LoyaltyBadge";
 import { QuickActions } from "../components/QuickActions";
+import { PassportScannerDialog, type PassportOcrFields } from "../components/PassportScannerDialog";
+import { checkPassportExpiry } from "@/lib/passport-mrz";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-const empty = { full_name: "", email: "", phone: "", city: "", country: "Maroc", source: "", passport_number: "" };
+const empty = {
+  full_name: "", email: "", phone: "", city: "", country: "Maroc", source: "",
+  passport_number: "", passport_expiry: "", passport_issue_date: "", birthdate: "",
+  nationality: "", sex: "", passport_file_path: "",
+};
 const ClientsImportDialog = lazy(() =>
   import("../components/ClientsImportDialog").then((module) => ({ default: module.ClientsImportDialog }))
 );
@@ -31,6 +37,7 @@ export default function Clients() {
   const [open, setOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [edit, setEdit] = useState<any>(empty);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [selected, setSelected] = useState<any>(null);
   const [notes, setNotes] = useState<any[]>([]);
   const [newNote, setNewNote] = useState("");
@@ -41,7 +48,7 @@ export default function Clients() {
   const load = async () => {
     const { data } = await supabase
       .from("clients")
-      .select("id, full_name, email, phone, city, country, source, passport_number, last_trip_label, loyalty_tier, is_returning, trips_completed, rewards_used, created_at")
+      .select("id, full_name, email, phone, city, country, source, passport_number, passport_expiry, birthdate, nationality, sex, passport_issue_date, passport_file_path, last_trip_label, loyalty_tier, is_returning, trips_completed, rewards_used, created_at")
       .order("created_at", { ascending: false })
       .limit(150);
     setRows((data ?? []).filter((c: any) =>
@@ -71,6 +78,19 @@ export default function Clients() {
     else await supabase.from("clients").insert(edit);
     toast.success("Enregistré");
     setOpen(false); setEdit(empty); load();
+  };
+
+  const applyPassportFields = (fields: PassportOcrFields) => {
+    setEdit((current: any) => ({
+      ...current,
+      full_name: fields.full_name || [fields.first_name, fields.last_name].filter(Boolean).join(" ") || current.full_name,
+      passport_number: fields.passport_no || current.passport_number,
+      passport_expiry: fields.passport_expiry || current.passport_expiry,
+      passport_issue_date: fields.passport_issue_date || current.passport_issue_date,
+      birthdate: fields.date_of_birth || current.birthdate,
+      nationality: fields.nationality || current.nationality,
+      sex: fields.sex || current.sex,
+    }));
   };
 
   const addNote = async () => {
@@ -128,15 +148,43 @@ export default function Clients() {
             <DialogTrigger asChild><Button className="min-h-11"><Plus className="w-4 h-4" /> Nouveau client</Button></DialogTrigger>
             <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-xl">
               <DialogHeader><DialogTitle>{edit.id ? "Modifier" : "Nouveau"} client</DialogTitle></DialogHeader>
+              <div className="rounded-xl border border-border bg-secondary/40 p-3 text-sm text-muted-foreground">
+                Le scan passeport aide à pré-remplir la fiche. L'admin doit toujours vérifier avant validation.
+              </div>
+              {isAdmin && (
+                <Button type="button" variant="outline" className="h-11 w-full justify-center" onClick={() => setScannerOpen(true)}>
+                  <FileScan className="h-4 w-4" /> Scanner passeport
+                </Button>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="sm:col-span-2"><Label>Nom complet</Label><Input value={edit.full_name} onChange={(e) => setEdit({ ...edit, full_name: e.target.value })} /></div>
                 <div><Label>Email</Label><Input type="email" autoComplete="email" inputMode="email" value={edit.email ?? ""} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></div>
                 <div><Label>Téléphone</Label><Input type="tel" autoComplete="tel" inputMode="tel" value={edit.phone ?? ""} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></div>
                 <div><Label>Ville</Label><Input value={edit.city ?? ""} onChange={(e) => setEdit({ ...edit, city: e.target.value })} /></div>
                 <div><Label>Pays</Label><Input value={edit.country ?? ""} onChange={(e) => setEdit({ ...edit, country: e.target.value })} /></div>
+                <div><Label>Nationalité</Label><Input value={edit.nationality ?? ""} onChange={(e) => setEdit({ ...edit, nationality: e.target.value })} /></div>
+                <div><Label>Sexe</Label><Input value={edit.sex ?? ""} onChange={(e) => setEdit({ ...edit, sex: e.target.value })} placeholder="M / F" /></div>
+                <div><Label>Date de naissance</Label><Input type="date" value={edit.birthdate ?? ""} onChange={(e) => setEdit({ ...edit, birthdate: e.target.value })} /></div>
                 <div><Label>N° Passeport</Label><Input autoCapitalize="characters" value={edit.passport_number ?? ""} onChange={(e) => setEdit({ ...edit, passport_number: e.target.value })} /></div>
+                <div><Label>Date d'émission</Label><Input type="date" value={edit.passport_issue_date ?? ""} onChange={(e) => setEdit({ ...edit, passport_issue_date: e.target.value })} /></div>
+                <div><Label>Date d'expiration</Label><Input type="date" value={edit.passport_expiry ?? ""} onChange={(e) => setEdit({ ...edit, passport_expiry: e.target.value })} /></div>
                 <div><Label>Source</Label><Input value={edit.source ?? ""} onChange={(e) => setEdit({ ...edit, source: e.target.value })} placeholder="Instagram, recommandation…" /></div>
               </div>
+              {checkPassportExpiry(edit.passport_expiry).warning && (
+                <div className="flex items-start gap-2 rounded-xl border border-orange-300 bg-orange-50 p-3 text-sm text-orange-900">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p>{checkPassportExpiry(edit.passport_expiry).warning}</p>
+                </div>
+              )}
+              {isAdmin && (
+                <PassportScannerDialog
+                  open={scannerOpen}
+                  onOpenChange={setScannerOpen}
+                  currentPath={edit.passport_file_path}
+                  onStoredPathChange={(path) => setEdit((current: any) => ({ ...current, passport_file_path: path ?? "" }))}
+                  onApply={applyPassportFields}
+                />
+              )}
               <DialogFooter><Button className="w-full sm:w-auto min-h-11" onClick={save} disabled={!edit.full_name}>Enregistrer</Button></DialogFooter>
             </DialogContent>
           </Dialog>
@@ -179,6 +227,11 @@ export default function Clients() {
                   <div><p className="text-xs text-muted-foreground">Ville</p><p className="font-medium">{c.city ?? "—"}</p></div>
                   <div><p className="text-xs text-muted-foreground">Passeport</p><p className="font-medium">{c.passport_number ?? "—"}</p></div>
                   <div><p className="text-xs text-muted-foreground">Inscrit</p><p className="font-medium">{fmtDate(c.created_at)}</p></div>
+                  {checkPassportExpiry(c.passport_expiry).warning && (
+                    <div className="col-span-2 rounded-xl border border-orange-300 bg-orange-50 p-3 text-xs text-orange-900">
+                      {checkPassportExpiry(c.passport_expiry).warning}
+                    </div>
+                  )}
                   <Button variant="secondary" className="col-span-2 min-h-11" onClick={(e) => { e.stopPropagation(); openClient(c); }}>
                     Voir la fiche
                   </Button>
@@ -247,6 +300,12 @@ export default function Clients() {
               </div>
               <p className="text-xs text-muted-foreground mb-3">{selected.email}</p>
               <QuickActions phone={selected.phone} email={selected.email} passport={selected.passport_number} className="mb-4" />
+              {checkPassportExpiry(selected.passport_expiry).warning && (
+                <div className="mb-4 flex items-start gap-2 rounded-xl border border-orange-300 bg-orange-50 p-3 text-xs text-orange-900">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p>{checkPassportExpiry(selected.passport_expiry).warning}</p>
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-2 mb-4 text-center">
                 <div className="bg-secondary rounded-lg p-2">
                   <p className="text-[10px] uppercase text-muted-foreground">Voyages</p>

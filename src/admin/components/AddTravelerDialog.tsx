@@ -7,6 +7,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { z } from "zod";
+import { AlertTriangle, FileScan } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { PassportScannerDialog, type PassportOcrFields } from "./PassportScannerDialog";
+import { checkPassportExpiry } from "@/lib/passport-mrz";
 
 type Props = {
   open: boolean;
@@ -34,14 +38,30 @@ const schema = z.object({
 });
 
 export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSaved }: Props) {
+  const { isAdmin } = useAuth();
   const [form, setForm] = useState<any>({
     first_name: "", last_name: "", sex: "", date_of_birth: "",
     nationality: "", passport_no: "", passport_issue_date: "", passport_expiry: "",
-    email: "", phone: "", relation: "self",
+    passport_file_path: "", email: "", phone: "", relation: "self",
   });
   const [busy, setBusy] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   const setF = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+
+  const applyPassportFields = (fields: PassportOcrFields) => {
+    setForm((current: any) => ({
+      ...current,
+      first_name: fields.first_name || current.first_name,
+      last_name: fields.last_name || current.last_name,
+      sex: fields.sex || current.sex,
+      date_of_birth: fields.date_of_birth || current.date_of_birth,
+      nationality: fields.nationality || current.nationality,
+      passport_no: fields.passport_no || current.passport_no,
+      passport_issue_date: fields.passport_issue_date || current.passport_issue_date,
+      passport_expiry: fields.passport_expiry || current.passport_expiry,
+    }));
+  };
 
   const submit = async () => {
     const parsed = schema.safeParse(form);
@@ -89,6 +109,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
         passport_no: form.passport_no || null,
         passport_issue_date: form.passport_issue_date || null,
         passport_expiry: form.passport_expiry || null,
+        passport_file_path: form.passport_file_path || null,
         email: form.email || null,
         phone: form.phone || null,
         relation: form.relation,
@@ -100,7 +121,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
       setForm({
         first_name: "", last_name: "", sex: "", date_of_birth: "",
         nationality: "", passport_no: "", passport_issue_date: "", passport_expiry: "",
-        email: "", phone: "", relation: "self",
+        passport_file_path: "", email: "", phone: "", relation: "self",
       });
       onOpenChange(false);
       onSaved?.();
@@ -115,6 +136,23 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Ajouter un voyageur</DialogTitle></DialogHeader>
+        {isAdmin && (
+          <>
+            <div className="rounded-xl border border-border bg-secondary/40 p-3 text-sm text-muted-foreground">
+              Le scan passeport aide à pré-remplir la fiche. Vérifiez toujours les informations avant validation.
+            </div>
+            <Button type="button" variant="outline" className="h-11 w-full justify-center" onClick={() => setScannerOpen(true)}>
+              <FileScan className="h-4 w-4" /> Scanner passeport
+            </Button>
+            <PassportScannerDialog
+              open={scannerOpen}
+              onOpenChange={setScannerOpen}
+              currentPath={form.passport_file_path}
+              onStoredPathChange={(path) => setF("passport_file_path", path ?? "")}
+              onApply={applyPassportFields}
+            />
+          </>
+        )}
         <div className="grid grid-cols-2 gap-3 py-2">
           <div><Label className="text-xs">Prénom *</Label><Input value={form.first_name} onChange={(e) => setF("first_name", e.target.value)} /></div>
           <div><Label className="text-xs">Nom *</Label><Input value={form.last_name} onChange={(e) => setF("last_name", e.target.value)} /></div>
@@ -143,6 +181,12 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
           <div></div>
           <div><Label className="text-xs">Date d'émission</Label><Input type="date" value={form.passport_issue_date} onChange={(e) => setF("passport_issue_date", e.target.value)} /></div>
           <div><Label className="text-xs">Date d'expiration</Label><Input type="date" value={form.passport_expiry} onChange={(e) => setF("passport_expiry", e.target.value)} /></div>
+          {checkPassportExpiry(form.passport_expiry).warning && (
+            <div className="col-span-2 flex items-start gap-2 rounded-xl border border-orange-300 bg-orange-50 p-3 text-sm text-orange-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{checkPassportExpiry(form.passport_expiry).warning}</p>
+            </div>
+          )}
           <div className="col-span-2 border-t border-border pt-3 mt-1">
             <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Contact (optionnel)</p>
           </div>
