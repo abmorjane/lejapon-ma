@@ -1,0 +1,1 @@
+DELETE FROM public.route_slugs WHERE route_key='journal';

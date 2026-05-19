@@ -1,0 +1,68 @@
+export default {
+  nav: { home: "Home", trips: "Trips", price: "Pricing", programme: "Programme", blog: "Blog", visa: "Japan Visa", experiences: "Experiences", about: "About", journal: "Journal", contact: "Contact", booking: "Book now" },
+  cta: { explore: "Discover our trips", book: "Book my trip", quote: "Request a quote", more: "Learn more", continue: "Continue", back: "Back", confirm: "Confirm booking" },
+  hero: {
+    eyebrow: "Immersion trips to Japan · From Casablanca",
+    title: "Japan, like a",
+    titleAccent: "waking dream.",
+    subtitle: "Two departures a year, hand-crafted itineraries, and a Moroccan-Japanese team who guides you from take-off to the last sunset over Kyoto.",
+    stats: { trips: "Trips", clients: "Travellers", departures: "Departures / year", days: "Days of immersion" },
+  },
+  why: {
+    eyebrow: "Why lejapon.ma",
+    title: "One agency, two cultures, one obsession.",
+    body: "We don't sell a tour. We share a Japan lived from within, shaped by years of friendships, discoveries and local partnerships.",
+    items: [
+      { t: "Bilingual team", d: "Moroccans and Japanese united to serve you, from Casablanca to Tokyo." },
+      { t: "Complete programme", d: "A dense, refined itinerary for those who want to live Japan, not skim it." },
+      { t: "Unique experiences", d: "Tea ceremony, geisha, teamLab, Disney, Universal — you choose your emotions." },
+      { t: "All-inclusive", d: "Flights, hotels, JR transport, guide, meals. Just enjoy." },
+    ],
+  },
+  steps: {
+    eyebrow: "How it works",
+    title: "Book in three simple gestures.",
+    items: [
+      { n: "01", t: "Choose your trip", d: "Pick your dates, your formula and configure your trip in minutes." },
+      { n: "02", t: "Confirm with deposit", d: "A 25,000 MAD per-person deposit secures your seat and starts your visa preparation." },
+      { n: "03", t: "Pack your bags", d: "Visa received, balance settled, and we meet at the airport." },
+    ],
+  },
+  experiences: {
+    eyebrow: "Extra plans",
+    title: "For those who want a little more Japan.",
+    body: "A curated selection of experiences to add to your trip.",
+    items: [
+      { t: "Tokyo Disneyland", p: "800 MAD", d: "A day in the magic kingdom." },
+      { t: "Teamlab Planets", p: "350 MAD", d: "Immersive digital art in Tokyo." },
+      { t: "Universal Studios Japan", p: "800 MAD", d: "A day in Osaka with Mario and Harry Potter." },
+      { t: "Geisha Make-Up", p: "1500 MAD", d: "Dressing, make-up and 8 professional photos." },
+      { t: "Geisha evening", p: "1700 MAD", d: "Private dinner show with a real geisha." },
+      { t: "Tea ceremony", p: "500 MAD", d: "The thousand-year ritual in a traditional tea house." },
+      { t: "Unlimited data SIM card", p: "700 MAD", d: "Stay connected throughout your stay in Japan." },
+    ],
+  },
+  testimonials: { eyebrow: "They trusted us", title: "Memories engraved for life." },
+  cta_band: { title: "Ready for Japan?", subtitle: "Configure your trip, get an instant price, and reserve your seat.", button: "Configure my trip" },
+  footer: { tagline: "Immersion trips to Japan, from Morocco.", rights: "All rights reserved." },
+  booking: {
+    title: "Configure your trip",
+    subtitle: "Real-time price — no commitment.",
+    step: "Step", of: "of",
+    s1: { title: "Which trip?", trips: {
+      spring: { name: "Sakura · Spring", dates: "18 April → 4 May 2026", desc: "Cherry blossoms, Tokyo, Kyoto, Osaka + South Korea", price: 54200 },
+      summer: { name: "Matsuri · Summer", dates: "July 2026", desc: "Summer festivals, Mt. Fuji, Hakone and southern islands", price: 49800 },
+      autumn: { name: "Momiji · Autumn", dates: "November 2026", desc: "Red maples, Kyoto temples and onsen", price: 51500 },
+    }},
+    s2: { title: "Which formula?", formulas: {
+      essential: { name: "Essential", desc: "Flights, hotels, transport, guide", mult: 0.85 },
+      half: { name: "Half-board", desc: "Breakfasts and dinners included", mult: 1 },
+      full: { name: "Full-board", desc: "All meals included, premium experience", mult: 1.15 },
+    }},
+    s3: { title: "How many?", adults: "Adults", children: "Children (3-11)", room: "Room", single: "Single", double: "Double", triple: "Triple" },
+    s4: { title: "Add experiences", optional: "Optional" },
+    s5: { title: "Your details", name: "Full name", email: "Email", phone: "Phone", city: "City", notes: "Special requests", consent: "I'd like to be contacted to finalise my booking" },
+    summary: { title: "Your trip", trip: "Trip", formula: "Formula", travelers: "Travellers", extras: "Extras", total: "Estimated total", perPerson: "per person", deposit: "Deposit (25,000 MAD / pers.)" },
+    success: { title: "Request received.", body: "Our team will contact you within 24 hours to confirm your seat and prepare your trip.", reset: "New simulation" },
+  },
+};

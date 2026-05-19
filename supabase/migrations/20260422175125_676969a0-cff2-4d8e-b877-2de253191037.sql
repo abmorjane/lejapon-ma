@@ -1,0 +1,1 @@
+DROP POLICY IF EXISTS "anyone insert events" ON public.email_events;

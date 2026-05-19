@@ -1,0 +1,1 @@
+UPDATE public.route_slugs SET slug = 'formulaire-visa', default_slug = 'formulaire-visa' WHERE route_key = 'visa';

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://lejapon.ma/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://lejapon.ma/voyages</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://lejapon.ma/reserver</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://lejapon.ma/experiences</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://lejapon.ma/a-propos</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://lejapon.ma/journal</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://lejapon.ma/contact</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+</urlset>

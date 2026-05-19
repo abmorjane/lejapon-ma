@@ -1,0 +1,73 @@
+export default {
+  nav: { home: "Accueil", trips: "Voyages", price: "Prix", programme: "Programme", blog: "Blog", visa: "Visa Japon", experiences: "Expériences", about: "À propos", journal: "Journal", contact: "Contact", booking: "Réserver" },
+  cta: { explore: "Découvrir nos voyages", book: "Réserver mon voyage", quote: "Demander un devis", more: "En savoir plus", continue: "Continuer", back: "Retour", confirm: "Confirmer la réservation" },
+  hero: {
+    eyebrow: "Voyages d'immersion au Japon · Depuis Casablanca",
+    title: "Le Japon, comme un",
+    titleAccent: "rêve éveillé.",
+    subtitle: "Deux départs par an, des programmes pensés à la main, et une équipe maroco-japonaise qui vous accompagne du décollage au dernier coucher de soleil sur Kyoto.",
+    stats: { trips: "Voyages", clients: "Voyageurs", departures: "Départs / an", days: "Jours d'immersion" },
+  },
+  why: {
+    eyebrow: "Pourquoi lejapon.ma",
+    title: "Une agence, deux cultures, une seule obsession.",
+    body: "Nous ne vendons pas un circuit. Nous transmettons un Japon vécu de l'intérieur, façonné par des années d'amitiés, de découvertes et de partenariats locaux.",
+    items: [
+      { t: "Équipe bilingue", d: "Marocains et japonais réunis pour vous servir, de Casablanca à Tokyo." },
+      { t: "Programme complet", d: "Un itinéraire dense, raffiné, conçu pour ceux qui veulent vivre le Japon, pas le survoler." },
+      { t: "Expérience inédite", d: "Cérémonie du thé, geisha, teamLab, Disney, Universal — vous choisissez vos émotions." },
+      { t: "Tout est inclus", d: "Vols, hôtels, transports JR, guide, repas. Vous ne pensez qu'à profiter." },
+    ],
+  },
+  steps: {
+    eyebrow: "Comment ça marche",
+    title: "Réservez en trois gestes simples.",
+    items: [
+      { n: "01", t: "Choisissez votre voyage", d: "Sélectionnez vos dates, votre formule et composez votre voyage en quelques minutes." },
+      { n: "02", t: "Confirmez par acompte", d: "Un acompte de 25 000 MAD par personne garantit votre place et lance la préparation de votre visa." },
+      { n: "03", t: "Préparez vos valises", d: "Réception du visa, solde du voyage, et nous nous retrouvons à l'aéroport." },
+    ],
+  },
+  experiences: {
+    eyebrow: "Plans extra",
+    title: "Pour ceux qui veulent un peu plus de Japon.",
+    body: "Une sélection d'expériences à ajouter à votre voyage.",
+    items: [
+      { t: "Tokyo Disneyland", p: "800 MAD", d: "Une journée dans le royaume magique." },
+      { t: "Teamlab Planets", p: "350 MAD", d: "L'art numérique immersif à Tokyo." },
+      { t: "Universal Studios Japan", p: "800 MAD", d: "Une journée à Osaka entre Mario et Harry Potter." },
+      { t: "Geisha Make-Up", p: "1500 MAD", d: "Habillage, maquillage et 8 photos professionnelles." },
+      { t: "Soirée Geisha", p: "1700 MAD", d: "Dîner spectacle privé avec une véritable geisha." },
+      { t: "Cérémonie du thé", p: "500 MAD", d: "Le rituel millénaire dans une maison de thé traditionnelle." },
+      { t: "Carte SIM data illimitée", p: "700 MAD", d: "Restez connecté tout au long de votre séjour au Japon." },
+    ],
+  },
+  testimonials: { eyebrow: "Ils nous ont fait confiance", title: "Des souvenirs gravés à vie." },
+  cta_band: {
+    title: "Prêt pour le Japon ?",
+    subtitle: "Composez votre voyage, recevez votre prix instantanément, et réservez votre place.",
+    button: "Composer mon voyage",
+  },
+  footer: { tagline: "Nous sommes une agence de voyage spécialisée dans la destination Japon, votre satisfaction est notre raison d'être.", rights: "Tous droits réservés." },
+  booking: {
+    title: "Composez votre voyage",
+    subtitle: "Prix en temps réel — sans engagement.",
+    step: "Étape",
+    of: "sur",
+    s1: { title: "Quel voyage ?", trips: {
+      spring: { name: "Sakura · Printemps", dates: "18 avril → 4 mai 2026", desc: "Cerisiers en fleurs, Tokyo, Kyoto, Osaka + Corée du Sud", price: 54200 },
+      summer: { name: "Matsuri · Été", dates: "Juillet 2026", desc: "Festivals d'été, Mont Fuji, Hakone et îles du sud", price: 49800 },
+      autumn: { name: "Momiji · Automne", dates: "Novembre 2026", desc: "Érables rouges, temples de Kyoto et onsen", price: 51500 },
+    }},
+    s2: { title: "Quelle formule ?", formulas: {
+      essential: { name: "Essentiel", desc: "Vols, hôtels, transports, guide", mult: 0.85 },
+      half: { name: "Demi-pension", desc: "Petit-déjeuners et dîners inclus", mult: 1 },
+      full: { name: "Pension complète", desc: "Tous les repas inclus, expérience premium", mult: 1.15 },
+    }},
+    s3: { title: "Combien êtes-vous ?", adults: "Adultes", children: "Enfants (3-11 ans)", room: "Chambre", single: "Single", double: "Double", triple: "Triple" },
+    s4: { title: "Ajoutez des expériences", optional: "Optionnel" },
+    s5: { title: "Vos coordonnées", name: "Nom complet", email: "E-mail", phone: "Téléphone", city: "Ville", notes: "Demandes particulières", consent: "Je souhaite être contacté(e) pour finaliser ma réservation" },
+    summary: { title: "Votre voyage", trip: "Voyage", formula: "Formule", travelers: "Voyageurs", extras: "Extras", total: "Total estimé", perPerson: "par personne", deposit: "Acompte (25 000 MAD / pers.)" },
+    success: { title: "Demande reçue.", body: "Notre équipe vous recontacte sous 24 heures pour confirmer votre place et préparer votre voyage.", reset: "Nouvelle simulation" },
+  },
+};
