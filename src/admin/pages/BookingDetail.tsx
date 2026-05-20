@@ -99,10 +99,17 @@ export default function BookingDetail() {
       const newPaid = Number(b.paid_amount_mad || 0) + Number(newPay.amount_mad);
       await supabase.from("bookings").update({ paid_amount_mad: newPaid }).eq("id", b.id);
       if (insertedPayment?.id) {
+        const notificationPayload = { type: "payment", payload: { payment_id: insertedPayment.id } };
+        if (import.meta.env.DEV) {
+          console.info("[admin-email] invoke", { function: "send-admin-notification", payload: notificationPayload });
+        }
         void supabase.functions.invoke("send-admin-notification", {
-          body: { event_type: "payment_recorded", payment_id: insertedPayment.id },
-        }).then(({ error }) => {
-          if (error) console.warn("admin payment notification failed", error);
+          body: notificationPayload,
+        }).then(({ data, error }) => {
+          if (import.meta.env.DEV) {
+            console.info("[admin-email] invoke response", { function: "send-admin-notification", data, error });
+          }
+          if (error || data?.ok === false) console.warn("admin payment notification failed", data ?? error);
         });
       }
     }

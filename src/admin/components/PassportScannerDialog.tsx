@@ -18,6 +18,9 @@ export type PassportOcrFields = {
   passport_issue_date?: string;
   passport_expiry?: string;
   mrz?: string;
+  mrz_detected?: boolean;
+  mrz_raw?: string;
+  raw_text?: string;
   confidence?: number;
 };
 
@@ -29,9 +32,88 @@ type Props = {
   onApply: (fields: PassportOcrFields) => void;
 };
 
-const BUCKET = "passport-scans";
+const ACCEPTED_TYPES = ["image/jpeg", "image/jpg", "image/png", "application/pdf"];
+const MISSING_BUCKET_ERROR = "Bucket passports missing";
+const MISSING_STORAGE_POLICY_ERROR = "Storage policy missing";
+const OCR_FAILED_ERROR = "Passeport uploadé avec succès, mais lecture automatique impossible. Merci de saisir les données manuellement.";
+const PDF_OCR_UNSUPPORTED_ERROR = "PDF uploadé, mais la lecture automatique nécessite une image JPG ou PNG.";
 
 const display = (value?: string | number) => value || "—";
+
+function getUploadContentType(file: File, ext: string) {
+  if (file.type === "image/jpg") return "image/jpeg";
+  if (file.type) return file.type;
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "png") return "image/png";
+  return "image/jpeg";
+}
+
+function storageErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String((error as any)?.message ?? error ?? "");
+  if (/row-level security|violates row-level security|not authorized|unauthorized|permission/i.test(message)) {
+    return MISSING_STORAGE_POLICY_ERROR;
+  }
+  if (/bucket not found|not found/i.test(message) && /bucket|storage/i.test(message)) {
+    return MISSING_BUCKET_ERROR;
+  }
+  return message || "Lecture automatique impossible";
+}
+
+function passportOcrErrorMessage(code?: string) {
+  switch (code) {
+    case "not_staff":
+      return "Votre compte n’a pas les droits nécessaires pour utiliser la lecture automatique.";
+    case "unsupported_file_type":
+      return "Le format PDF n’est pas encore supporté. Merci d’utiliser une image JPG ou PNG.";
+    case "ai_rate_limited":
+      return "Le service OCR est temporairement limité. Réessayez dans quelques minutes.";
+    case "ai_credits_exhausted":
+      return "Le crédit OCR est épuisé. Merci de vérifier la configuration Lovable AI.";
+    case "signed_url_failed":
+    case "download_failed":
+      return "Le fichier a été uploadé mais n’a pas pu être lu depuis le stockage.";
+    case "ai_invalid_json":
+    case "ai_request_failed":
+      return "La lecture automatique a échoué. Merci de saisir les données manuellement.";
+    case "missing_path":
+      return "La lecture automatique n’a pas reçu le chemin du fichier uploadé.";
+    case "missing_auth":
+    case "invalid_token":
+      return "Votre session admin a expiré. Merci de vous reconnecter avant de relancer la lecture automatique.";
+    default:
+      return OCR_FAILED_ERROR;
+  }
+}
+
+function pickDetectedFields(fields: any): PassportOcrFields {
+  return {
+    first_name: fields?.first_name,
+    last_name: fields?.last_name,
+    sex: fields?.sex,
+    date_of_birth: fields?.date_of_birth,
+    nationality: fields?.nationality,
+    passport_no: fields?.passport_no,
+    passport_issue_date: fields?.passport_issue_date,
+    passport_expiry: fields?.passport_expiry,
+    mrz_detected: fields?.mrz_detected,
+    mrz_raw: fields?.mrz_raw,
+    raw_text: fields?.raw_text,
+  };
+}
+
+async function directStorageUpload(file: File, ext: string, contentType: string) {
+  const id = crypto.randomUUID();
+  const path = `original/${id}.${ext}`;
+  console.info("[passport-ocr] direct storage upload started", { bucket: "passports", path, type: contentType, size: file.size });
+  const { error: uploadError } = await supabase.storage.from("passports").upload(path, file, {
+    contentType,
+    upsert: false,
+  });
+  if (uploadError) throw new Error(storageErrorMessage(uploadError));
+
+  console.info("[passport-ocr] direct storage upload succeeded", { bucket: "passports", path });
+  return { path };
+}
 
 export function PassportScannerDialog({ open, onOpenChange, currentPath, onStoredPathChange, onApply }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -57,28 +139,64 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
 
     try {
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-      const path = `${crypto.randomUUID()}.${ext}`;
-      const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file, {
-        contentType: file.type || undefined,
-        upsert: false,
-      });
-      if (uploadError) throw uploadError;
+      const contentType = getUploadContentType(file, ext);
+      if (!ACCEPTED_TYPES.includes(contentType)) {
+        throw new Error("Format non supporté. Utilisez JPG, PNG ou PDF.");
+      }
+      const { path } = await directStorageUpload(file, ext, contentType);
       setStoredPath(path);
       onStoredPathChange?.(path);
 
-      const { data, error: invokeError } = await supabase.functions.invoke("passport-ocr", {
-        body: { storage_path: path },
-      });
-      if (invokeError) throw invokeError;
-      if (!data?.ok) {
-        setError(data?.error || "Lecture automatique impossible. Merci de renseigner les informations manuellement.");
+      if (contentType === "application/pdf") {
+        console.info("[passport-ocr] PDF uploaded; OCR skipped because image input is required", { bucket: "passports", path });
+        setError(PDF_OCR_UNSUPPORTED_ERROR);
+        toast.info(PDF_OCR_UNSUPPORTED_ERROR);
         return;
       }
-      setFields(data.fields ?? {});
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        const message = passportOcrErrorMessage("missing_auth");
+        setError(message);
+        toast.error(message);
+        return;
+      }
+
+      const { data, error: invokeError } = await supabase.functions.invoke("passport-ocr", {
+        body: { path, bucket: "passports" },
+      });
+      if (invokeError) {
+        console.error("[passport-ocr] OCR function failed", invokeError);
+        const message = passportOcrErrorMessage("ai_request_failed");
+        setError(message);
+        toast.error(message);
+        return;
+      }
+      if (!data?.ok) {
+        const message = passportOcrErrorMessage(data?.error);
+        console.warn("[passport-ocr] OCR returned an error", {
+          error: data?.error,
+          detail: data?.detail,
+          bucket: "passports",
+          storagePath: path,
+        });
+        setError(message);
+        toast.error(message);
+        return;
+      }
+      const detectedFields = pickDetectedFields(data.fields ?? {});
+      console.info("[passport-ocr] OCR parsed fields", {
+        fields: detectedFields,
+        bucket: data.bucket,
+        path: data.path,
+      });
+      setFields(detectedFields);
       toast.success("Informations détectées. Veuillez vérifier avant validation.");
     } catch (e: any) {
-      setError("Lecture automatique impossible. Merci de renseigner les informations manuellement.");
-      toast.error(e.message ?? "Lecture automatique impossible");
+      console.error("[passport-ocr] pipeline failed", e);
+      const message = storageErrorMessage(e);
+      setError(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -87,9 +205,9 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
   const deleteScan = async () => {
     if (!storedPath) return;
     setBusy(true);
-    const { error: removeError } = await supabase.storage.from(BUCKET).remove([storedPath]);
+    const { error: removeError } = await supabase.storage.from("passports").remove([storedPath]);
     setBusy(false);
-    if (removeError) return toast.error(removeError.message);
+    if (removeError) return toast.error(storageErrorMessage(removeError));
     setStoredPath(null);
     setFields(null);
     setError(null);
@@ -194,6 +312,26 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
                 <div><dt className="text-xs text-muted-foreground">Date d'émission</dt><dd className="font-medium">{display(fields.passport_issue_date)}</dd></div>
                 <div><dt className="text-xs text-muted-foreground">Date d'expiration</dt><dd className="font-medium">{display(fields.passport_expiry)}</dd></div>
               </dl>
+
+              {(fields.mrz_raw || fields.raw_text) && (
+                <details className="mt-4 rounded-xl border border-border bg-secondary/30 p-3 text-xs">
+                  <summary className="cursor-pointer font-medium">Détails OCR admin</summary>
+                  <div className="mt-3 space-y-3">
+                    {fields.mrz_raw && (
+                      <div>
+                        <p className="mb-1 font-medium text-muted-foreground">MRZ brute</p>
+                        <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded-lg bg-background p-2 font-mono">{fields.mrz_raw}</pre>
+                      </div>
+                    )}
+                    {fields.raw_text && (
+                      <div>
+                        <p className="mb-1 font-medium text-muted-foreground">Texte OCR brut</p>
+                        <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded-lg bg-background p-2 font-mono">{fields.raw_text}</pre>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
             </section>
           )}
         </div>

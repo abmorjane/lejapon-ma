@@ -49,7 +49,7 @@ const Booking = () => {
   const [info, setInfo] = useState({ name: "", email: "", phone: "", city: "", notes: "" });
   const [done, setDone] = useState(false);
   const [returning, setReturning] = useState<{ trips: number; tier: string; reward?: string } | null>(null);
-  const { ready: captchaReady, executeRecaptcha, verify: verifyRecaptcha } = useRecaptcha();
+  const { ready: captchaReady, executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha();
   const [submitting, setSubmitting] = useState(false);
 
   // Load trips from admin (open or completed) — runs once
@@ -170,6 +170,15 @@ const Booking = () => {
       // Auto-add to CRM via SECURITY DEFINER RPC (anti-doublon email/phone)
       let clientId: string | null = null;
       try {
+        console.log("CLIENT INSERT PAYLOAD", {
+          source: "booking_form_rpc:upsert_client_from_booking",
+          payload: {
+            full_name: info.name || "",
+            email: info.email || "",
+            phone: info.phone || "",
+            city: info.city || "",
+          },
+        });
         const { data: upsertedId } = await supabase.rpc("upsert_client_from_booking" as any, {
           _name: info.name || "",
           _email: info.email || "",
@@ -211,10 +220,23 @@ const Booking = () => {
           unit_price_mad: e.price_mad,
         })));
       }
+      const { data: fullBookingData, error: fullBookingError } = await supabase
+        .from("bookings")
+        .select("*, clients(*), trips(*), booking_extras(*)")
+        .eq("id", newBookingId)
+        .maybeSingle();
+      console.log("FULL BOOKING EMAIL DATA", { fullBookingData, fullBookingError });
+      const notificationPayload = { type: "booking", payload: { booking_id: newBookingId, fullBookingData } };
+      if (import.meta.env.DEV) {
+        console.info("[admin-email] invoke", { function: "send-admin-notification", payload: notificationPayload });
+      }
       void supabase.functions.invoke("send-admin-notification", {
-        body: { event_type: "booking_created", booking_id: newBookingId },
-      }).then(({ error }) => {
-        if (error) console.warn("admin booking notification failed", error);
+        body: notificationPayload,
+      }).then(({ data, error }) => {
+        if (import.meta.env.DEV) {
+          console.info("[admin-email] invoke response", { function: "send-admin-notification", data, error });
+        }
+        if (error || data?.ok === false) console.warn("admin booking notification failed", data ?? error);
       });
       setDone(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -489,13 +511,15 @@ const Booking = () => {
               </button>
             )}
           </div>
-          <p className="text-xs text-foreground/50 mt-4">
-            Protégé par reCAPTCHA — la{" "}
-            <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">politique</a>
-            {" "}et les{" "}
-            <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">conditions</a>
-            {" "}de Google s'appliquent.
-          </p>
+          {recaptchaEnabled && (
+            <p className="text-xs text-foreground/50 mt-4">
+              Protégé par reCAPTCHA — la{" "}
+              <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">politique</a>
+              {" "}et les{" "}
+              <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">conditions</a>
+              {" "}de Google s'appliquent.
+            </p>
+          )}
         </div>
 
         {/* SUMMARY */}

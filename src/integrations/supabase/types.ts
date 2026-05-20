@@ -515,9 +515,11 @@ export type Database = {
       clients: {
         Row: {
           birthdate: string | null
+          birth_date: string | null
           city: string | null
           country: string | null
           created_at: string
+          date_of_birth: string | null
           email: string | null
           email_subscribed: boolean
           emergency_contact: string | null
@@ -533,10 +535,18 @@ export type Database = {
           marketing_bounce_reason: string | null
           marketing_status: string
           marketing_unsubscribed_at: string | null
+          metadata: Json
+          nationality: string | null
+          notes: string | null
+          address: string | null
           passport_expiry: string | null
+          passport_file_path: string | null
+          passport_issue_date: string | null
+          passport_no: string | null
           passport_number: string | null
           phone: string | null
           rewards_used: number
+          sex: string | null
           source: string | null
           tags: string[] | null
           trips_completed: number
@@ -545,9 +555,11 @@ export type Database = {
         }
         Insert: {
           birthdate?: string | null
+          birth_date?: string | null
           city?: string | null
           country?: string | null
           created_at?: string
+          date_of_birth?: string | null
           email?: string | null
           email_subscribed?: boolean
           emergency_contact?: string | null
@@ -563,10 +575,18 @@ export type Database = {
           marketing_bounce_reason?: string | null
           marketing_status?: string
           marketing_unsubscribed_at?: string | null
+          metadata?: Json
+          nationality?: string | null
+          notes?: string | null
+          address?: string | null
           passport_expiry?: string | null
+          passport_file_path?: string | null
+          passport_issue_date?: string | null
+          passport_no?: string | null
           passport_number?: string | null
           phone?: string | null
           rewards_used?: number
+          sex?: string | null
           source?: string | null
           tags?: string[] | null
           trips_completed?: number
@@ -575,9 +595,11 @@ export type Database = {
         }
         Update: {
           birthdate?: string | null
+          birth_date?: string | null
           city?: string | null
           country?: string | null
           created_at?: string
+          date_of_birth?: string | null
           email?: string | null
           email_subscribed?: boolean
           emergency_contact?: string | null
@@ -593,10 +615,18 @@ export type Database = {
           marketing_bounce_reason?: string | null
           marketing_status?: string
           marketing_unsubscribed_at?: string | null
+          metadata?: Json
+          nationality?: string | null
+          notes?: string | null
+          address?: string | null
           passport_expiry?: string | null
+          passport_file_path?: string | null
+          passport_issue_date?: string | null
+          passport_no?: string | null
           passport_number?: string | null
           phone?: string | null
           rewards_used?: number
+          sex?: string | null
           source?: string | null
           tags?: string[] | null
           trips_completed?: number

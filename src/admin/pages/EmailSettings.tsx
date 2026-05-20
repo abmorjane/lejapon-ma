@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Save, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { Loader2, Save, Eye, EyeOff, ShieldCheck, Send } from "lucide-react";
 
 type EmailSettings = {
   id: string;
@@ -23,10 +23,13 @@ type EmailSettings = {
   is_active: boolean;
 };
 
+const isDev = import.meta.env.DEV;
+
 const EmailSettingsPage = () => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [settings, setSettings] = useState<EmailSettings | null>(null);
 
@@ -50,29 +53,128 @@ const EmailSettingsPage = () => {
   const update = <K extends keyof EmailSettings>(k: K, v: EmailSettings[K]) =>
     setSettings((s) => (s ? { ...s, [k]: v } : s));
 
-  const onSave = async () => {
-    if (!settings) return;
+  const normalizedSettings = () => {
+    if (!settings) return null;
+    const normalizeEmail = (value: string | null | undefined) => {
+      const email = (value ?? "").trim().toLowerCase();
+      return email === "info@japon.ma" ? "info@lejapon.ma" : email;
+    };
+    return {
+      smtp_host: settings.smtp_host.trim().replace(/^smtp:\/\//i, "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase(),
+      smtp_port: Number(settings.smtp_port) || 465,
+      smtp_secure: settings.smtp_secure,
+      smtp_username: normalizeEmail(settings.smtp_username),
+      smtp_password: settings.smtp_password,
+      from_email: normalizeEmail(settings.from_email || "info@lejapon.ma"),
+      from_name: settings.from_name.trim() || "LeJapon.ma / Moroccan Express",
+      reply_to: normalizeEmail(settings.reply_to) || null,
+      is_active: settings.is_active,
+    };
+  };
+
+  const saveSettings = async () => {
+    if (!settings) return false;
+    const normalized = normalizedSettings();
+    if (!normalized?.smtp_host) {
+      toast({ title: "Hôte SMTP manquant", description: "Veuillez renseigner smtp_host avant d'enregistrer.", variant: "destructive" });
+      return false;
+    }
     setSaving(true);
     const { error } = await supabase
       .from("email_settings")
-      .update({
-        smtp_host: settings.smtp_host.trim(),
-        smtp_port: Number(settings.smtp_port) || 465,
-        smtp_secure: settings.smtp_secure,
-        smtp_username: settings.smtp_username.trim(),
-        smtp_password: settings.smtp_password,
-        from_email: settings.from_email.trim(),
-        from_name: settings.from_name.trim(),
-        reply_to: settings.reply_to?.trim() || null,
-        is_active: settings.is_active,
-      })
+      .update(normalized)
       .eq("id", settings.id);
     setSaving(false);
     if (error) {
       toast({ title: "Échec de l'enregistrement", description: error.message, variant: "destructive" });
+      return false;
     } else {
+      setSettings((current) => current ? { ...current, ...normalized } : current);
       toast({ title: "Paramètres enregistrés", description: "La configuration SMTP a été mise à jour." });
+      return true;
     }
+  };
+
+  const onSave = async () => {
+    await saveSettings();
+  };
+
+  const readFunctionError = async (error: any) => {
+    const context = error?.context;
+    if (context && typeof context.json === "function") {
+      try {
+        const body = await context.json();
+        return {
+          status: context.status,
+          statusText: context.statusText,
+          body,
+        };
+      } catch {
+        return {
+          status: context.status,
+          statusText: context.statusText,
+          body: null,
+        };
+      }
+    }
+    return null;
+  };
+
+  const formatBackendError = (data: any, fallback?: string) => {
+    const body = data?.body ?? data;
+    const code = body?.error || body?.code || fallback;
+    const detail = body?.detail || body?.message || fallback;
+    const status = data?.status ? `HTTP ${data.status}` : null;
+    return [status, code, detail && detail !== code ? detail : null].filter(Boolean).join(" — ");
+  };
+
+  const sendTestEmail = async () => {
+    const saved = await saveSettings();
+    if (!saved) return;
+    setTesting(true);
+    const requestPayload = { type: "test", payload: {} };
+    if (isDev) {
+      console.info("[admin-email] invoke", {
+        function: "send-admin-notification",
+        payload: requestPayload,
+      });
+    }
+    const { data, error } = await supabase.functions.invoke("send-admin-notification", {
+      body: requestPayload,
+    });
+    setTesting(false);
+    if (error) {
+      const backendError = await readFunctionError(error);
+      if (isDev) {
+        console.warn("[admin-email] invoke failed", {
+          function: "send-admin-notification",
+          status: backendError?.status,
+          error,
+          response: backendError?.body,
+        });
+      }
+      toast({
+        title: "Échec du test email",
+        description: formatBackendError(backendError, error.message) || "Erreur inconnue.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (isDev) {
+      console.info("[admin-email] invoke response", {
+        function: "send-admin-notification",
+        data,
+      });
+    }
+    if (data?.ok === false) {
+      toast({
+        title: "Échec du test email",
+        description: formatBackendError(data) || "Erreur inconnue.",
+        variant: "destructive",
+      });
+      return;
+    }
+    toast({ title: "Email test envoyé", description: "Vérifiez la boîte info@lejapon.ma." });
   };
 
   if (loading) {
@@ -220,8 +322,12 @@ const EmailSettingsPage = () => {
             />
           </div>
 
-          <div className="flex justify-end">
-            <Button onClick={onSave} disabled={saving}>
+          <div className="flex flex-col justify-end gap-2 sm:flex-row">
+            <Button type="button" variant="outline" onClick={sendTestEmail} disabled={saving || testing}>
+              {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              Send test email
+            </Button>
+            <Button onClick={onSave} disabled={saving || testing}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               Enregistrer
             </Button>

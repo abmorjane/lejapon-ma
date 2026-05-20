@@ -23,6 +23,20 @@ describe("parsePassportMRZ", () => {
   it("returns null when no MRZ is present", () => {
     expect(parsePassportMRZ("ordinary passport text")).toBeNull();
   });
+
+  it("extracts fields when OCR returns MRZ as continuous text", () => {
+    const fields = parsePassportMRZ("scan text P<MARDOE<<JANE<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<AB765432<7MAR9202022F3103038<<<<<<<<<<<<<<08");
+
+    expect(fields).toMatchObject({
+      first_name: "JANE",
+      last_name: "DOE",
+      nationality: "MAR",
+      sex: "F",
+      date_of_birth: "1992-02-02",
+      passport_no: "AB765432",
+      passport_expiry: "2031-03-03",
+    });
+  });
 });
 
 describe("checkPassportExpiry", () => {

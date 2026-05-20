@@ -29,6 +29,7 @@ const nav: { to: string; icon: any; label: string; end?: boolean; module: Module
   { to: "/admin/media", icon: ImageIcon, label: "Médias", module: "media" },
   { to: "/admin/users", icon: ShieldCheck, label: "Utilisateurs & Rôles", module: "users" },
   { to: "/admin/email-settings", icon: Mail, label: "Paramètres email", module: "email_settings" },
+  { to: "/admin/email-logs", icon: Mail, label: "Email Logs", module: "email_logs" },
   { to: "/admin/visa", icon: Stamp, label: "Demandes de visa", module: "visa" },
   { to: "/admin/visa-checklists", icon: ListChecks, label: "Documents requis", module: "visa_checklists" },
   { to: "/admin/visa-settings", icon: ShieldCheck, label: "Paramètres visa", module: "visa_settings" },

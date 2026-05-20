@@ -23,6 +23,7 @@ const cleanText = (value: string) => value.replace(/\s+/g, " ").trim();
 const normalizeMrzText = (text: string) =>
   text
     .toUpperCase()
+    .replace(/[«‹<]/g, "<")
     .replace(/[^A-Z0-9<\n]/g, "")
     .split(/\n+/)
     .map((line) => line.trim())
@@ -45,10 +46,21 @@ function parseMrzDate(value: string, expiry = false) {
 export function parsePassportMRZ(text: string): PassportMRZFields | null {
   const lines = normalizeMrzText(text);
   const firstIndex = lines.findIndex((line) => line.startsWith("P<") && line.length >= 40);
-  if (firstIndex < 0) return null;
 
-  const first = lines[firstIndex].padEnd(44, "<").slice(0, 44);
-  const second = (lines[firstIndex + 1] ?? "").padEnd(44, "<").slice(0, 44);
+  let first = "";
+  let second = "";
+  if (firstIndex >= 0 && lines[firstIndex + 1]) {
+    first = lines[firstIndex].padEnd(44, "<").slice(0, 44);
+    second = lines[firstIndex + 1].padEnd(44, "<").slice(0, 44);
+  } else {
+    const continuous = normalizeMrzText(text).join("");
+    const compactIndex = continuous.indexOf("P<");
+    if (compactIndex < 0 || continuous.length < compactIndex + 76) return null;
+    const mrz = continuous.slice(compactIndex, compactIndex + 88).padEnd(88, "<");
+    first = mrz.slice(0, 44);
+    second = mrz.slice(44, 88);
+  }
+
   if (second.replace(/</g, "").length < 20) return null;
 
   const names = first.slice(5).split("<<");

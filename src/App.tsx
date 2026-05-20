@@ -12,7 +12,7 @@ import { RequireRole } from "@/admin/components/RequireRole";
 import { SupplierLayout } from "@/admin/components/SupplierLayout";
 import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from "@/components/LegacyRedirects";
 import { useRouteSlugs, DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
-import { InstallPrompt } from "@/components/pwa/InstallPrompt";
+import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
 
 const queryClient = new QueryClient();
 
@@ -48,6 +48,7 @@ const AdminProgrammes = lazy(() => import("@/admin/pages/Programmes"));
 const AdminMedia = lazy(() => import("@/admin/pages/Media"));
 const AdminUsers = lazy(() => import("@/admin/pages/Users"));
 const AdminEmailSettings = lazy(() => import("@/admin/pages/EmailSettings"));
+const AdminEmailLogs = lazy(() => import("@/admin/pages/EmailLogs"));
 const AdminVisaApplications = lazy(() => import("@/admin/pages/VisaApplications"));
 const AdminVisaApplicationDetail = lazy(() => import("@/admin/pages/VisaApplicationDetail"));
 const AdminVisaSettings = lazy(() => import("@/admin/pages/VisaSettings"));
@@ -187,6 +188,7 @@ const AppRoutes = () => {
         <Route path="media" element={<RequireRole module="media"><AdminMedia /></RequireRole>} />
         <Route path="users" element={<RequireRole module="users"><AdminUsers /></RequireRole>} />
         <Route path="email-settings" element={<RequireRole module="email_settings"><AdminEmailSettings /></RequireRole>} />
+        <Route path="email-logs" element={<RequireRole module="email_logs"><AdminEmailLogs /></RequireRole>} />
         <Route path="visa" element={<RequireRole module="visa"><AdminVisaApplications /></RequireRole>} />
         <Route path="visa/:id" element={<RequireRole module="visa"><AdminVisaApplicationDetail /></RequireRole>} />
         <Route path="visa-settings" element={<RequireRole module="visa_settings"><AdminVisaSettings /></RequireRole>} />
@@ -204,7 +206,7 @@ const AppRoutes = () => {
         </Route>
       </Route>
     </Routes>
-    <InstallPrompt />
+    <PWAInstallPrompt />
     </Suspense>
   );
 };

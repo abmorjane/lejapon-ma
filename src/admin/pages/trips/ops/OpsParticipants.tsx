@@ -65,7 +65,7 @@ export default function OpsParticipants({ trip }: { trip: any }) {
   const filtered = rows.filter(({ participant: p, booking: b }) => {
     const s = q.toLowerCase().trim();
     if (!s) return true;
-    return [p.first_name, p.last_name, b.contact_name, b.contact_email, b.contact_phone, b.reference]
+    return [p.first_name, p.last_name, p.profession, p.marital_status, b.contact_name, b.contact_email, b.contact_phone, b.reference]
       .some((v) => (v || "").toLowerCase().includes(s));
   });
 
@@ -92,6 +92,7 @@ export default function OpsParticipants({ trip }: { trip: any }) {
   const doExport = () => {
     exportCsv(`inscrits-${trip.title}`, filtered.map(({ participant: p, booking: b }) => ({
       prenom: p.first_name, nom: p.last_name, sexe: p.sex, naissance: p.date_of_birth,
+      profession: p.profession, etat_civil: p.marital_status, adresse: p.address,
       passeport: p.passport_no, emission: p.passport_issue_date, expiration: p.passport_expiry,
       type_client: p.client_type, email: b.contact_email, telephone: b.contact_phone,
       ville: b.contact_city, reservation_par: b.contact_name, reference: b.reference,
@@ -139,6 +140,20 @@ export default function OpsParticipants({ trip }: { trip: any }) {
                   </Select>
                 </div>
                 <div><Label>Date de naissance</Label><Input type="date" value={edit.date_of_birth ?? ""} onChange={(e) => setEdit({ ...edit, date_of_birth: e.target.value || null })} /></div>
+                <div><Label>Profession</Label><Input value={edit.profession ?? ""} onChange={(e) => setEdit({ ...edit, profession: e.target.value || null })} /></div>
+                <div>
+                  <Label>État civil</Label>
+                  <Select value={edit.marital_status || ""} onValueChange={(v) => setEdit({ ...edit, marital_status: v })}>
+                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="celibataire">Célibataire</SelectItem>
+                      <SelectItem value="marie">Marié(e)</SelectItem>
+                      <SelectItem value="divorce">Divorcé(e)</SelectItem>
+                      <SelectItem value="veuf">Veuf/veuve</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-2"><Label>Adresse</Label><Input value={edit.address ?? ""} onChange={(e) => setEdit({ ...edit, address: e.target.value || null })} /></div>
                 <div><Label>N° passeport</Label><Input value={edit.passport_no ?? ""} onChange={(e) => setEdit({ ...edit, passport_no: e.target.value })} /></div>
                 <div>
                   <Label>Type client</Label>
@@ -166,7 +181,7 @@ export default function OpsParticipants({ trip }: { trip: any }) {
           <thead className="bg-secondary/50 text-left">
             <tr>
               <th className="p-3">Prénom</th><th className="p-3">Nom</th><th className="p-3">Sexe</th>
-              <th className="p-3">Naissance</th><th className="p-3">Passeport</th>
+              <th className="p-3">Naissance</th><th className="p-3">Profession</th><th className="p-3">État civil</th><th className="p-3">Passeport</th>
               <th className="p-3">Émission</th><th className="p-3">Expiration</th>
               <th className="p-3">Email</th><th className="p-3">Téléphone</th>
               <th className="p-3">Ville</th><th className="p-3">Type</th>
@@ -176,7 +191,7 @@ export default function OpsParticipants({ trip }: { trip: any }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {filtered.length === 0 && <tr><td colSpan={17} className="p-6 text-center text-muted-foreground">Aucun inscrit.</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={19} className="p-6 text-center text-muted-foreground">Aucun inscrit.</td></tr>}
             {filtered.map(({ participant: p, booking: b }) => {
               const reste = Number(b.total_amount_mad || 0) - Number(b.paid_amount_mad || 0);
               return (
@@ -185,6 +200,8 @@ export default function OpsParticipants({ trip }: { trip: any }) {
                   <td className="p-3">{p.last_name}</td>
                   <td className="p-3">{p.sex ?? "—"}</td>
                   <td className="p-3">{p.date_of_birth ?? "—"}</td>
+                  <td className="p-3">{p.profession ?? "—"}</td>
+                  <td className="p-3">{p.marital_status ?? "—"}</td>
                   <td className="p-3">{p.passport_no ?? "—"}</td>
                   <td className="p-3">{p.passport_issue_date ?? "—"}</td>
                   <td className="p-3">{p.passport_expiry ?? "—"}</td>

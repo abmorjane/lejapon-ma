@@ -79,6 +79,15 @@ export function CreateBookingDialog({ open, onOpenChange, onCreated }: Props) {
     setBusy(true);
     try {
       // 1. Upsert client (CRM)
+      console.log("CLIENT INSERT PAYLOAD", {
+        source: "admin_booking_rpc:upsert_client_from_booking",
+        payload: {
+          full_name: form.contact_name,
+          email: form.contact_email,
+          phone: form.contact_phone || null,
+          city: form.contact_city || null,
+        },
+      });
       const { data: clientId, error: clientErr } = await supabase.rpc("upsert_client_from_booking", {
         _name: form.contact_name,
         _email: form.contact_email,
@@ -125,14 +134,49 @@ export function CreateBookingDialog({ open, onOpenChange, onCreated }: Props) {
       }
 
       // 4. Optional payment record
+      let paymentId: string | null = null;
       if (paid > 0) {
-        await supabase.from("payments").insert({
+        const { data: payment } = await supabase.from("payments").insert({
           booking_id: bookingId,
           amount_mad: paid,
           method: paymentMethod,
           status: "received",
           paid_at: new Date().toISOString(),
-        } as any);
+        } as any).select("id").single();
+        paymentId = payment?.id ?? null;
+      }
+
+      const { data: fullBookingData, error: fullBookingError } = await supabase
+        .from("bookings")
+        .select("*, clients(*), trips(*), booking_extras(*)")
+        .eq("id", bookingId)
+        .maybeSingle();
+      console.log("FULL BOOKING EMAIL DATA", { fullBookingData, fullBookingError });
+      const bookingNotificationPayload = { type: "booking", payload: { booking_id: bookingId, fullBookingData } };
+      if (import.meta.env.DEV) {
+        console.info("[admin-email] invoke", { function: "send-admin-notification", payload: bookingNotificationPayload });
+      }
+      void supabase.functions.invoke("send-admin-notification", {
+        body: bookingNotificationPayload,
+      }).then(({ data, error }) => {
+        if (import.meta.env.DEV) {
+          console.info("[admin-email] invoke response", { function: "send-admin-notification", data, error });
+        }
+        if (error || data?.ok === false) console.warn("admin booking notification failed", data ?? error);
+      });
+      if (paymentId) {
+        const paymentNotificationPayload = { type: "payment", payload: { payment_id: paymentId } };
+        if (import.meta.env.DEV) {
+          console.info("[admin-email] invoke", { function: "send-admin-notification", payload: paymentNotificationPayload });
+        }
+        void supabase.functions.invoke("send-admin-notification", {
+          body: paymentNotificationPayload,
+        }).then(({ data, error }) => {
+          if (import.meta.env.DEV) {
+            console.info("[admin-email] invoke response", { function: "send-admin-notification", data, error });
+          }
+          if (error || data?.ok === false) console.warn("admin payment notification failed", data ?? error);
+        });
       }
 
       toast.success("Réservation créée");

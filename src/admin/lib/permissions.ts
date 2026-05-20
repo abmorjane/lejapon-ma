@@ -44,6 +44,7 @@ export const MODULE_PERMISSIONS = {
   media: ["super_admin", "admin", "content_manager"],
   users: ["super_admin"],
   email_settings: ["super_admin"],
+  email_logs: ["super_admin", "admin"],
   visa: ["super_admin", "admin", "manager", "agent"],
   visa_settings: ["super_admin"],
   visa_checklists: ["super_admin", "admin"],

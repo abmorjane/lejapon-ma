@@ -12,6 +12,29 @@ declare global {
 
 let cachedSiteKey: string | null = null;
 let scriptPromise: Promise<void> | null = null;
+let bypassLogged = false;
+
+const BYPASS_TOKEN = "__recaptcha_bypass_local__";
+
+function recaptchaMode() {
+  const hostname = window.location.hostname;
+  const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
+  const isProductionHost = hostname === "lejapon.ma" || hostname === "www.lejapon.ma";
+  const envEnabled = import.meta.env.VITE_ENABLE_RECAPTCHA !== "false";
+  const bypass = isLocalhost || (!isProductionHost && !envEnabled);
+
+  if (bypass && isLocalhost && !bypassLogged) {
+    console.info("reCAPTCHA bypass enabled for localhost");
+    bypassLogged = true;
+  }
+
+  return {
+    enabled: !bypass,
+    bypass,
+    isLocalhost,
+    isProductionHost,
+  };
+}
 
 const fetchSiteKey = async (): Promise<string> => {
   if (cachedSiteKey) return cachedSiteKey;
@@ -43,11 +66,16 @@ const loadScript = (siteKey: string): Promise<void> => {
  *  - verify(token, action) → calls our edge function to validate the token server-side
  */
 export function useRecaptcha() {
-  const [ready, setReady] = useState(false);
+  const mode = recaptchaMode();
+  const [ready, setReady] = useState(!mode.enabled);
   const [error, setError] = useState<string | null>(null);
   const siteKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!mode.enabled) {
+      setReady(true);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -61,9 +89,10 @@ export function useRecaptcha() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [mode.enabled]);
 
   const executeRecaptcha = useCallback(async (action: string): Promise<string> => {
+    if (!recaptchaMode().enabled) return BYPASS_TOKEN;
     const key = siteKeyRef.current ?? (await fetchSiteKey());
     siteKeyRef.current = key;
     if (!window.grecaptcha) await loadScript(key);
@@ -71,6 +100,9 @@ export function useRecaptcha() {
   }, []);
 
   const verify = useCallback(async (token: string, action: string) => {
+    if (!recaptchaMode().enabled && token === BYPASS_TOKEN) {
+      return { ok: true as const, reason: "local_bypass" };
+    }
     const { data, error } = await supabase.functions.invoke("recaptcha", {
       method: "POST",
       body: { token, action },
@@ -79,5 +111,5 @@ export function useRecaptcha() {
     return data as { ok: boolean; reason?: string };
   }, []);
 
-  return { ready, error, executeRecaptcha, verify };
+  return { ready, error, executeRecaptcha, verify, enabled: mode.enabled, bypass: mode.bypass };
 }

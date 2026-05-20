@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
@@ -29,6 +30,13 @@ const RELATIONS = [
   { v: "other", l: "Autre" },
 ];
 
+const MARITAL_STATUS_OPTIONS = [
+  { value: "celibataire", label: "Célibataire" },
+  { value: "marie", label: "Marié(e)" },
+  { value: "divorce", label: "Divorcé(e)" },
+  { value: "veuf", label: "Veuf/veuve" },
+];
+
 const schema = z.object({
   first_name: z.string().trim().min(1, "Prénom requis").max(80),
   last_name: z.string().trim().min(1, "Nom requis").max(80),
@@ -41,6 +49,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
   const { isAdmin } = useAuth();
   const [form, setForm] = useState<any>({
     first_name: "", last_name: "", sex: "", date_of_birth: "",
+    profession: "", marital_status: "", address: "",
     nationality: "", passport_no: "", passport_issue_date: "", passport_expiry: "",
     passport_file_path: "", email: "", phone: "", relation: "self",
   });
@@ -97,6 +106,20 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
         }
       }
 
+      if (clientId) {
+        await supabase.from("clients").update({
+          birthdate: form.date_of_birth || null,
+          nationality: form.nationality || null,
+          sex: form.sex || null,
+          profession: form.profession || null,
+          marital_status: form.marital_status || null,
+          address: form.address || null,
+          passport_issue_date: form.passport_issue_date || null,
+          passport_expiry: form.passport_expiry || null,
+          passport_file_path: form.passport_file_path || null,
+        } as any).eq("id", clientId);
+      }
+
       const { error: insErr } = await supabase.from("booking_participants").insert({
         booking_id: bookingId,
         trip_id: tripId ?? null,
@@ -105,6 +128,9 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
         last_name: form.last_name,
         sex: form.sex || null,
         date_of_birth: form.date_of_birth || null,
+        profession: form.profession || null,
+        marital_status: form.marital_status || null,
+        address: form.address || null,
         nationality: form.nationality || null,
         passport_no: form.passport_no || null,
         passport_issue_date: form.passport_issue_date || null,
@@ -120,6 +146,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
       toast.success(wasExisting ? "Client existant associé" : "Voyageur ajouté");
       setForm({
         first_name: "", last_name: "", sex: "", date_of_birth: "",
+        profession: "", marital_status: "", address: "",
         nationality: "", passport_no: "", passport_issue_date: "", passport_expiry: "",
         passport_file_path: "", email: "", phone: "", relation: "self",
       });
@@ -167,6 +194,16 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
             </Select>
           </div>
           <div><Label className="text-xs">Date de naissance</Label><Input type="date" value={form.date_of_birth} onChange={(e) => setF("date_of_birth", e.target.value)} /></div>
+          <div><Label className="text-xs">Profession</Label><Input value={form.profession} onChange={(e) => setF("profession", e.target.value)} /></div>
+          <div><Label className="text-xs">État civil</Label>
+            <Select value={form.marital_status || "none"} onValueChange={(v) => setF("marital_status", v === "none" ? "" : v)}>
+              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">—</SelectItem>
+                {MARITAL_STATUS_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
           <div><Label className="text-xs">Nationalité</Label><Input value={form.nationality} onChange={(e) => setF("nationality", e.target.value)} /></div>
           <div><Label className="text-xs">Lien avec le responsable</Label>
             <Select value={form.relation} onValueChange={(v) => setF("relation", v)}>
@@ -174,6 +211,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
               <SelectContent>{RELATIONS.map((r) => <SelectItem key={r.v} value={r.v}>{r.l}</SelectItem>)}</SelectContent>
             </Select>
           </div>
+          <div className="col-span-2"><Label className="text-xs">Adresse</Label><Textarea rows={2} value={form.address} onChange={(e) => setF("address", e.target.value)} /></div>
           <div className="col-span-2 border-t border-border pt-3 mt-1">
             <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Passeport</p>
           </div>

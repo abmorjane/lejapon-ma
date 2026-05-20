@@ -21,13 +21,44 @@ const DEFAULTS = {
   success_text: "Nous vous répondrons sous 24 heures à l'adresse indiquée.",
 };
 
+const isDev = import.meta.env.DEV;
+
+async function readFunctionError(error: any) {
+  const context = error?.context;
+  if (context && typeof context.json === "function") {
+    try {
+      return {
+        status: context.status,
+        statusText: context.statusText,
+        body: await context.json(),
+      };
+    } catch {
+      // The Supabase function error response is not always JSON.
+      return {
+        status: context.status,
+        statusText: context.statusText,
+        body: null,
+      };
+    }
+  }
+  return null;
+}
+
+function formatBackendError(data: any, fallback?: string) {
+  const body = data?.body ?? data;
+  const code = body?.error || body?.code || fallback;
+  const detail = body?.detail || body?.message || fallback;
+  const status = data?.status ? `HTTP ${data.status}` : null;
+  return [status, code, detail && detail !== code ? detail : null].filter(Boolean).join(" — ");
+}
+
 const Contact = () => {
   const { toast } = useToast();
   const c = useSiteContent("site:contact", DEFAULTS);
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", phone: "", message: "" });
-  const { ready: captchaReady, executeRecaptcha } = useRecaptcha();
+  const { ready: captchaReady, executeRecaptcha, enabled: recaptchaEnabled } = useRecaptcha();
 
   const onChange = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -35,9 +66,8 @@ const Contact = () => {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSending(true);
-    let recaptchaToken = "";
     try {
-      recaptchaToken = await executeRecaptcha("contact");
+      await executeRecaptcha("contact");
     } catch {
       setSending(false);
       toast({
@@ -47,17 +77,36 @@ const Contact = () => {
       });
       return;
     }
-    const { error } = await supabase.functions.invoke("send-contact-email", {
+    const createdAt = new Date().toISOString();
+    const payload = {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim() || null,
+      message: form.message.trim(),
+      created_at: createdAt,
+    };
+
+    if (isDev) {
+      console.info("[contact] sending admin notification", { type: "contact", payload: { ...payload, message: `${payload.message.slice(0, 80)}${payload.message.length > 80 ? "…" : ""}` } });
+    }
+
+    const { data, error } = await supabase.functions.invoke("send-admin-notification", {
       body: {
-        name: form.name.trim(),
-        email: form.email.trim(),
-        phone: form.phone.trim() || null,
-        message: form.message.trim(),
-        recaptchaToken,
+        type: "contact",
+        payload,
       },
     });
     setSending(false);
     if (error) {
+      const backendError = await readFunctionError(error);
+      if (isDev) {
+        console.warn("[contact] admin notification function failed", {
+          function: "send-admin-notification",
+          status: backendError?.status,
+          error,
+          response: backendError?.body,
+        });
+      }
       const msg = (error as any)?.message ?? "";
       if (msg.includes("recaptcha") || msg.includes("captcha")) {
         toast({
@@ -67,13 +116,29 @@ const Contact = () => {
         });
         return;
       }
+      const description = formatBackendError(backendError, msg) || "Merci de réessayer ou de nous écrire directement à info@lejapon.ma.";
       toast({
         title: "Échec de l'envoi",
-        description: "Merci de réessayer ou de nous écrire directement à info@lejapon.ma.",
+        description,
         variant: "destructive",
       });
       return;
     }
+
+    if (isDev) {
+      console.info("[contact] admin notification response", data);
+    }
+
+    if (data?.ok === false) {
+      toast({
+        title: "Message reçu, notification interne en erreur",
+        description: formatBackendError(data) || "Erreur inconnue côté notification.",
+        variant: "destructive",
+      });
+      setSent(true);
+      return;
+    }
+
     setSent(true);
   };
 
@@ -176,13 +241,15 @@ const Contact = () => {
                 {sending && <Loader2 className="w-4 h-4 animate-spin" />}
                 {sending ? "Envoi…" : "Envoyer"}
               </button>
-              <p className="text-xs text-foreground/50 mt-3">
-                Ce site est protégé par reCAPTCHA — la{" "}
-                <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">politique de confidentialité</a>
-                {" "}et les{" "}
-                <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">conditions d'utilisation</a>
-                {" "}de Google s'appliquent.
-              </p>
+              {recaptchaEnabled && (
+                <p className="text-xs text-foreground/50 mt-3">
+                  Ce site est protégé par reCAPTCHA — la{" "}
+                  <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">politique de confidentialité</a>
+                  {" "}et les{" "}
+                  <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">conditions d'utilisation</a>
+                  {" "}de Google s'appliquent.
+                </p>
+              )}
             </form>
           )}
         </div>

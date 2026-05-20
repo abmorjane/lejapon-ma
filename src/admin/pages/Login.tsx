@@ -16,7 +16,7 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [busy, setBusy] = useState(false);
-  const { executeRecaptcha, verify: verifyRecaptcha } = useRecaptcha();
+  const { executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha();
 
   useEffect(() => { if (!loading && user) nav("/admin", { replace: true }); }, [user, loading, nav]);
 
@@ -75,13 +75,15 @@ export default function AdminLogin() {
             {busy ? "…" : mode === "login" ? "Se connecter" : "Créer le compte"}
           </Button>
         </form>
-        <p className="text-[11px] text-muted-foreground text-center mt-4 leading-relaxed">
-          Protégé par reCAPTCHA — la{" "}
-          <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline">politique</a>
-          {" "}et les{" "}
-          <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline">conditions</a>
-          {" "}de Google s'appliquent.
-        </p>
+        {recaptchaEnabled && (
+          <p className="text-[11px] text-muted-foreground text-center mt-4 leading-relaxed">
+            Protégé par reCAPTCHA — la{" "}
+            <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline">politique</a>
+            {" "}et les{" "}
+            <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline">conditions</a>
+            {" "}de Google s'appliquent.
+          </p>
+        )}
         <p className="text-center text-sm mt-6">
           {mode === "login" ? (
             <>Pas encore de compte ? <button onClick={() => setMode("signup")} className="text-accent font-medium">Créer</button></>

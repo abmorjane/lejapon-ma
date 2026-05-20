@@ -19,6 +19,13 @@ type ParsedRow = {
   full_name: string;
   email: string;
   phone: string;
+  profession: string;
+  marital_status: string;
+  birthdate: string;
+  passport_expiry: string;
+  passport_issue_date: string;
+  address: string;
+  _invalidDateFields: string[];
   _valid: boolean;
   _error?: string;
 };
@@ -26,16 +33,82 @@ type ParsedRow = {
 const NAME_KEYS = ["name", "full_name", "fullname", "nom", "nom complet", "client", "prénom et nom"];
 const EMAIL_KEYS = ["email", "e-mail", "mail", "courriel"];
 const PHONE_KEYS = ["phone", "phone_number", "tel", "tél", "téléphone", "telephone", "mobile", "gsm"];
+const PROFESSION_KEYS = ["profession", "metier", "métier", "emploi", "occupation"];
+const MARITAL_KEYS = ["etat civil", "état civil", "marital status", "situation familiale"];
+const BIRTHDATE_KEYS = ["birthdate", "birth date", "date naissance", "date de naissance", "naissance"];
+const PASSPORT_EXPIRY_KEYS = ["passport_expiry", "passport expiry", "expiration passeport", "date expiration passeport", "date d'expiration du passeport", "expiration", "validité passeport"];
+const PASSPORT_ISSUE_KEYS = ["passport_issue_date", "passport issue date", "emission passeport", "émission passeport", "date emission passeport", "date d'émission du passeport", "delivrance passeport", "délivrance passeport"];
+const ADDRESS_KEYS = ["address", "adresse", "adresse complète", "residential address"];
 
-function pickField(row: Record<string, any>, keys: string[]): string {
+const normalizeMaritalStatus = (value: string) => {
+  const v = value.toLowerCase().trim();
+  if (!v) return "";
+  if (["celibataire", "célibataire", "single"].includes(v)) return "celibataire";
+  if (["marie", "marié", "mariée", "marie(e)", "marié(e)", "married"].includes(v)) return "marie";
+  if (["divorce", "divorcé", "divorcée", "divorce(e)", "divorcé(e)", "divorced"].includes(v)) return "divorce";
+  if (["veuf", "veuve", "widowed"].includes(v)) return "veuf";
+  return value;
+};
+
+export function parseSpreadsheetDate(value: unknown): string | null {
+  if (value == null || value === "") return null;
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (!parsed || !parsed.y || !parsed.m || !parsed.d) return null;
+    return `${String(parsed.y).padStart(4, "0")}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+  }
+
+  const v = String(value).trim();
+  if (!v) return null;
+
+  if (/^\d+(\.\d+)?$/.test(v)) {
+    const serial = Number(v);
+    if (Number.isFinite(serial) && serial > 0) {
+      const parsed = XLSX.SSF.parse_date_code(serial);
+      if (parsed?.y && parsed?.m && parsed?.d) {
+        return `${String(parsed.y).padStart(4, "0")}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+      }
+    }
+  }
+
+  const iso = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    const candidate = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    const date = new Date(`${candidate}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? null : candidate;
+  }
+
+  const dmy = v.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    const candidate = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    const date = new Date(`${candidate}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? null : candidate;
+  }
+
+  const date = new Date(v);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function pickRawField(row: Record<string, any>, keys: string[]): unknown {
   const norm = (s: string) => s.toLowerCase().trim().replace(/[_\s-]+/g, " ");
   for (const k of Object.keys(row)) {
     if (keys.includes(norm(k))) {
-      const v = row[k];
-      return v == null ? "" : String(v).trim();
+      return row[k];
     }
   }
   return "";
+}
+
+function pickField(row: Record<string, any>, keys: string[]): string {
+  const v = pickRawField(row, keys);
+  return v == null ? "" : String(v).trim();
 }
 
 export function ClientsImportDialog({
@@ -68,6 +141,20 @@ export function ClientsImportDialog({
         const full_name = pickField(r, NAME_KEYS);
         const email = pickField(r, EMAIL_KEYS);
         const phone = pickField(r, PHONE_KEYS);
+        const profession = pickField(r, PROFESSION_KEYS);
+        const marital_status = normalizeMaritalStatus(pickField(r, MARITAL_KEYS));
+        const birthdateRaw = pickRawField(r, BIRTHDATE_KEYS);
+        const passportExpiryRaw = pickRawField(r, PASSPORT_EXPIRY_KEYS);
+        const passportIssueRaw = pickRawField(r, PASSPORT_ISSUE_KEYS);
+        const birthdate = parseSpreadsheetDate(birthdateRaw) ?? "";
+        const passport_expiry = parseSpreadsheetDate(passportExpiryRaw) ?? "";
+        const passport_issue_date = parseSpreadsheetDate(passportIssueRaw) ?? "";
+        const address = pickField(r, ADDRESS_KEYS);
+        const _invalidDateFields = [
+          birthdateRaw !== "" && !birthdate ? "date de naissance" : "",
+          passportExpiryRaw !== "" && !passport_expiry ? "expiration passeport" : "",
+          passportIssueRaw !== "" && !passport_issue_date ? "émission passeport" : "",
+        ].filter(Boolean);
         let _valid = true;
         let _error: string | undefined;
         if (!full_name) {
@@ -77,7 +164,20 @@ export function ClientsImportDialog({
           _valid = false;
           _error = "Email invalide";
         }
-        return { full_name, email, phone, _valid, _error };
+        return {
+          full_name,
+          email,
+          phone,
+          profession,
+          marital_status,
+          birthdate,
+          passport_expiry,
+          passport_issue_date,
+          address,
+          _invalidDateFields,
+          _valid,
+          _error,
+        };
       });
 
       if (parsed.length === 0) {
@@ -93,6 +193,7 @@ export function ClientsImportDialog({
 
   const validRows = rows.filter((r) => r._valid);
   const invalidCount = rows.length - validRows.length;
+  const invalidDateCount = rows.filter((r) => r._invalidDateFields.length > 0).length;
 
   const doImport = async () => {
     if (validRows.length === 0) return;
@@ -101,15 +202,22 @@ export function ClientsImportDialog({
       full_name: r.full_name,
       email: r.email || null,
       phone: r.phone || null,
+      profession: r.profession || null,
+      marital_status: r.marital_status || null,
+      birthdate: r.birthdate || null,
+      passport_expiry: r.passport_expiry || null,
+      passport_issue_date: r.passport_issue_date || null,
+      address: r.address || null,
       source: "import",
     }));
+    console.log("CLIENT INSERT PAYLOAD", { table: "public.clients", payload });
     const { error } = await supabase.from("clients").insert(payload);
     setImporting(false);
     if (error) {
       toast.error("Erreur d'import : " + error.message);
       return;
     }
-    toast.success(`${validRows.length} client(s) importé(s).`);
+    toast.success(`${validRows.length} client(s) importé(s). ${invalidCount} ignoré(s). ${invalidDateCount} ligne(s) avec date invalide convertie en vide.`);
     reset();
     onOpenChange(false);
     onImported();
@@ -127,7 +235,7 @@ export function ClientsImportDialog({
         <DialogHeader>
           <DialogTitle>Importer des clients</DialogTitle>
           <DialogDescription>
-            Fichier CSV ou Excel (.xlsx). Colonnes reconnues automatiquement : Nom, Email, Téléphone.
+            Fichier CSV ou Excel (.xlsx). Colonnes reconnues automatiquement : Nom, Email, Téléphone, Profession, État civil, Date de naissance, Adresse.
           </DialogDescription>
         </DialogHeader>
 
@@ -169,6 +277,11 @@ export function ClientsImportDialog({
                 <span className="inline-flex items-center gap-1 text-emerald-600">
                   <CheckCircle2 className="w-3.5 h-3.5" /> {validRows.length} valides
                 </span>
+                {invalidDateCount > 0 && (
+                  <span className="inline-flex items-center gap-1 text-amber-600">
+                    <AlertCircle className="w-3.5 h-3.5" /> {invalidDateCount} dates invalides
+                  </span>
+                )}
                 {invalidCount > 0 && (
                   <span className="inline-flex items-center gap-1 text-destructive">
                     <AlertCircle className="w-3.5 h-3.5" /> {invalidCount} ignorées
@@ -188,6 +301,10 @@ export function ClientsImportDialog({
                     <th className="p-3">Nom</th>
                     <th className="p-3">Email</th>
                     <th className="p-3">Téléphone</th>
+                    <th className="p-3">Profession</th>
+                    <th className="p-3">État civil</th>
+                    <th className="p-3">Naissance</th>
+                    <th className="p-3">Passeport exp.</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -205,6 +322,17 @@ export function ClientsImportDialog({
                       <td className="p-3 font-medium">{r.full_name || "—"}</td>
                       <td className="p-3 text-muted-foreground">{r.email || "—"}</td>
                       <td className="p-3 text-muted-foreground">{r.phone || "—"}</td>
+                      <td className="p-3 text-muted-foreground">{r.profession || "—"}</td>
+                      <td className="p-3 text-muted-foreground">{r.marital_status || "—"}</td>
+                      <td className="p-3 text-muted-foreground">
+                        {r.birthdate || "—"}
+                        {r._invalidDateFields.length > 0 && (
+                          <span className="ml-2 text-[10px] text-amber-600" title={`Dates invalides : ${r._invalidDateFields.join(", ")}`}>
+                            dates ignorées
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 text-muted-foreground">{r.passport_expiry || "—"}</td>
                     </tr>
                   ))}
                 </tbody>

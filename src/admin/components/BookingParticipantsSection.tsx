@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -14,6 +15,16 @@ const RELATIONS: Record<string, string> = {
   self: "Lui-même", spouse: "Conjoint(e)", child: "Enfant",
   friend: "Ami(e)", family: "Famille", other: "Autre",
 };
+
+const MARITAL_STATUS_OPTIONS = [
+  { value: "celibataire", label: "Célibataire" },
+  { value: "marie", label: "Marié(e)" },
+  { value: "divorce", label: "Divorcé(e)" },
+  { value: "veuf", label: "Veuf/veuve" },
+];
+
+const maritalStatusLabel = (value?: string | null) =>
+  MARITAL_STATUS_OPTIONS.find((option) => option.value === value)?.label ?? value ?? "—";
 
 type Props = {
   bookingId: string;
@@ -103,6 +114,14 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                   </SelectContent>
                 </Select>
                 <Input type="date" value={draft.date_of_birth ?? ""} onChange={(e) => setDraft({ ...draft, date_of_birth: e.target.value })} />
+                <Input placeholder="Profession" value={draft.profession ?? ""} onChange={(e) => setDraft({ ...draft, profession: e.target.value })} />
+                <Select value={draft.marital_status ?? "none"} onValueChange={(v) => setDraft({ ...draft, marital_status: v === "none" ? null : v })}>
+                  <SelectTrigger><SelectValue placeholder="État civil" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">—</SelectItem>
+                    {MARITAL_STATUS_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
                 <Input placeholder="Nationalité" value={draft.nationality ?? ""} onChange={(e) => setDraft({ ...draft, nationality: e.target.value })} />
                 <Input placeholder="N° passeport" value={draft.passport_no ?? ""} onChange={(e) => setDraft({ ...draft, passport_no: e.target.value })} />
                 <Input type="date" placeholder="Émission" value={draft.passport_issue_date ?? ""} onChange={(e) => setDraft({ ...draft, passport_issue_date: e.target.value })} />
@@ -113,6 +132,7 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{Object.entries(RELATIONS).map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
                 </Select>
+                <Textarea className="col-span-2 md:col-span-4" placeholder="Adresse complète" value={draft.address ?? ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
                 <div className="flex gap-1 col-span-2 md:col-span-4 justify-end">
                   <Button size="sm" variant="outline" onClick={cancelEdit}><X className="w-4 h-4" /></Button>
                   <Button size="sm" onClick={saveEdit}><Save className="w-4 h-4" /> Enregistrer</Button>
@@ -136,6 +156,10 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                 <p className="text-xs text-muted-foreground mt-1">
                   {p.sex || "—"} · {p.date_of_birth ?? "—"} · {p.nationality || "—"}
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  {p.profession || "—"} · {maritalStatusLabel(p.marital_status)}
+                </p>
+                {p.address && <p className="text-xs text-muted-foreground">{p.address}</p>}
                 <p className="text-xs text-muted-foreground">
                   PP : {p.passport_no || "—"} {p.passport_expiry ? `(exp. ${p.passport_expiry})` : ""}
                 </p>

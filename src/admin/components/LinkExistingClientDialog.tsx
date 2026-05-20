@@ -42,7 +42,7 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
       const like = `%${term}%`;
       const { data } = await supabase
         .from("clients")
-        .select("id, full_name, email, phone, city, passport_number")
+        .select("id, full_name, email, phone, city, passport_number, passport_issue_date, passport_expiry, passport_file_path, birthdate, nationality, sex, profession, marital_status, address")
         .or(`full_name.ilike.${like},email.ilike.${like},phone.ilike.${like},passport_number.ilike.${like}`)
         .limit(20);
       setResults(data ?? []);
@@ -73,7 +73,16 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
         last_name: last,
         email: selected.email,
         phone: selected.phone,
+        sex: selected.sex || null,
+        date_of_birth: selected.birthdate || null,
+        nationality: selected.nationality || null,
+        profession: selected.profession || null,
+        marital_status: selected.marital_status || null,
+        address: selected.address || null,
         passport_no: selected.passport_number,
+        passport_issue_date: selected.passport_issue_date || null,
+        passport_expiry: selected.passport_expiry || null,
+        passport_file_path: selected.passport_file_path || null,
         relation,
         is_lead: false,
       } as any);
