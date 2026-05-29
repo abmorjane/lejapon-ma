@@ -16,7 +16,13 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [busy, setBusy] = useState(false);
-  const { executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha();
+  const {
+    executeRecaptcha,
+    verify: verifyRecaptcha,
+    enabled: recaptchaEnabled,
+    bypass: recaptchaBypass,
+    error: recaptchaError,
+  } = useRecaptcha();
 
   useEffect(() => { if (!loading && user) nav("/admin", { replace: true }); }, [user, loading, nav]);
 
@@ -25,11 +31,36 @@ export default function AdminLogin() {
     setBusy(true);
     try {
       const action = mode === "login" ? "login" : "signup";
-      let token = "";
-      try { token = await executeRecaptcha(action); }
-      catch { throw new Error("Vérification anti-spam indisponible. Rechargez la page."); }
-      const check = await verifyRecaptcha(token, action);
-      if (!check.ok) throw new Error("Vérification anti-spam refusée. Merci de réessayer.");
+      const hostname = window.location.hostname;
+      const isLocalDev = import.meta.env.DEV || hostname === "localhost" || hostname === "127.0.0.1";
+
+      if (recaptchaEnabled) {
+        if (recaptchaError && !isLocalDev && !recaptchaBypass) {
+          throw new Error("Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA.");
+        }
+
+        let token = "";
+        try {
+          token = await executeRecaptcha(action);
+        } catch (err) {
+          if (isLocalDev || recaptchaBypass) {
+            console.warn("[admin-login] reCAPTCHA indisponible en développement, connexion non bloquée.", err);
+          } else {
+            throw new Error("Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA.");
+          }
+        }
+
+        if (token) {
+          const check = await verifyRecaptcha(token, action);
+          if (!check.ok) {
+            if (isLocalDev || recaptchaBypass) {
+              console.warn("[admin-login] reCAPTCHA refusé en développement, connexion non bloquée.", check);
+            } else {
+              throw new Error("Vérification anti-spam refusée. Vérifiez la configuration reCAPTCHA.");
+            }
+          }
+        }
+      }
 
       if (mode === "login") {
         const { error } = await signIn(email, password);

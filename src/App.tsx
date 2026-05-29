@@ -10,11 +10,15 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { AdminLayout } from "@/admin/components/AdminLayout";
 import { RequireRole } from "@/admin/components/RequireRole";
 import { SupplierLayout } from "@/admin/components/SupplierLayout";
+import { AgencyProvider } from "@/agency/useAgencyContext";
+import { RequireActiveAgencyMember, RequireAgencyMember, RequireAgencyOnboarding } from "@/agency/components/AgencyGuards";
 import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from "@/components/LegacyRedirects";
 import { useRouteSlugs, DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
 import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
 
 const queryClient = new QueryClient();
+
+console.log("V2 recovery routes loaded");
 
 const Index = lazy(() => import("./pages/Index.tsx"));
 const Trips = lazy(() => import("./pages/Trips.tsx"));
@@ -31,6 +35,15 @@ const VisaForm = lazy(() => import("@/pages/visa/VisaForm"));
 const VisaLogin = lazy(() => import("@/pages/visa/VisaLogin"));
 const ProgrammePage = lazy(() => import("@/pages/Programme"));
 const FaqPage = lazy(() => import("@/pages/Faq"));
+const PartnerAcquisition = lazy(() => import("@/pages/PartnerAcquisition"));
+const AgencyLogin = lazy(() => import("@/agency/pages/AgencyLogin"));
+const AgencyLayout = lazy(() => import("@/agency/components/AgencyLayout"));
+const AgencyDashboard = lazy(() => import("@/agency/pages/AgencyDashboard"));
+const AgencyBookings = lazy(() => import("@/agency/pages/AgencyBookings"));
+const AgencyBookingDetail = lazy(() => import("@/agency/pages/AgencyBookingDetail"));
+const AgencyCommission = lazy(() => import("@/agency/pages/AgencyCommission"));
+const AgencyProfilePage = lazy(() => import("@/agency/pages/AgencyProfilePage"));
+const AgencyOnboarding = lazy(() => import("@/agency/pages/AgencyOnboarding"));
 
 const AdminLogin = lazy(() => import("@/admin/pages/Login"));
 const AdminDashboard = lazy(() => import("@/admin/pages/Dashboard"));
@@ -47,8 +60,12 @@ const AdminFrontend = lazy(() => import("@/admin/pages/Frontend"));
 const AdminProgrammes = lazy(() => import("@/admin/pages/Programmes"));
 const AdminMedia = lazy(() => import("@/admin/pages/Media"));
 const AdminUsers = lazy(() => import("@/admin/pages/Users"));
+const AdminOrganizations = lazy(() => import("@/admin/pages/Organizations"));
+const AdminPartnerRequests = lazy(() => import("@/admin/pages/PartnerRequests"));
+const AdminAgencySettings = lazy(() => import("@/admin/pages/AgencySettings"));
 const AdminEmailSettings = lazy(() => import("@/admin/pages/EmailSettings"));
 const AdminEmailLogs = lazy(() => import("@/admin/pages/EmailLogs"));
+const AdminBackups = lazy(() => import("@/admin/pages/Backups"));
 const AdminVisaApplications = lazy(() => import("@/admin/pages/VisaApplications"));
 const AdminVisaApplicationDetail = lazy(() => import("@/admin/pages/VisaApplicationDetail"));
 const AdminVisaSettings = lazy(() => import("@/admin/pages/VisaSettings"));
@@ -101,6 +118,21 @@ const AppRoutes = () => {
   return (
     <Suspense fallback={<RouteFallback />}>
     <Routes>
+      <Route path="/agency/login" element={<AgencyLogin />} />
+      <Route path="/agency" element={
+        <AgencyProvider>
+          <RequireAgencyMember>
+            <AgencyLayout />
+          </RequireAgencyMember>
+        </AgencyProvider>
+      }>
+        <Route index element={<RequireActiveAgencyMember><AgencyDashboard /></RequireActiveAgencyMember>} />
+        <Route path="bookings" element={<RequireActiveAgencyMember><AgencyBookings /></RequireActiveAgencyMember>} />
+        <Route path="bookings/:id" element={<RequireActiveAgencyMember><AgencyBookingDetail /></RequireActiveAgencyMember>} />
+        <Route path="commission" element={<RequireActiveAgencyMember><AgencyCommission /></RequireActiveAgencyMember>} />
+        <Route path="profile" element={<RequireActiveAgencyMember><AgencyProfilePage /></RequireActiveAgencyMember>} />
+        <Route path="onboarding" element={<RequireAgencyOnboarding><AgencyOnboarding /></RequireAgencyOnboarding>} />
+      </Route>
       <Route element={<SiteLayout />}>
         <Route path="/" element={<Index />} />
         <Route path={`/${get("trips")}`} element={<Trips />} />
@@ -111,6 +143,7 @@ const AppRoutes = () => {
         <Route path={`/${get("contact")}`} element={<Contact />} />
         <Route path={`/${get("booking")}`} element={<Booking />} />
         <Route path={`/${get("programme")}`} element={<ProgrammePage />} />
+        <Route path="/devenir-partenaire" element={<PartnerAcquisition />} />
 
         {/* FAQ — multilingue, l'URL FR conserve l'ancien slug WordPress pour le SEO */}
         <Route path="/mon-voyage-questions-reponses" element={<FaqPage lang="fr" />} />
@@ -178,6 +211,7 @@ const AppRoutes = () => {
         <Route path="bookings" element={<RequireRole module="bookings"><AdminBookings /></RequireRole>} />
         <Route path="bookings/:id" element={<RequireRole module="bookings"><AdminBookingDetail /></RequireRole>} />
         <Route path="clients" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
+        <Route path="partner-requests" element={<RequireRole module="partner_requests"><AdminPartnerRequests /></RequireRole>} />
         <Route path="extras" element={<RequireRole module="extras"><AdminExtras /></RequireRole>} />
         <Route path="suppliers" element={<RequireRole module="suppliers"><AdminSuppliers /></RequireRole>} />
         <Route path="supplier-costs" element={<RequireRole module="supplier_costs"><AdminSupplierCosts /></RequireRole>} />
@@ -187,8 +221,11 @@ const AppRoutes = () => {
         <Route path="programmes" element={<RequireRole module="programmes"><AdminProgrammes /></RequireRole>} />
         <Route path="media" element={<RequireRole module="media"><AdminMedia /></RequireRole>} />
         <Route path="users" element={<RequireRole module="users"><AdminUsers /></RequireRole>} />
+        <Route path="organizations" element={<RequireRole module="organizations"><AdminOrganizations /></RequireRole>} />
+        <Route path="agency-settings" element={<RequireRole module="agency_settings"><AdminAgencySettings /></RequireRole>} />
         <Route path="email-settings" element={<RequireRole module="email_settings"><AdminEmailSettings /></RequireRole>} />
         <Route path="email-logs" element={<RequireRole module="email_logs"><AdminEmailLogs /></RequireRole>} />
+        <Route path="backups" element={<RequireRole module="backups"><AdminBackups /></RequireRole>} />
         <Route path="visa" element={<RequireRole module="visa"><AdminVisaApplications /></RequireRole>} />
         <Route path="visa/:id" element={<RequireRole module="visa"><AdminVisaApplicationDetail /></RequireRole>} />
         <Route path="visa-settings" element={<RequireRole module="visa_settings"><AdminVisaSettings /></RequireRole>} />

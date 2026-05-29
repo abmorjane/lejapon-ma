@@ -16,6 +16,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { QuickActions } from "@/admin/components/QuickActions";
+import { motion, useReducedMotion } from "framer-motion";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Brouillon",
@@ -38,6 +39,7 @@ export default function VisaApplications() {
   const [to, setTo] = useState<string>("");
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
+  const reduceMotion = useReducedMotion();
 
   const reload = () => {
     supabase.from("visa_applications")
@@ -85,10 +87,14 @@ export default function VisaApplications() {
   const reset = () => { setStatus("all"); setFrom(""); setTo(""); setQ(""); };
 
   return (
-    <div>
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+    >
       <PageHeader title="Demandes de visa" description="Toutes les demandes des clients" />
 
-      <Card className="p-4 mb-4">
+      <Card className="mb-4 rounded-2xl p-3 shadow-sm sm:p-4">
         <div className="grid gap-3 md:grid-cols-12 items-end">
           <div className="md:col-span-5">
             <label className="text-xs text-muted-foreground mb-1 block">Recherche</label>
@@ -130,7 +136,7 @@ export default function VisaApplications() {
           <Card key={it.id} className="overflow-hidden hover:border-accent transition-colors">
             <details className="group md:hidden">
               <summary className="list-none p-4 cursor-pointer">
-                <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="font-semibold">{it.reference}</span>
@@ -147,7 +153,7 @@ export default function VisaApplications() {
                 </div>
                 <QuickActions email={it.residential_email} passport={it.passport_no} compact className="mt-3" />
               </summary>
-              <div className="grid grid-cols-2 gap-3 border-t border-border p-4 text-sm">
+              <div className="grid grid-cols-2 gap-3 border-t border-border bg-muted/20 p-4 text-sm">
                 <div><p className="text-xs text-muted-foreground">Passeport</p><p className="font-medium">{it.passport_no || "—"}</p></div>
                 <div><p className="text-xs text-muted-foreground">Créée</p><p className="font-medium">{format(new Date(it.created_at), "dd/MM/yyyy")}</p></div>
                 <div className="col-span-2"><p className="text-xs text-muted-foreground">Soumise</p><p className="font-medium">{it.submitted_at ? format(new Date(it.submitted_at), "dd/MM/yyyy") : "—"}</p></div>
@@ -212,6 +218,6 @@ export default function VisaApplications() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </motion.div>
   );
 }

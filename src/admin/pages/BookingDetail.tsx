@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { StatusBadge } from "../components/StatusBadge";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History } from "lucide-react";
+import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { generateQuotePdf, generateReceiptPdf, downloadBytes } from "@/lib/booking-pdfs";
 import { PdfPreviewDialog } from "../components/PdfPreviewDialog";
@@ -17,6 +17,9 @@ import { EditBookingDialog } from "../components/EditBookingDialog";
 import { useNavigate } from "react-router-dom";
 import { BookingParticipantsSection } from "../components/BookingParticipantsSection";
 import { QuickActions } from "../components/QuickActions";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { motion, useReducedMotion } from "framer-motion";
+import { fetchAgencySettings, type AgencySettings } from "@/lib/agency-settings";
 
 export default function BookingDetail() {
   const { id } = useParams();
@@ -31,7 +34,10 @@ export default function BookingDetail() {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [auditLog, setAuditLog] = useState<any[]>([]);
+  const [messageExpanded, setMessageExpanded] = useState(false);
+  const [agency, setAgency] = useState<AgencySettings | null>(null);
   const canEdit = isAdmin || isSuperAdmin || roles.includes("manager");
+  const reduceMotion = useReducedMotion();
 
   const load = async () => {
     if (!id) return;
@@ -45,6 +51,7 @@ export default function BookingDetail() {
     setDocs((d as any) ?? []);
     const { data: log } = await supabase.from("booking_audit_log" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false }).limit(50);
     setAuditLog((log as any) ?? []);
+    fetchAgencySettings().then(setAgency);
   };
   useEffect(() => { load(); }, [id]);
 
@@ -53,9 +60,10 @@ export default function BookingDetail() {
       booking: b,
       trip: b?.trips ?? null,
       extras: extras as any,
+      agency,
       number: `DEV-${b?.reference ?? ""}-${String(docs.filter((x) => x.kind === "quote").length + 1).padStart(2, "0")}`,
     }),
-    [b, extras, docs]
+    [b, extras, docs, agency]
   );
 
   const buildReceipt = useCallback(
@@ -64,9 +72,10 @@ export default function BookingDetail() {
       trip: b?.trips ?? null,
       payment: preview?.payment ?? payments[0] ?? { amount_mad: 0 },
       extras: extras as any,
+      agency,
       number: `REC-${b?.reference ?? ""}-${String(docs.filter((x) => x.kind === "receipt").length + 1).padStart(2, "0")}`,
     }),
-    [b, payments, preview, docs, extras]
+    [b, payments, preview, docs, extras, agency]
   );
 
   if (!b) return <p className="text-muted-foreground">Chargement…</p>;
@@ -148,8 +157,8 @@ export default function BookingDetail() {
         ? `DEV-${b.reference}-${String(docs.filter((x) => x.kind === "quote").length + 1).padStart(2, "0")}`
         : `REC-${b.reference}-${String(docs.filter((x) => x.kind === "receipt").length + 1).padStart(2, "0")}`;
       const bytes = kind === "quote"
-        ? await generateQuotePdf({ booking: b, trip: b.trips, extras: extras as any, number })
-        : await generateReceiptPdf({ booking: b, trip: b.trips, payment: payment ?? payments[0] ?? { amount_mad: 0 }, extras: extras as any, number });
+        ? await generateQuotePdf({ booking: b, trip: b.trips, extras: extras as any, agency, number })
+        : await generateReceiptPdf({ booking: b, trip: b.trips, payment: payment ?? payments[0] ?? { amount_mad: 0 }, extras: extras as any, agency, number });
       const path = `${b.id}/${number}.pdf`;
       const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       const { error: upErr } = await supabase.storage.from("booking-docs").upload(path, new Blob([ab], { type: "application/pdf" }), { upsert: true, contentType: "application/pdf" });
@@ -175,21 +184,33 @@ export default function BookingDetail() {
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
-  return (
-    <div className="space-y-6">
-      <Link to="/admin/bookings" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="w-4 h-4" /> Retour</Link>
+  const totalTravelers = Number(b.num_adults || 0) + Number(b.num_children || 0);
+  const remainingAmount = Math.max(0, Number(b.total_amount_mad || 0) - Number(b.paid_amount_mad || 0));
+  const paidPercent = Number(b.total_amount_mad || 0) > 0
+    ? Math.min(100, Math.round((Number(b.paid_amount_mad || 0) / Number(b.total_amount_mad || 0)) * 100))
+    : 0;
+  const longMessage = String(b.message || "");
+  const visibleMessage = !messageExpanded && longMessage.length > 150 ? `${longMessage.slice(0, 150)}…` : longMessage;
 
-      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div>
+  return (
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="space-y-5 sm:space-y-6"
+    >
+      <Link to="/admin/bookings" className="inline-flex min-h-11 items-center gap-2 rounded-full px-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="w-4 h-4" /> Retour</Link>
+
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <p className="text-xs text-muted-foreground font-mono">{b.reference}</p>
-          <h1 className="font-display text-2xl mt-1">{b.contact_name}</h1>
-          <p className="text-muted-foreground text-sm">{b.contact_email} · {b.contact_phone || "—"}</p>
-          <p className="text-xs text-muted-foreground mt-1">Reçu le {fmtDateTime(b.created_at)}</p>
+          <h1 className="mt-1 truncate font-display text-xl leading-tight sm:text-2xl">{b.contact_name}</h1>
+          <p className="truncate text-sm text-muted-foreground">{b.contact_email} · {b.contact_phone || "—"}</p>
           <QuickActions
             phone={b.contact_phone}
             email={b.contact_email}
             onPdf={() => setPreview({ kind: "quote" })}
-            className="mt-4 sm:hidden"
+            className="mt-3 sm:hidden"
           />
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3">
@@ -205,7 +226,7 @@ export default function BookingDetail() {
             </SelectContent>
           </Select>
           {canEdit && (
-            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+            <Button variant="outline" size="sm" className="min-h-11" onClick={() => setEditing(true)}>
               <Pencil className="w-4 h-4" /> Modifier
             </Button>
           )}
@@ -215,19 +236,76 @@ export default function BookingDetail() {
         </div>
       </header>
 
-      <div className="grid lg:grid-cols-3 gap-6">
+      <Card className="overflow-hidden rounded-2xl border-border shadow-sm">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">Résumé réservation</p>
+              <h2 className="mt-1 truncate font-display text-xl">{b.contact_name}</h2>
+              <p className="truncate text-xs text-muted-foreground">{b.reference} · {b.trips?.title ?? "Voyage non défini"}</p>
+            </div>
+            <StatusBadge value={b.status} />
+          </div>
+          <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/10 p-3">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">Paiement</p>
+                <p className="font-display text-lg">{fmtMAD(b.paid_amount_mad)} encaissé</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[11px] text-muted-foreground">Reste</p>
+                <p className="font-semibold">{fmtMAD(remainingAmount)}</p>
+              </div>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-background">
+              <div className="h-full rounded-full bg-accent" style={{ width: `${paidPercent}%` }} />
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+            <div className="rounded-xl bg-muted/60 p-3">
+              <p className="text-[11px] text-muted-foreground">Total</p>
+              <p className="truncate font-semibold">{fmtMAD(b.total_amount_mad)}</p>
+            </div>
+            <div className="rounded-xl bg-muted/60 p-3">
+              <p className="text-[11px] text-muted-foreground">Voyageurs</p>
+              <p className="truncate font-semibold">{totalTravelers}</p>
+            </div>
+            <div className="rounded-xl bg-muted/60 p-3">
+              <p className="text-[11px] text-muted-foreground">Reçu</p>
+              <p className="truncate font-semibold">{fmtDateTime(b.created_at)}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-5 lg:grid-cols-3 lg:gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <section className="bg-background rounded-2xl border border-border p-4 sm:p-6">
-            <h2 className="font-display text-lg mb-4">Détails du voyage</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+          <details className="group rounded-2xl border border-border bg-background shadow-sm">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 p-4">
+              <div className="min-w-0">
+                <h2 className="font-display text-lg">Détails du voyage</h2>
+                <p className="truncate text-xs text-muted-foreground">{b.trips?.title ?? "—"} · {b.formula ?? "—"} · {b.room_type ?? "—"}</p>
+              </div>
+              <ChevronDown className="h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="px-4 pb-4 sm:px-6 sm:pb-6">
+            <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div><p className="text-muted-foreground text-xs">Voyage</p><p className="font-medium">{b.trips?.title ?? "—"}</p></div>
               <div><p className="text-muted-foreground text-xs">Saison</p><p>{b.trips?.season ?? "—"}</p></div>
               <div><p className="text-muted-foreground text-xs">Adultes</p><p>{b.num_adults}</p></div>
               <div><p className="text-muted-foreground text-xs">Enfants</p><p>{b.num_children}</p></div>
               <div><p className="text-muted-foreground text-xs">Formule</p><p>{b.formula ?? "—"}</p></div>
               <div><p className="text-muted-foreground text-xs">Chambre</p><p>{b.room_type ?? "—"}</p></div>
-              <div className="sm:col-span-2"><p className="text-muted-foreground text-xs">Dates souhaitées</p><p>{b.preferred_dates ?? "—"}</p></div>
-              <div className="sm:col-span-2"><p className="text-muted-foreground text-xs">Message</p><p>{b.message || "—"}</p></div>
+              <div className="sm:col-span-2"><p className="text-muted-foreground text-xs">Dates souhaitées</p><p className="break-words">{b.preferred_dates ?? "—"}</p></div>
+              <div className="sm:col-span-2">
+                <p className="text-muted-foreground text-xs">Message</p>
+                <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{visibleMessage || "—"}</p>
+                {longMessage.length > 150 && (
+                  <Button type="button" variant="link" className="h-auto min-h-0 px-0 py-1 text-xs" onClick={() => setMessageExpanded((v) => !v)}>
+                    {messageExpanded ? "Voir moins" : "Voir plus"}
+                  </Button>
+                )}
+              </div>
             </div>
             {extras.length > 0 && (
               <div className="mt-4 pt-4 border-t border-border">
@@ -239,7 +317,8 @@ export default function BookingDetail() {
               <span className="font-semibold">Total</span>
               <span className="font-display text-xl">{fmtMAD(b.total_amount_mad)}</span>
             </div>
-          </section>
+            </div>
+          </details>
 
           <BookingParticipantsSection
             bookingId={b.id}
@@ -247,12 +326,15 @@ export default function BookingDetail() {
             expectedTravelers={Number(b.num_adults || 0) + Number(b.num_children || 0)}
           />
 
-          <section className="bg-background rounded-2xl border border-border p-4 sm:p-6">
-            <h2 className="font-display text-lg mb-4">Paiements</h2>
+          <Card className="rounded-2xl shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="font-display text-lg">Paiement</CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
             <div className="space-y-2 mb-4">
               {payments.length === 0 && <p className="text-sm text-muted-foreground">Aucun paiement enregistré.</p>}
               {payments.map((p) => (
-                <div key={p.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm border border-border rounded-lg p-3">
+                <div key={p.id} className="flex flex-col gap-3 rounded-xl border border-border p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="font-medium">{fmtMAD(p.amount_mad)} <span className="text-muted-foreground font-normal">· {p.method}</span></p>
                     <p className="text-xs text-muted-foreground">{p.reference || "—"} · {fmtDateTime(p.paid_at || p.created_at)}</p>
@@ -271,7 +353,7 @@ export default function BookingDetail() {
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-end pt-4 border-t border-border">
+            <div className="grid grid-cols-1 gap-2 border-t border-border pt-4 sm:grid-cols-2 md:grid-cols-5">
               <div><Label className="text-xs">Montant</Label><Input type="number" inputMode="decimal" value={newPay.amount_mad} onChange={(e) => setNewPay({ ...newPay, amount_mad: e.target.value })} /></div>
               <div><Label className="text-xs">Méthode</Label><Input value={newPay.method} onChange={(e) => setNewPay({ ...newPay, method: e.target.value })} /></div>
               <div><Label className="text-xs">Référence</Label><Input value={newPay.reference} onChange={(e) => setNewPay({ ...newPay, reference: e.target.value })} /></div>
@@ -291,12 +373,16 @@ export default function BookingDetail() {
               <span className="text-muted-foreground">Encaissé</span>
               <span className="font-semibold">{fmtMAD(b.paid_amount_mad)} / {fmtMAD(b.total_amount_mad)}</span>
             </div>
-          </section>
+            </CardContent>
+          </Card>
         </div>
 
-        <aside className="space-y-6">
-          <section className="bg-background rounded-2xl border border-border p-4 sm:p-6">
-            <h2 className="font-display text-lg mb-4">Documents PDF</h2>
+        <aside className="space-y-5 lg:space-y-6">
+          <Card className="rounded-2xl shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="font-display text-lg">Documents PDF</CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
             <div className="grid grid-cols-2 gap-2 mb-4">
               <Button size="sm" className="min-h-11" onClick={() => saveAndDownload("quote")} disabled={busy}>
                 <FileText className="w-4 h-4" /> Devis PDF
@@ -324,18 +410,28 @@ export default function BookingDetail() {
                 </button>
               ))}
             </div>
-          </section>
+            </CardContent>
+          </Card>
 
-          <section className="bg-background rounded-2xl border border-border p-4 sm:p-6">
-            <h2 className="font-display text-lg mb-4">Édition rapide</h2>
+          <details className="group rounded-2xl border border-border bg-background shadow-sm lg:block" open>
+            <summary className="flex list-none items-center justify-between p-4 font-display text-lg cursor-pointer lg:cursor-default">
+              Édition rapide
+              <span className="text-xs text-muted-foreground group-open:hidden lg:hidden">ouvrir</span>
+            </summary>
+            <div className="px-4 pb-4 sm:px-6 sm:pb-6">
             <div className="space-y-3">
               <div><Label className="text-xs">Total (MAD)</Label><Input type="number" inputMode="decimal" defaultValue={b.total_amount_mad} onBlur={(e) => saveField("total_amount_mad", +e.target.value)} /></div>
               <div><Label className="text-xs">Notes internes</Label><Textarea rows={4} defaultValue={b.message ?? ""} onBlur={(e) => saveField("message", e.target.value)} /></div>
             </div>
-          </section>
+            </div>
+          </details>
 
-          <section className="bg-background rounded-2xl border border-border p-4 sm:p-6">
-            <h2 className="font-display text-lg mb-4 flex items-center gap-2"><History className="w-4 h-4" /> Historique</h2>
+          <details className="group rounded-2xl border border-border bg-background shadow-sm lg:block">
+            <summary className="flex list-none items-center justify-between p-4 font-display text-lg cursor-pointer">
+              <span className="flex items-center gap-2"><History className="w-4 h-4" /> Historique</span>
+              <span className="text-xs text-muted-foreground group-open:hidden">ouvrir</span>
+            </summary>
+            <div className="px-4 pb-4 sm:px-6 sm:pb-6">
             {auditLog.length === 0 && <p className="text-xs text-muted-foreground">Aucune modification enregistrée.</p>}
             <ul className="space-y-2 max-h-72 overflow-auto">
               {auditLog.map((h) => (
@@ -346,7 +442,8 @@ export default function BookingDetail() {
                 </li>
               ))}
             </ul>
-          </section>
+            </div>
+          </details>
         </aside>
       </div>
 
@@ -374,6 +471,6 @@ export default function BookingDetail() {
           onSaved={load}
         />
       )}
-    </div>
+    </motion.div>
   );
 }

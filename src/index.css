@@ -114,7 +114,20 @@
     touch-action: manipulation;
   }
 
+  .admin-mobile-shell,
+  .admin-mobile-shell * {
+    min-width: 0;
+  }
+
+  .admin-mobile-shell summary::-webkit-details-marker {
+    display: none;
+  }
+
   @media (max-width: 767px) {
+    .admin-mobile-shell {
+      background: hsl(var(--secondary) / 0.55);
+    }
+
     .admin-mobile-shell input,
     .admin-mobile-shell textarea,
     .admin-mobile-shell [role="combobox"] {
@@ -125,6 +138,16 @@
     .admin-mobile-shell button,
     .admin-mobile-shell a {
       -webkit-tap-highlight-color: transparent;
+    }
+
+    .admin-mobile-shell h1,
+    .admin-mobile-shell h2,
+    .admin-mobile-shell h3,
+    .admin-mobile-shell p,
+    .admin-mobile-shell span,
+    .admin-mobile-shell td,
+    .admin-mobile-shell th {
+      overflow-wrap: anywhere;
     }
   }
 

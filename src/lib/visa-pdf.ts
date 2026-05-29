@@ -115,11 +115,6 @@ export function validateVisaApplication(app: VisaApplicationData): string[] {
   need(app.passport_place_of_issue, "Lieu d'émission du passeport");
   need(app.purpose_of_visit, "Objet du voyage");
   need(app.intended_length_of_stay, "Durée du séjour");
-  need(app.date_of_arrival, "Date d'arrivée");
-  need(app.port_of_entry, "Port d'entrée");
-  need(app.airline_or_ship, "Compagnie aérienne / navire");
-  need(app.hotel_name, "Nom de l'hôtel");
-  need(app.hotel_address, "Adresse de l'hôtel");
   need(app.residential_address, "Adresse de résidence");
   need(app.profession, "Profession");
   return missing;

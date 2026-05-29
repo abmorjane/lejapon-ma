@@ -6,11 +6,13 @@ import { Input } from "@/components/ui/input";
 import { ArrowLeft, Search, Calendar, Users } from "lucide-react";
 import { fmtDate, fmtMAD } from "@/lib/format";
 import TripOperations from "./TripOperations";
+import { motion, useReducedMotion } from "framer-motion";
 
 export default function TripsManagement() {
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     (async () => {
@@ -33,7 +35,7 @@ export default function TripsManagement() {
   if (selected) {
     return (
       <div>
-        <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)} className="mb-4">
+        <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)} className="mb-4 min-h-11">
           <ArrowLeft className="w-4 h-4" /> Retour aux départs
         </Button>
         <TripOperations trip={selected} />
@@ -42,16 +44,20 @@ export default function TripsManagement() {
   }
 
   return (
-    <div>
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+    >
       <PageHeader
         title="Gestion opérationnelle des départs"
         description="Sélectionnez un départ pour gérer inscrits, chambres, activités et paiements."
       />
 
-      <div className="bg-background rounded-2xl border border-border p-4 mb-4">
+      <div className="mb-4 rounded-2xl border border-border bg-background p-3 shadow-sm sm:p-4">
         <div className="relative max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un départ…" className="pl-9" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un départ…" className="min-h-11 pl-9" />
         </div>
       </div>
 
@@ -65,7 +71,7 @@ export default function TripsManagement() {
           <button
             key={t.id}
             onClick={() => setSelectedId(t.id)}
-            className="text-left bg-background rounded-2xl border border-border overflow-hidden hover:border-primary hover:shadow-lg transition-all group"
+            className="group overflow-hidden rounded-2xl border border-border bg-background text-left shadow-sm transition-all hover:border-primary hover:shadow-lg"
           >
             {t.cover_url && <img src={t.cover_url} alt={t.title} className="w-full h-32 object-cover" />}
             <div className="p-4">
@@ -73,7 +79,7 @@ export default function TripsManagement() {
                 {t.label && <span className="text-xs font-bold tracking-wider text-accent">{t.label}</span>}
                 {t.season && <span className="text-xs text-muted-foreground">• {t.season}</span>}
               </div>
-              <h3 className="font-display text-lg group-hover:text-primary transition-colors">{t.title}</h3>
+              <h3 className="line-clamp-2 font-display text-lg leading-tight transition-colors group-hover:text-primary">{t.title}</h3>
               <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{fmtDate(t.start_date)}</span>
                 <span className="inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" />{t.slots_left}/{t.total_slots}</span>
@@ -83,6 +89,6 @@ export default function TripsManagement() {
           </button>
         ))}
       </div>
-    </div>
+    </motion.div>
   );
 }

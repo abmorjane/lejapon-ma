@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage } from "pdf-lib";
 import logoUrl from "@/assets/logo-moroccan-express.png";
 import logoJaponUrl from "@/assets/logo-lejapon.png";
 import stampUrl from "@/assets/stamp-moroccan-express.png";
+import { agencyAddressLine, agencyIceLine, normalizeAgencySettings, type AgencySettings } from "@/lib/agency-settings";
 
 const RED = rgb(0.78, 0.07, 0.10);
 const BLACK = rgb(0.07, 0.07, 0.07);
@@ -28,15 +29,6 @@ export function sanitizePdfText(input: unknown): string {
   return s;
 }
 
-const COMPANY = {
-  name: "Moroccan Express Travel and Events",
-  address1: "Rue Annour, Hay El Wifaq",
-  address2: "Témara — Morocco 12040",
-  ice: "ICE: 000045023000080",
-  email: "info@lejapon.ma",
-  phone: "+212 711 449 838",
-};
-
 const fmtMad = (n: number) =>
   sanitizePdfText(new Intl.NumberFormat("fr-FR").format(Math.round(n || 0))) + " MAD";
 
@@ -47,14 +39,33 @@ const fmtDate = (d: string | Date | null | undefined) => {
   return dt.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
 };
 
-async function loadLogo(pdf: PDFDocument) {
+async function loadImage(pdf: PDFDocument, url: string) {
   try {
-    const res = await fetch(logoUrl);
+    const res = await fetch(url);
     const buf = new Uint8Array(await res.arrayBuffer());
     return await pdf.embedPng(buf);
   } catch {
     return null;
   }
+}
+
+async function loadExternalImage(pdf: PDFDocument, url?: string | null) {
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const contentType = res.headers.get("content-type") ?? "";
+    if (contentType.includes("jpeg") || contentType.includes("jpg") || /\.jpe?g($|\?)/i.test(url)) {
+      return await pdf.embedJpg(buf);
+    }
+    return await pdf.embedPng(buf);
+  } catch {
+    return null;
+  }
+}
+
+async function loadLogo(pdf: PDFDocument, agency?: AgencySettings) {
+  return (await loadExternalImage(pdf, agency?.logo_url)) ?? loadImage(pdf, logoUrl);
 }
 
 async function loadJaponLogo(pdf: PDFDocument) {
@@ -67,7 +78,9 @@ async function loadJaponLogo(pdf: PDFDocument) {
   }
 }
 
-async function loadStamp(pdf: PDFDocument) {
+async function loadStamp(pdf: PDFDocument, agency?: AgencySettings) {
+  const configured = await loadExternalImage(pdf, agency?.stamp_signature_url);
+  if (configured) return configured;
   try {
     const res = await fetch(stampUrl);
     const buf = new Uint8Array(await res.arrayBuffer());
@@ -77,8 +90,8 @@ async function loadStamp(pdf: PDFDocument) {
   }
 }
 
-async function drawStamp(pdf: PDFDocument, page: PDFPage, x: number, y: number, maxW = 170, maxH = 110) {
-  const stamp = await loadStamp(pdf);
+async function drawStamp(pdf: PDFDocument, page: PDFPage, x: number, y: number, maxW = 170, maxH = 110, agency?: AgencySettings) {
+  const stamp = await loadStamp(pdf, agency);
   if (!stamp) return;
   const ratio = stamp.width / stamp.height;
   let w = maxW, h = w / ratio;
@@ -103,8 +116,8 @@ function drawText(p: PDFPage, t: string, x: number, y: number, font: PDFFont, si
   p.drawText(sanitizePdfText(t), { x, y, font, size, color });
 }
 
-async function header(pdf: PDFDocument, page: PDFPage, title: string, number: string, fontB: PDFFont, font: PDFFont) {
-  const logo = await loadLogo(pdf);
+async function header(pdf: PDFDocument, page: PDFPage, title: string, number: string, fontB: PDFFont, font: PDFFont, agency: AgencySettings) {
+  const logo = await loadLogo(pdf, agency);
   const pw = page.getWidth();
   // Logo top-left — preserve aspect ratio (contain in 130×60 box)
   if (logo) {
@@ -131,10 +144,10 @@ async function header(pdf: PDFDocument, page: PDFPage, title: string, number: st
 
   // Company info under accent line
   let y = 758;
-  drawText(page, COMPANY.name, 40, y, fontB, 9.5, BLACK);
+  drawText(page, agency.legal_company_name, 40, y, fontB, 9.5, BLACK);
   y -= 12;
-  drawText(page, `${COMPANY.address1}, ${COMPANY.address2}`, 40, y, font, 8.5, GREY); y -= 11;
-  drawText(page, `${COMPANY.ice}  ·  ${COMPANY.email}  ·  ${COMPANY.phone}`, 40, y, font, 8.5, GREY);
+  drawText(page, agencyAddressLine(agency), 40, y, font, 8.5, GREY); y -= 11;
+  drawText(page, `${agencyIceLine(agency)}  ·  ${agency.email}  ·  ${agency.phone}`, 40, y, font, 8.5, GREY);
 }
 
 function infoBlock(page: PDFPage, font: PDFFont, fontB: PDFFont, x: number, y: number, w: number, label: string, lines: string[]) {
@@ -188,7 +201,7 @@ function totalsBlock(page: PDFPage, font: PDFFont, fontB: PDFFont, x: number, y:
   return y - blockH - 10;
 }
 
-async function footer(pdf: PDFDocument, page: PDFPage, font: PDFFont) {
+async function footer(pdf: PDFDocument, page: PDFPage, font: PDFFont, agency: AgencySettings) {
   const pw = page.getWidth();
   // Discreet footer with thin red rule
   page.drawRectangle({ x: 40, y: 58, width: pw - 80, height: 0.6, color: BORDER });
@@ -203,9 +216,9 @@ async function footer(pdf: PDFDocument, page: PDFPage, font: PDFFont) {
     page.drawImage(japon, { x: 40, y: 22, width: w, height: h });
     textX = 40 + w + 12;
   }
-  drawText(page, COMPANY.name, textX, 42, font, 7.5, GREY);
-  drawText(page, `${COMPANY.address1}, ${COMPANY.address2}`, textX, 32, font, 7.5, GREY);
-  drawText(page, `${COMPANY.ice}  ·  ${COMPANY.email}  ·  ${COMPANY.phone}`, textX, 22, font, 7.5, GREY);
+  drawText(page, agency.legal_company_name, textX, 42, font, 7.5, GREY);
+  drawText(page, agencyAddressLine(agency), textX, 32, font, 7.5, GREY);
+  drawText(page, `${agencyIceLine(agency)}  ·  ${agency.email}  ·  ${agency.phone}`, textX, 22, font, 7.5, GREY);
 }
 
 export type QuoteData = {
@@ -214,6 +227,7 @@ export type QuoteData = {
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
   number: string;
   validUntil?: Date;
+  agency?: Partial<AgencySettings> | null;
 };
 
 export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
@@ -221,8 +235,9 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
   const page = pdf.addPage([595.28, 841.89]); // A4
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontB = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const agency = normalizeAgencySettings(d.agency);
 
-  await header(pdf, page, "DEVIS", d.number, fontB, font);
+  await header(pdf, page, "DEVIS", d.number, fontB, font, agency);
 
   // Date row
   let y = 700;
@@ -295,9 +310,9 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
   wrap(cond, font, 9, 515).forEach((l) => { drawText(page, l, 40, y, font, 9, GREY); y -= 12; });
 
   // Cachet société (bottom-right above footer)
-  await drawStamp(pdf, page, 380, 80, 175, 115);
+  await drawStamp(pdf, page, 380, 80, 175, 115, agency);
 
-  await footer(pdf, page, font);
+  await footer(pdf, page, font, agency);
   return await pdf.save();
 }
 
@@ -307,6 +322,7 @@ export type ReceiptData = {
   payment: { amount_mad: number; method?: string | null; reference?: string | null; paid_at?: string | null };
   number: string;
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
+  agency?: Partial<AgencySettings> | null;
 };
 
 export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
@@ -314,8 +330,9 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   const page = pdf.addPage([595.28, 841.89]);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontB = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const agency = normalizeAgencySettings(d.agency);
 
-  await header(pdf, page, "REÇU DE PAIEMENT", d.number, fontB, font);
+  await header(pdf, page, "REÇU DE PAIEMENT", d.number, fontB, font, agency);
 
   let y = 700;
   drawText(page, `Date du paiement : ${fmtDate(d.payment.paid_at ?? new Date())}`, 40, y, font, 10);
@@ -393,9 +410,9 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   page.drawRectangle({ x: 360, y: 110, width: 195, height: 70, borderColor: GREY, borderWidth: 0.6, color: undefined as any, opacity: 0 });
   drawText(page, "Signature & cachet", 365, 168, font, 8, GREY);
   // Cachet société à l'intérieur du cadre signature
-  await drawStamp(pdf, page, 365, 95, 185, 95);
+  await drawStamp(pdf, page, 365, 95, 185, 95, agency);
 
-  await footer(pdf, page, font);
+  await footer(pdf, page, font, agency);
   return await pdf.save();
 }
 

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "../components/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -6,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { AlertTriangle, ChevronDown, Download, FileScan, Plus, Search, User, Upload, Trash2 } from "lucide-react";
@@ -111,6 +113,12 @@ const normalizeClientDateFields = (client: any) => ({
   passport_issue_date: client.passport_issue_date === "" ? null : client.passport_issue_date,
   birthdate: client.birthdate === "" ? null : client.birthdate,
 });
+
+const fadeIn = {
+  initial: { opacity: 0, y: 10 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.22, ease: "easeOut" },
+};
 
 export default function Clients() {
   const { user, isAdmin, isSuperAdmin, session } = useAuth();
@@ -371,7 +379,7 @@ export default function Clients() {
   };
 
   return (
-    <div>
+    <motion.div {...fadeIn} className="space-y-6">
       <PageHeader title="Clients (CRM)" description="Fiches, historique, notes."
         action={
           <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:flex-wrap">
@@ -384,8 +392,8 @@ export default function Clients() {
             <Upload className="w-4 h-4" /> Importer
           </Button>
           <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setEdit(empty); }}>
-            <DialogTrigger asChild><Button className="min-h-11"><Plus className="w-4 h-4" /> Nouveau client</Button></DialogTrigger>
-            <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-xl">
+            <DialogTrigger asChild><Button className="col-span-2 min-h-11 rounded-xl sm:col-span-1"><Plus className="w-4 h-4" /> Nouveau client</Button></DialogTrigger>
+            <DialogContent className="max-h-[92dvh] overflow-y-auto rounded-2xl sm:max-w-xl">
               <DialogHeader><DialogTitle>{edit.id ? "Modifier" : "Nouveau"} client</DialogTitle></DialogHeader>
               <div className="rounded-xl border border-border bg-secondary/40 p-3 text-sm text-muted-foreground">
                 Le scan passeport aide à pré-remplir la fiche. L'admin doit toujours vérifier avant validation.
@@ -583,16 +591,25 @@ export default function Clients() {
         </Dialog>
       )}
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input className="pl-9 min-h-11" type="search" enterKeyHint="search" placeholder="Rechercher un client…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="min-w-0 space-y-4">
+          <div className="rounded-xl border border-border bg-background p-3 shadow-sm sm:p-4">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold">Recherche & filtres</p>
+                <p className="text-xs text-muted-foreground">{rows.length} client(s) affiché(s)</p>
+              </div>
+              <span className="text-xs text-muted-foreground">{selectedRows.length} sélectionné(s)</span>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 w-4 h-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="min-h-11 pl-9" type="search" enterKeyHint="search" placeholder="Rechercher nom, email, téléphone, passeport…" value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
           </div>
-          <div className="mb-3 grid grid-cols-1 gap-2 rounded-xl border border-border bg-background p-3 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-2 rounded-xl border border-border bg-background p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
             <Input className="min-h-10" placeholder="Profession" value={professionFilter} onChange={(e) => setProfessionFilter(e.target.value)} />
             <Input className="min-h-10" placeholder="Ville" value={cityFilter} onChange={(e) => setCityFilter(e.target.value)} />
-            <Input className="min-h-10" type="number" min="0" inputMode="numeric" placeholder="Âge" value={ageFilter} onChange={(e) => setAgeFilter(e.target.value)} />
+            <Input className="min-h-10" type="number" min="0" inputMode="numeric" placeholder="Âge exact" value={ageFilter} onChange={(e) => setAgeFilter(e.target.value)} />
             <Select value={maritalFilter} onValueChange={setMaritalFilter}>
               <SelectTrigger className="min-h-10"><SelectValue placeholder="État civil" /></SelectTrigger>
               <SelectContent>
@@ -601,7 +618,7 @@ export default function Clients() {
               </SelectContent>
             </Select>
           </div>
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-border bg-background px-3 py-2 text-sm">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2 text-sm">
             <label className="flex items-center gap-2">
               <Checkbox
                 checked={allVisibleSelected}
@@ -612,10 +629,17 @@ export default function Clients() {
             </label>
             <span className="text-xs text-muted-foreground">{selectedRows.length} sélectionné(s)</span>
           </div>
-          <div className="md:hidden space-y-3">
+          <div className="space-y-3 md:hidden">
             {rows.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground bg-background rounded-2xl border border-border">Aucun client.</p>}
-            {rows.map((c) => (
-              <details key={c.id} className="group bg-background rounded-2xl border border-border overflow-hidden" onClick={() => openClient(c)}>
+            {rows.map((c, index) => (
+              <motion.details
+                key={c.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: Math.min(index * 0.025, 0.2), duration: 0.18 }}
+                className="group overflow-hidden rounded-xl border border-border bg-background shadow-sm"
+                onClick={() => openClient(c)}
+              >
                 <summary className="list-none p-4 cursor-pointer">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 gap-3">
@@ -655,15 +679,16 @@ export default function Clients() {
                     Voir la fiche
                   </Button>
                 </div>
-              </details>
+              </motion.details>
             ))}
           </div>
 
-          <div className="hidden md:block bg-background rounded-2xl border border-border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-secondary/50 text-left">
+          <div className="hidden overflow-hidden rounded-xl border border-border bg-background shadow-sm md:block">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-sm">
+              <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
                 <tr>
-                  <th className="p-4 w-10">
+                  <th className="w-10 p-4">
                     <Checkbox
                       checked={allVisibleSelected}
                       onCheckedChange={(checked) => toggleAllVisible(Boolean(checked))}
@@ -681,7 +706,7 @@ export default function Clients() {
               <tbody className="divide-y divide-border">
                 {rows.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Aucun client.</td></tr>}
                 {rows.map((c) => (
-                  <tr key={c.id} onClick={() => openClient(c)} className="cursor-pointer hover:bg-secondary/30">
+                  <tr key={c.id} onClick={() => openClient(c)} className="cursor-pointer transition-colors hover:bg-muted/50">
                     <td className="p-4" onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedIds.has(c.id)}
@@ -694,8 +719,13 @@ export default function Clients() {
                         {c.full_name}
                         <LoyaltyBadge tier={c.loyalty_tier} isReturning={c.is_returning} trips={c.trips_completed} />
                       </div>
+                      {(c.profession || c.marital_status) && (
+                        <p className="mt-1 text-xs font-normal text-muted-foreground">
+                          {[c.profession, maritalStatusLabel(c.marital_status)].filter(Boolean).join(" · ")}
+                        </p>
+                      )}
                     </td>
-                    <td className="p-4 text-xs">{c.email}<br/>{c.phone}</td>
+                    <td className="p-4 text-xs leading-5 text-muted-foreground">{c.email || "—"}<br/>{c.phone || "—"}</td>
                     <td className="p-4 text-xs">{c.last_trip_label ?? "—"}</td>
                     <td className="p-4">{c.city ?? "—"}</td>
                     <td className="p-4 text-xs text-muted-foreground">{fmtDate(c.created_at)}</td>
@@ -716,24 +746,29 @@ export default function Clients() {
                 ))}
               </tbody>
             </table>
-          </div>
-        </div>
-
-        <aside className="bg-background rounded-2xl border border-border p-4 sm:p-6 h-fit lg:sticky lg:top-6">
-          {!selected ? (
-            <div className="text-center py-8">
-              <User className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-              <p className="text-sm text-muted-foreground">Sélectionnez un client pour voir ses notes.</p>
             </div>
+          </div>
+        </section>
+
+        <Card className="h-fit rounded-xl shadow-sm xl:sticky xl:top-6">
+          {!selected ? (
+            <CardContent className="py-10 text-center">
+              <User className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+              <p className="text-sm font-medium">Aucune fiche sélectionnée</p>
+              <p className="mt-1 text-xs text-muted-foreground">Sélectionnez un client pour voir son dossier, ses notes et son historique.</p>
+            </CardContent>
           ) : (
-            <>
+            <motion.div key={selected.id} initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2 }}>
+              <CardHeader className="p-4 pb-3 sm:p-6 sm:pb-3">
               <div className="flex items-start justify-between gap-2 mb-1">
-                <h3 className="font-display text-lg">{selected.full_name}</h3>
+                <CardTitle className="text-lg leading-6">{selected.full_name}</CardTitle>
                 <LoyaltyBadge tier={selected.loyalty_tier} isReturning={selected.is_returning} trips={selected.trips_completed} />
               </div>
-              <p className="text-xs text-muted-foreground mb-3">{selected.email}</p>
+              <p className="text-xs text-muted-foreground">{selected.email || "—"}</p>
+              </CardHeader>
+              <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
               <QuickActions phone={selected.phone} email={selected.email} passport={selected.passport_number} className="mb-4" />
-              <div className="mb-4 rounded-xl border border-border p-3 text-xs">
+              <div className="mb-4 rounded-xl border border-border bg-muted/20 p-3 text-xs">
                 <p className="mb-2 font-semibold uppercase text-muted-foreground">Informations personnelles</p>
                 <div className="grid grid-cols-2 gap-2">
                   <div><p className="text-muted-foreground">Profession</p><p className="font-medium">{selected.profession || "—"}</p></div>
@@ -750,15 +785,15 @@ export default function Clients() {
                 </div>
               )}
               <div className="grid grid-cols-3 gap-2 mb-4 text-center">
-                <div className="bg-secondary rounded-lg p-2">
+                <div className="rounded-lg bg-muted p-2">
                   <p className="text-[10px] uppercase text-muted-foreground">Voyages</p>
                   <p className="font-display text-lg">{selected.trips_completed ?? 0}</p>
                 </div>
-                <div className="bg-secondary rounded-lg p-2">
+                <div className="rounded-lg bg-muted p-2">
                   <p className="text-[10px] uppercase text-muted-foreground">Palier</p>
                   <p className="font-display text-sm pt-1">{tierLabel(selected.loyalty_tier)}</p>
                 </div>
-                <div className="bg-secondary rounded-lg p-2">
+                <div className="rounded-lg bg-muted p-2">
                   <p className="text-[10px] uppercase text-muted-foreground">Récomp. utilisées</p>
                   <p className="font-display text-lg">{selected.rewards_used ?? 0}</p>
                 </div>
@@ -774,7 +809,7 @@ export default function Clients() {
                     const start = h.trips?.start_date ? fmtDate(h.trips.start_date) : null;
                     const extras = (h.booking_extras ?? []).map((e: any) => `${e.name_snapshot}${e.qty > 1 ? ` ×${e.qty}` : ""}`).join(", ");
                     return (
-                      <Link key={h.id} to={`/admin/bookings/${h.id}`} className="block text-xs bg-secondary rounded-lg p-3 hover:bg-secondary/70">
+                      <Link key={h.id} to={`/admin/bookings/${h.id}`} className="block rounded-lg bg-muted p-3 text-xs transition-colors hover:bg-muted/70">
                         <div className="flex items-center justify-between gap-2">
                           <p className="font-medium">{tripTitle}{start ? ` — ${start}` : ""}</p>
                           <span className="text-[10px] uppercase text-muted-foreground">{h.status}</span>
@@ -795,7 +830,7 @@ export default function Clients() {
                 <div className="space-y-2 mb-2">
                   {rewards.length === 0 && <p className="text-xs text-muted-foreground">Aucune récompense.</p>}
                   {rewards.map((r) => (
-                    <div key={r.id} className="text-xs bg-secondary rounded-lg p-2 flex items-center justify-between gap-2">
+                    <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg bg-muted p-2 text-xs">
                       <div>
                         <p className="font-medium">{r.label}</p>
                         <p className="text-muted-foreground capitalize">{r.status}</p>
@@ -821,15 +856,16 @@ export default function Clients() {
               <div className="space-y-2 max-h-80 overflow-y-auto">
                 {notes.length === 0 && <p className="text-xs text-muted-foreground">Aucune note.</p>}
                 {notes.map((n) => (
-                  <div key={n.id} className="text-xs bg-secondary rounded-lg p-3">
+                  <div key={n.id} className="rounded-lg bg-muted p-3 text-xs">
                     <p className="text-foreground/80">{n.body}</p>
                     <p className="text-muted-foreground mt-1">{fmtDate(n.created_at)}</p>
                   </div>
                 ))}
               </div>
-            </>
+              </CardContent>
+            </motion.div>
           )}
-        </aside>
+        </Card>
       </div>
 
       <AlertDialog open={!!confirmDelete} onOpenChange={(v) => !v && setConfirmDelete(null)}>
@@ -850,6 +886,6 @@ export default function Clients() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </motion.div>
   );
 }

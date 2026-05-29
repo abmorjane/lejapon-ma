@@ -247,7 +247,7 @@ Deno.serve(async (req) => {
       .from("user_roles")
       .select("role")
       .eq("user_id", userData.user.id);
-    const allowed = (roles ?? []).some((r: any) => ["super_admin", "admin"].includes(r.role));
+    const allowed = (roles ?? []).some((r: any) => ["super_admin", "admin", "manager"].includes(r.role));
     if (!allowed) throw new Error("Forbidden");
 
     const { storage_path, ocr_storage_path } = await req.json();

@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
@@ -112,7 +111,7 @@ export default function VisaForm() {
       },
       {
         key: "travel",
-        filled: !!(app.purpose_of_visit && app.intended_length_of_stay && app.date_of_arrival),
+        filled: !!(app.purpose_of_visit && app.intended_length_of_stay),
         weight: 15,
       },
       {
@@ -122,7 +121,7 @@ export default function VisaForm() {
       },
       {
         key: "documents",
-        filled: docs.some((d) => d.doc_type === "passport"),
+        filled: docs.length > 0,
         weight: 15,
       },
       {
@@ -175,9 +174,6 @@ export default function VisaForm() {
     const missing = validateVisaApplication(app);
     if (missing.length) {
       return toast.error(`Champs obligatoires manquants : ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}`);
-    }
-    if (!docs.some((d) => d.doc_type === "passport")) {
-      return toast.error("Veuillez téléverser le scan de votre passeport.");
     }
     await save(true);
     setBusy(true);
@@ -390,22 +386,12 @@ export default function VisaForm() {
         <h2 className="font-display text-xl mb-4">Voyage</h2>
         <p className="text-xs text-muted-foreground mb-4 inline-flex items-start gap-2">
           <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-accent" />
-          Indiquez votre <strong className="text-foreground mx-1">premier hébergement</strong> au Japon. Une réservation modifiable est acceptée.
+          Les informations de vol, d'arrivée et d'hôtel sont préparées par notre équipe à partir de votre voyage.
         </p>
         <div className="grid md:grid-cols-2 gap-4">
           {T("purpose_of_visit", "Motif du séjour")}
           {T("intended_length_of_stay", "Durée prévue du séjour")}
-          {T("date_of_arrival", "Date d'arrivée au Japon", "date")}
-          {T("port_of_entry", "Port d'entrée")}
-          {T("airline_or_ship", "Compagnie / vol")}
           {T("previous_stays", "Séjours précédents au Japon")}
-        </div>
-        <Separator className="my-5" />
-        <h3 className="text-sm font-semibold mb-3">Hébergement principal</h3>
-        <div className="grid md:grid-cols-2 gap-4">
-          {T("hotel_name", "Nom de l'hôtel / hôte")}
-          {T("hotel_tel", "Téléphone")}
-          <div className="md:col-span-2">{T("hotel_address", "Adresse")}</div>
         </div>
       </Card>
 
@@ -461,7 +447,7 @@ export default function VisaForm() {
       <Card className="p-6 mb-6">
         <h2 className="font-display text-xl mb-2">Documents</h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Téléversez le scan de votre passeport (page biographique). PDF, JPG ou PNG, 10 Mo max.
+          Vous pouvez téléverser le scan de votre passeport ou tout document complémentaire maintenant, ou l'envoyer plus tard à notre équipe. PDF, JPG ou PNG, 10 Mo max.
         </p>
         {isReadOnly && canUploadMore && (
           <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 mb-4 text-sm text-muted-foreground">

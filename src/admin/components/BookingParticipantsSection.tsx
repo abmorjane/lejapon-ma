@@ -7,9 +7,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Plus, UserPlus, Trash2, Pencil, Save, X, ExternalLink, AlertTriangle } from "lucide-react";
+import { Plus, UserPlus, Trash2, Pencil, Save, X, ExternalLink, AlertTriangle, ChevronDown } from "lucide-react";
 import { AddTravelerDialog } from "./AddTravelerDialog";
 import { LinkExistingClientDialog } from "./LinkExistingClientDialog";
+import { QuickActions } from "./QuickActions";
 
 const RELATIONS: Record<string, string> = {
   self: "Lui-même", spouse: "Conjoint(e)", child: "Enfant",
@@ -76,11 +77,11 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
   const overflow = filled > expectedTravelers;
 
   return (
-    <section className="bg-background rounded-2xl border border-border p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+    <section className="rounded-2xl border border-border bg-background p-4 shadow-sm sm:p-6">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-lg">Voyageurs associés</h2>
-          <div className="flex flex-wrap items-center gap-2 mt-1 text-xs">
+          <div className="mt-2 grid grid-cols-3 gap-2 text-xs sm:flex sm:flex-wrap">
             <Badge variant="outline">Prévus : {expectedTravelers}</Badge>
             <Badge variant="outline">Renseignés : {filled}</Badge>
             <Badge variant={remaining === 0 ? "default" : "secondary"}>Restant : {remaining}</Badge>
@@ -89,9 +90,9 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
             )}
           </div>
         </div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setOpenLink(true)}><UserPlus className="w-4 h-4" /> Associer un client</Button>
-          <Button size="sm" onClick={() => setOpenAdd(true)}><Plus className="w-4 h-4" /> Nouveau voyageur</Button>
+        <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:flex">
+          <Button size="sm" variant="outline" className="min-h-11" onClick={() => setOpenLink(true)}><UserPlus className="w-4 h-4" /> Associer</Button>
+          <Button size="sm" className="min-h-11" onClick={() => setOpenAdd(true)}><Plus className="w-4 h-4" /> Nouveau</Button>
         </div>
       </div>
 
@@ -102,7 +103,7 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
           const isEdit = editing === p.id;
           if (isEdit) {
             return (
-              <div key={p.id} className="border border-border rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+              <div key={p.id} className="grid grid-cols-1 gap-2 rounded-xl border border-border p-3 text-sm sm:grid-cols-2 md:grid-cols-4">
                 <Input placeholder="Prénom" value={draft.first_name ?? ""} onChange={(e) => setDraft({ ...draft, first_name: e.target.value })} />
                 <Input placeholder="Nom" value={draft.last_name ?? ""} onChange={(e) => setDraft({ ...draft, last_name: e.target.value })} />
                 <Select value={draft.sex ?? "none"} onValueChange={(v) => setDraft({ ...draft, sex: v === "none" ? null : v })}>
@@ -132,19 +133,20 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{Object.entries(RELATIONS).map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
                 </Select>
-                <Textarea className="col-span-2 md:col-span-4" placeholder="Adresse complète" value={draft.address ?? ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
-                <div className="flex gap-1 col-span-2 md:col-span-4 justify-end">
-                  <Button size="sm" variant="outline" onClick={cancelEdit}><X className="w-4 h-4" /></Button>
-                  <Button size="sm" onClick={saveEdit}><Save className="w-4 h-4" /> Enregistrer</Button>
+                <Textarea className="sm:col-span-2 md:col-span-4" placeholder="Adresse complète" value={draft.address ?? ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
+                <div className="flex gap-1 justify-end sm:col-span-2 md:col-span-4">
+                  <Button size="sm" variant="outline" className="min-h-11" onClick={cancelEdit}><X className="w-4 h-4" /></Button>
+                  <Button size="sm" className="min-h-11" onClick={saveEdit}><Save className="w-4 h-4" /> Enregistrer</Button>
                 </div>
               </div>
             );
           }
           return (
-            <div key={p.id} className="border border-border rounded-lg p-3 flex flex-wrap items-start justify-between gap-3 text-sm">
-              <div className="flex-1 min-w-[200px]">
+            <div key={p.id} className="rounded-xl border border-border p-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <p className="font-medium">{p.first_name} {p.last_name}</p>
+                  <p className="truncate font-medium">{p.first_name} {p.last_name}</p>
                   {p.is_lead && <Badge variant="default" className="text-[10px]">Responsable</Badge>}
                   {p.relation && <Badge variant="outline" className="text-[10px]">{RELATIONS[p.relation] ?? p.relation}</Badge>}
                   {p.client_id && (
@@ -153,24 +155,32 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                     </Link>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="mt-1 truncate text-xs text-muted-foreground">
                   {p.sex || "—"} · {p.date_of_birth ?? "—"} · {p.nationality || "—"}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="truncate text-xs text-muted-foreground">
                   {p.profession || "—"} · {maritalStatusLabel(p.marital_status)}
                 </p>
-                {p.address && <p className="text-xs text-muted-foreground">{p.address}</p>}
-                <p className="text-xs text-muted-foreground">
-                  PP : {p.passport_no || "—"} {p.passport_expiry ? `(exp. ${p.passport_expiry})` : ""}
-                </p>
-                {(p.email || p.phone) && (
-                  <p className="text-xs text-muted-foreground">{p.email || "—"} · {p.phone || "—"}</p>
-                )}
               </div>
-              <div className="flex gap-1">
-                <Button size="sm" variant="ghost" onClick={() => startEdit(p)}><Pencil className="w-4 h-4" /></Button>
-                <Button size="sm" variant="ghost" onClick={() => remove(p)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+              <div className="flex shrink-0 gap-1">
+                <Button size="icon" variant="ghost" className="h-11 w-11" onClick={() => startEdit(p)}><Pencil className="w-4 h-4" /></Button>
+                <Button size="icon" variant="ghost" className="h-11 w-11" onClick={() => remove(p)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
               </div>
+              </div>
+              <QuickActions phone={p.phone} email={p.email} passport={p.passport_no} compact className="mt-3" />
+              <details className="group mt-3 rounded-lg bg-muted/40">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between px-3 text-xs font-semibold text-muted-foreground">
+                  Passeport & détails
+                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="grid grid-cols-2 gap-3 px-3 pb-3 text-xs">
+                  <div><p className="text-muted-foreground">Passeport</p><p className="font-medium text-foreground">{p.passport_no || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Expiration</p><p className="font-medium text-foreground">{p.passport_expiry || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Émission</p><p className="font-medium text-foreground">{p.passport_issue_date || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Contact</p><p className="truncate font-medium text-foreground">{p.email || p.phone || "—"}</p></div>
+                  {p.address && <div className="col-span-2"><p className="text-muted-foreground">Adresse</p><p className="break-words font-medium text-foreground">{p.address}</p></div>}
+                </div>
+              </details>
             </div>
           );
         })}

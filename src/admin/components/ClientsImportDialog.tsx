@@ -17,14 +17,29 @@ import { toast } from "sonner";
 
 type ParsedRow = {
   full_name: string;
-  email: string;
-  phone: string;
-  profession: string;
-  marital_status: string;
-  birthdate: string;
-  passport_expiry: string;
-  passport_issue_date: string;
-  address: string;
+  email: string | null;
+  phone: string | null;
+  city: string | null;
+  profession: string | null;
+  marital_status: string | null;
+  address: string | null;
+  nationality: string | null;
+  sex: string | null;
+  birthdate: string | null;
+  passport_number: string | null;
+  passport_issue_date: string | null;
+  passport_expiry: string | null;
+  passport_expiring_soon: boolean | null;
+  passport_renewal_needed: boolean | null;
+  passport_file_path: string | null;
+  last_trip_label: string | null;
+  last_trip_departure_date: string | null;
+  client_status: string | null;
+  trips_completed: number | null;
+  amount_paid: number | null;
+  balance_due: number | null;
+  notes: string | null;
+  registered_at: string | null;
   _invalidDateFields: string[];
   _valid: boolean;
   _error?: string;
@@ -33,12 +48,27 @@ type ParsedRow = {
 const NAME_KEYS = ["name", "full_name", "fullname", "nom", "nom complet", "client", "prénom et nom"];
 const EMAIL_KEYS = ["email", "e-mail", "mail", "courriel"];
 const PHONE_KEYS = ["phone", "phone_number", "tel", "tél", "téléphone", "telephone", "mobile", "gsm"];
+const CITY_KEYS = ["ville", "city"];
 const PROFESSION_KEYS = ["profession", "metier", "métier", "emploi", "occupation"];
 const MARITAL_KEYS = ["etat civil", "état civil", "marital status", "situation familiale"];
+const ADDRESS_KEYS = ["address", "adresse", "adresse complète", "residential address"];
+const NATIONALITY_KEYS = ["nationalité", "nationalite", "nationality"];
+const SEX_KEYS = ["sexe", "sex", "gender", "genre"];
 const BIRTHDATE_KEYS = ["birthdate", "birth date", "date naissance", "date de naissance", "naissance"];
+const PASSPORT_NUMBER_KEYS = ["numéro de passeport", "numero de passeport", "n passeport", "n° passeport", "passport number", "passport_number", "passport no", "passport_no"];
 const PASSPORT_EXPIRY_KEYS = ["passport_expiry", "passport expiry", "expiration passeport", "date expiration passeport", "date d'expiration du passeport", "expiration", "validité passeport"];
 const PASSPORT_ISSUE_KEYS = ["passport_issue_date", "passport issue date", "emission passeport", "émission passeport", "date emission passeport", "date d'émission du passeport", "delivrance passeport", "délivrance passeport"];
-const ADDRESS_KEYS = ["address", "adresse", "adresse complète", "residential address"];
+const PASSPORT_EXPIRING_SOON_KEYS = ["passeport expirant bientôt", "passeport expirant bientot", "passport expiring soon", "passport_expiring_soon"];
+const PASSPORT_RENEWAL_KEYS = ["passeport à renouveler", "passeport a renouveler", "passport renewal needed", "passport_renewal_needed"];
+const PASSPORT_FILE_KEYS = ["fichier passeport", "passport file", "passport_file_path", "passport url", "url passeport"];
+const LAST_TRIP_KEYS = ["voyage inscrit", "last trip", "last_trip_label", "voyage"];
+const LAST_TRIP_DEPARTURE_KEYS = ["date de départ", "date de depart", "departure date", "last_trip_departure_date"];
+const CLIENT_STATUS_KEYS = ["statut client", "client status", "client_status", "statut"];
+const TRIPS_COMPLETED_KEYS = ["nombre de voyages", "trips completed", "trips_completed"];
+const AMOUNT_PAID_KEYS = ["montant payé", "montant paye", "amount paid", "amount_paid"];
+const BALANCE_DUE_KEYS = ["reste à payer", "reste a payer", "balance due", "balance_due", "solde restant"];
+const NOTES_KEYS = ["notes", "note", "commentaires", "commentaire"];
+const REGISTERED_AT_KEYS = ["date d'inscription", "date inscription", "registered at", "registered_at", "created at"];
 
 const normalizeMaritalStatus = (value: string) => {
   const v = value.toLowerCase().trim();
@@ -48,6 +78,51 @@ const normalizeMaritalStatus = (value: string) => {
   if (["divorce", "divorcé", "divorcée", "divorce(e)", "divorcé(e)", "divorced"].includes(v)) return "divorce";
   if (["veuf", "veuve", "widowed"].includes(v)) return "veuf";
   return value;
+};
+
+const normalizeHeader = (s: string) =>
+  s
+    .toLowerCase()
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/['’]/g, " ")
+    .replace(/[_\s-]+/g, " ")
+    .replace(/[°]/g, "")
+    .trim();
+
+const normalizedKeys = (keys: string[]) => keys.map(normalizeHeader);
+
+const toNullableString = (value: unknown): string | null => {
+  if (value == null) return null;
+  const v = String(value).trim();
+  return v === "" ? null : v;
+};
+
+const parseBoolean = (value: unknown): boolean | null => {
+  if (value == null || value === "") return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+  const v = String(value).trim().toLowerCase();
+  if (["true", "vrai", "oui", "yes", "y", "1"].includes(v)) return true;
+  if (["false", "faux", "non", "no", "n", "0"].includes(v)) return false;
+  return null;
+};
+
+const parseAmount = (value: unknown): number | null => {
+  if (value == null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  let v = String(value).trim();
+  if (!v) return null;
+  v = v.replace(/\s|\u00a0/g, "").replace(/[^\d,.-]/g, "");
+  if (v.includes(",")) v = v.replace(/\./g, "").replace(",", ".");
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+const parseInteger = (value: unknown): number | null => {
+  const n = parseAmount(value);
+  return n == null ? null : Math.trunc(n);
 };
 
 export function parseSpreadsheetDate(value: unknown): string | null {
@@ -97,18 +172,18 @@ export function parseSpreadsheetDate(value: unknown): string | null {
 }
 
 function pickRawField(row: Record<string, any>, keys: string[]): unknown {
-  const norm = (s: string) => s.toLowerCase().trim().replace(/[_\s-]+/g, " ");
+  const keysNorm = normalizedKeys(keys);
   for (const k of Object.keys(row)) {
-    if (keys.includes(norm(k))) {
+    if (keysNorm.includes(normalizeHeader(k))) {
       return row[k];
     }
   }
   return "";
 }
 
-function pickField(row: Record<string, any>, keys: string[]): string {
+function pickField(row: Record<string, any>, keys: string[]): string | null {
   const v = pickRawField(row, keys);
-  return v == null ? "" : String(v).trim();
+  return toNullableString(v);
 }
 
 export function ClientsImportDialog({
@@ -138,22 +213,32 @@ export function ClientsImportDialog({
       const json = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
 
       const parsed: ParsedRow[] = json.map((r) => {
-        const full_name = pickField(r, NAME_KEYS);
+        const full_name = pickField(r, NAME_KEYS) ?? "";
         const email = pickField(r, EMAIL_KEYS);
         const phone = pickField(r, PHONE_KEYS);
+        const city = pickField(r, CITY_KEYS);
         const profession = pickField(r, PROFESSION_KEYS);
-        const marital_status = normalizeMaritalStatus(pickField(r, MARITAL_KEYS));
+        const marital_status = toNullableString(normalizeMaritalStatus(pickField(r, MARITAL_KEYS) ?? ""));
+        const address = pickField(r, ADDRESS_KEYS);
+        const nationality = pickField(r, NATIONALITY_KEYS);
+        const sex = pickField(r, SEX_KEYS);
         const birthdateRaw = pickRawField(r, BIRTHDATE_KEYS);
+        const passport_number = pickField(r, PASSPORT_NUMBER_KEYS);
         const passportExpiryRaw = pickRawField(r, PASSPORT_EXPIRY_KEYS);
         const passportIssueRaw = pickRawField(r, PASSPORT_ISSUE_KEYS);
-        const birthdate = parseSpreadsheetDate(birthdateRaw) ?? "";
-        const passport_expiry = parseSpreadsheetDate(passportExpiryRaw) ?? "";
-        const passport_issue_date = parseSpreadsheetDate(passportIssueRaw) ?? "";
-        const address = pickField(r, ADDRESS_KEYS);
+        const lastTripDepartureRaw = pickRawField(r, LAST_TRIP_DEPARTURE_KEYS);
+        const registeredAtRaw = pickRawField(r, REGISTERED_AT_KEYS);
+        const birthdate = parseSpreadsheetDate(birthdateRaw);
+        const passport_expiry = parseSpreadsheetDate(passportExpiryRaw);
+        const passport_issue_date = parseSpreadsheetDate(passportIssueRaw);
+        const last_trip_departure_date = parseSpreadsheetDate(lastTripDepartureRaw);
+        const registered_at = parseSpreadsheetDate(registeredAtRaw);
         const _invalidDateFields = [
           birthdateRaw !== "" && !birthdate ? "date de naissance" : "",
           passportExpiryRaw !== "" && !passport_expiry ? "expiration passeport" : "",
           passportIssueRaw !== "" && !passport_issue_date ? "émission passeport" : "",
+          lastTripDepartureRaw !== "" && !last_trip_departure_date ? "date de départ" : "",
+          registeredAtRaw !== "" && !registered_at ? "date d'inscription" : "",
         ].filter(Boolean);
         let _valid = true;
         let _error: string | undefined;
@@ -168,12 +253,27 @@ export function ClientsImportDialog({
           full_name,
           email,
           phone,
+          city,
           profession,
           marital_status,
-          birthdate,
-          passport_expiry,
-          passport_issue_date,
           address,
+          nationality,
+          sex,
+          birthdate,
+          passport_number,
+          passport_issue_date,
+          passport_expiry,
+          passport_expiring_soon: parseBoolean(pickRawField(r, PASSPORT_EXPIRING_SOON_KEYS)),
+          passport_renewal_needed: parseBoolean(pickRawField(r, PASSPORT_RENEWAL_KEYS)),
+          passport_file_path: pickField(r, PASSPORT_FILE_KEYS),
+          last_trip_label: pickField(r, LAST_TRIP_KEYS),
+          last_trip_departure_date,
+          client_status: pickField(r, CLIENT_STATUS_KEYS),
+          trips_completed: parseInteger(pickRawField(r, TRIPS_COMPLETED_KEYS)),
+          amount_paid: parseAmount(pickRawField(r, AMOUNT_PAID_KEYS)),
+          balance_due: parseAmount(pickRawField(r, BALANCE_DUE_KEYS)),
+          notes: pickField(r, NOTES_KEYS),
+          registered_at,
           _invalidDateFields,
           _valid,
           _error,
@@ -200,18 +300,33 @@ export function ClientsImportDialog({
     setImporting(true);
     const payload = validRows.map((r) => ({
       full_name: r.full_name,
-      email: r.email || null,
-      phone: r.phone || null,
-      profession: r.profession || null,
-      marital_status: r.marital_status || null,
-      birthdate: r.birthdate || null,
-      passport_expiry: r.passport_expiry || null,
-      passport_issue_date: r.passport_issue_date || null,
-      address: r.address || null,
+      email: r.email,
+      phone: r.phone,
+      city: r.city,
+      profession: r.profession,
+      marital_status: r.marital_status,
+      address: r.address,
+      nationality: r.nationality,
+      sex: r.sex,
+      birthdate: r.birthdate,
+      passport_number: r.passport_number,
+      passport_issue_date: r.passport_issue_date,
+      passport_expiry: r.passport_expiry,
+      passport_expiring_soon: r.passport_expiring_soon,
+      passport_renewal_needed: r.passport_renewal_needed,
+      passport_file_path: r.passport_file_path,
+      last_trip_label: r.last_trip_label,
+      last_trip_departure_date: r.last_trip_departure_date,
+      client_status: r.client_status,
+      trips_completed: r.trips_completed,
+      amount_paid: r.amount_paid,
+      balance_due: r.balance_due,
+      notes: r.notes,
+      registered_at: r.registered_at,
       source: "import",
     }));
     console.log("CLIENT INSERT PAYLOAD", { table: "public.clients", payload });
-    const { error } = await supabase.from("clients").insert(payload);
+    const { error } = await supabase.from("clients").insert(payload as any);
     setImporting(false);
     if (error) {
       toast.error("Erreur d'import : " + error.message);
@@ -235,7 +350,7 @@ export function ClientsImportDialog({
         <DialogHeader>
           <DialogTitle>Importer des clients</DialogTitle>
           <DialogDescription>
-            Fichier CSV ou Excel (.xlsx). Colonnes reconnues automatiquement : Nom, Email, Téléphone, Profession, État civil, Date de naissance, Adresse.
+            Fichier CSV ou Excel (.xlsx). Toutes les colonnes CRM/passeport/export sont mappées vers public.clients.
           </DialogDescription>
         </DialogHeader>
 
@@ -262,8 +377,7 @@ export function ClientsImportDialog({
               }}
             />
             <p className="text-[11px] text-muted-foreground mt-4">
-              En-têtes acceptées : <code>name / nom</code>, <code>email</code>,{" "}
-              <code>phone / tel / téléphone</code>
+              En-têtes acceptées : Nom complet, Email, Téléphone, Ville, Profession, Passeport, Voyage, Paiements, Notes.
             </p>
           </div>
         ) : (
@@ -301,6 +415,7 @@ export function ClientsImportDialog({
                     <th className="p-3">Nom</th>
                     <th className="p-3">Email</th>
                     <th className="p-3">Téléphone</th>
+                    <th className="p-3">Ville</th>
                     <th className="p-3">Profession</th>
                     <th className="p-3">État civil</th>
                     <th className="p-3">Naissance</th>
@@ -322,6 +437,7 @@ export function ClientsImportDialog({
                       <td className="p-3 font-medium">{r.full_name || "—"}</td>
                       <td className="p-3 text-muted-foreground">{r.email || "—"}</td>
                       <td className="p-3 text-muted-foreground">{r.phone || "—"}</td>
+                      <td className="p-3 text-muted-foreground">{r.city || "—"}</td>
                       <td className="p-3 text-muted-foreground">{r.profession || "—"}</td>
                       <td className="p-3 text-muted-foreground">{r.marital_status || "—"}</td>
                       <td className="p-3 text-muted-foreground">

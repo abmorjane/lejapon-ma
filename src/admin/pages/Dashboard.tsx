@@ -3,12 +3,14 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Plane, CalendarCheck, Users, Wallet, ArrowRight } from "lucide-react";
 import { fmtMAD, fmtDateTime } from "@/lib/format";
+import { motion, useReducedMotion } from "framer-motion";
 
 type Stats = { trips: number; openTrips: number; leads: number; confirmed: number; paid: number; clients: number; revenue: number };
 
 export default function Dashboard() {
   const [s, setS] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<any[]>([]);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     (async () => {
@@ -52,43 +54,55 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-8">
-      <header>
-        <h1 className="font-display text-3xl">Vue d'ensemble</h1>
-        <p className="text-muted-foreground mt-1">Suivi en temps réel de l'activité</p>
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="space-y-5 sm:space-y-8"
+    >
+      <header className="rounded-2xl border border-border bg-background p-4 shadow-sm sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Admin mobile</p>
+        <h1 className="font-display text-2xl sm:text-3xl">Vue d'ensemble</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Suivi rapide de l'activité</p>
       </header>
 
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         {cards.map((c, i) => {
           const Icon = c.icon;
           return (
-            <div key={i} className={`bg-background rounded-2xl border border-border p-5 ${c.wide ? "col-span-2" : ""}`}>
-              <div className={`w-10 h-10 rounded-xl ${c.color} flex items-center justify-center mb-3`}>
+            <motion.div
+              key={i}
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, delay: i * 0.03 }}
+              className={`min-w-0 rounded-2xl border border-border bg-background p-4 shadow-sm sm:p-5 ${c.wide ? "col-span-2" : ""}`}
+            >
+              <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl ${c.color}`}>
                 <Icon className="w-4 h-4" />
               </div>
-              <p className="text-xs text-muted-foreground">{c.label}</p>
-              <p className="font-display text-2xl mt-1">{c.value}</p>
-            </div>
+              <p className="truncate text-xs text-muted-foreground">{c.label}</p>
+              <p className="mt-1 truncate font-display text-xl sm:text-2xl">{c.value}</p>
+            </motion.div>
           );
         })}
       </section>
 
-      <section className="bg-background rounded-2xl border border-border">
-        <div className="flex items-center justify-between p-5 border-b border-border">
+      <section className="overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
+        <div className="flex items-center justify-between gap-3 border-b border-border p-4 sm:p-5">
           <h2 className="font-display text-lg">Dernières réservations</h2>
-          <Link to="/admin/bookings" className="text-sm text-accent font-medium inline-flex items-center gap-1">
+          <Link to="/admin/bookings" className="inline-flex min-h-11 items-center gap-1 rounded-full px-2 text-sm font-semibold text-accent">
             Voir tout <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
         <div className="divide-y divide-border">
           {recent.length === 0 && <p className="p-6 text-center text-muted-foreground text-sm">Aucune réservation pour le moment.</p>}
           {recent.map((b) => (
-            <Link to={`/admin/bookings/${b.id}`} key={b.id} className="flex items-center justify-between gap-4 p-4 hover:bg-secondary/50 transition-colors">
+            <Link to={`/admin/bookings/${b.id}`} key={b.id} className="flex min-h-[76px] items-center justify-between gap-3 p-4 transition-colors hover:bg-secondary/50">
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-sm truncate">{b.contact_name}</p>
                 <p className="text-xs text-muted-foreground truncate">{b.reference} · {b.contact_email}</p>
               </div>
-              <div className="text-right">
+              <div className="shrink-0 text-right">
                 <span className={`badge-pill ${statusColor[b.status] ?? "bg-secondary"}`}>{b.status}</span>
                 <p className="text-xs text-muted-foreground mt-1">{fmtDateTime(b.created_at)}</p>
               </div>
@@ -96,6 +110,6 @@ export default function Dashboard() {
           ))}
         </div>
       </section>
-    </div>
+    </motion.div>
   );
 }

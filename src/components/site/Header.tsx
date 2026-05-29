@@ -62,7 +62,7 @@ export const Header = () => {
       )}>
         <div className="container-app flex items-center justify-between gap-6">
           <Link to="/" className="flex items-center group" aria-label="lejapon.ma">
-            <img src={logo} alt="lejapon.ma" className="h-10 md:h-11 w-auto" width={220} height={88} />
+            <img src={logo} alt="LeJapon.ma" className="h-10 md:h-11 w-auto object-contain" width={220} height={88} />
           </Link>
 
           <nav className="hidden lg:flex items-center gap-8">

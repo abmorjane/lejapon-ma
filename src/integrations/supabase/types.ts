@@ -1807,26 +1807,38 @@ export type Database = {
       }
       trip_hotels: {
         Row: {
+          address: string | null
+          check_in: string | null
+          check_out: string | null
           city: string | null
           created_at: string
           id: string
           name: string
+          phone: string | null
           sort_order: number
           trip_id: string
         }
         Insert: {
+          address?: string | null
+          check_in?: string | null
+          check_out?: string | null
           city?: string | null
           created_at?: string
           id?: string
           name: string
+          phone?: string | null
           sort_order?: number
           trip_id: string
         }
         Update: {
+          address?: string | null
+          check_in?: string | null
+          check_out?: string | null
           city?: string | null
           created_at?: string
           id?: string
           name?: string
+          phone?: string | null
           sort_order?: number
           trip_id?: string
         }
@@ -1976,8 +1988,11 @@ export type Database = {
           is_featured: boolean
           label: string | null
           long_description: string | null
+          outbound_flight_text: string | null
+          programme_id: string | null
           program_link: string | null
           promo_percent: number | null
+          return_flight_text: string | null
           season: string | null
           short_description: string | null
           slots_left: number
@@ -1988,6 +2003,13 @@ export type Database = {
           title: string
           total_slots: number
           updated_at: string
+          visa_arrival_flight_number: string | null
+          visa_arrival_port: string | null
+          visa_hotel_address: string | null
+          visa_hotel_name: string | null
+          visa_hotel_phone: string | null
+          visa_japan_arrival_date: string | null
+          visa_japan_departure_date: string | null
         }
         Insert: {
           badge_text?: string | null
@@ -2007,8 +2029,11 @@ export type Database = {
           is_featured?: boolean
           label?: string | null
           long_description?: string | null
+          outbound_flight_text?: string | null
+          programme_id?: string | null
           program_link?: string | null
           promo_percent?: number | null
+          return_flight_text?: string | null
           season?: string | null
           short_description?: string | null
           slots_left?: number
@@ -2019,6 +2044,13 @@ export type Database = {
           title: string
           total_slots?: number
           updated_at?: string
+          visa_arrival_flight_number?: string | null
+          visa_arrival_port?: string | null
+          visa_hotel_address?: string | null
+          visa_hotel_name?: string | null
+          visa_hotel_phone?: string | null
+          visa_japan_arrival_date?: string | null
+          visa_japan_departure_date?: string | null
         }
         Update: {
           badge_text?: string | null
@@ -2038,8 +2070,11 @@ export type Database = {
           is_featured?: boolean
           label?: string | null
           long_description?: string | null
+          outbound_flight_text?: string | null
+          programme_id?: string | null
           program_link?: string | null
           promo_percent?: number | null
+          return_flight_text?: string | null
           season?: string | null
           short_description?: string | null
           slots_left?: number
@@ -2050,6 +2085,13 @@ export type Database = {
           title?: string
           total_slots?: number
           updated_at?: string
+          visa_arrival_flight_number?: string | null
+          visa_arrival_port?: string | null
+          visa_hotel_address?: string | null
+          visa_hotel_name?: string | null
+          visa_hotel_phone?: string | null
+          visa_japan_arrival_date?: string | null
+          visa_japan_departure_date?: string | null
         }
         Relationships: []
       }

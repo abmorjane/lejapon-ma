@@ -13,6 +13,8 @@ import { CreateBookingDialog } from "../components/CreateBookingDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { hasAnyRole } from "../lib/permissions";
 import { QuickActions } from "../components/QuickActions";
+import { Card, CardContent } from "@/components/ui/card";
+import { motion, useReducedMotion } from "framer-motion";
 
 export default function Bookings() {
   const [rows, setRows] = useState<any[]>([]);
@@ -21,6 +23,7 @@ export default function Bookings() {
   const [createOpen, setCreateOpen] = useState(false);
   const { roles } = useAuth();
   const canCreate = hasAnyRole(roles, ["super_admin", "admin", "manager"]);
+  const reduceMotion = useReducedMotion();
 
   const load = async () => {
     let query = supabase
@@ -42,17 +45,24 @@ export default function Bookings() {
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [q]);
 
   return (
-    <div>
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="space-y-4"
+    >
       <PageHeader
         title="Réservations"
-        description="Toutes les demandes et réservations."
+        description="Suivi rapide des demandes, statuts et paiements."
         action={canCreate ? (
-          <Button className="w-full sm:w-auto min-h-11" onClick={() => setCreateOpen(true)}>
+          <Button className="min-h-11 w-full rounded-xl sm:w-auto" onClick={() => setCreateOpen(true)}>
             <Plus className="w-4 h-4" /> Nouvelle réservation
           </Button>
         ) : undefined}
       />
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+      <Card className="rounded-2xl shadow-sm">
+        <CardContent className="p-3 sm:p-4">
+      <div className="flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input className="pl-9 min-h-11" type="search" enterKeyHint="search" placeholder="Nom, email ou référence…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -69,21 +79,32 @@ export default function Bookings() {
           </SelectContent>
         </Select>
       </div>
+      <p className="mt-3 text-xs text-muted-foreground">{rows.length} réservation(s) affichée(s)</p>
+        </CardContent>
+      </Card>
 
       {canCreate && (
         <CreateBookingDialog open={createOpen} onOpenChange={setCreateOpen} />
       )}
 
-      <div className="md:hidden space-y-3">
+      <div className="space-y-3 md:hidden">
         {rows.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground bg-background rounded-2xl border border-border">Aucune réservation.</p>}
-        {rows.map((b) => (
-          <details key={b.id} className="group bg-background rounded-2xl border border-border overflow-hidden">
-            <summary className="list-none p-4 cursor-pointer">
+        {rows.map((b, index) => {
+          const remaining = Number(b.total_amount_mad || 0) - Number(b.paid_amount_mad || 0);
+          return (
+          <motion.details
+            key={b.id}
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+            transition={{ duration: 0.18, delay: Math.min(index, 8) * 0.025 }}
+            className="group overflow-hidden rounded-2xl border border-border bg-background shadow-sm"
+          >
+            <summary className="list-none p-4 cursor-pointer min-h-[96px]">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <Link to={`/admin/bookings/${b.id}`} className="text-accent font-semibold" onClick={(e) => e.stopPropagation()}>{b.reference}</Link>
+                  <Link to={`/admin/bookings/${b.id}`} className="font-semibold text-accent" onClick={(e) => e.stopPropagation()}>{b.reference}</Link>
                   <div className="flex items-center gap-2 flex-wrap mt-1">
-                    <p className="font-medium truncate">{b.contact_name}</p>
+                    <p className="truncate font-medium">{b.contact_name}</p>
                     <LoyaltyBadge tier={b.clients?.loyalty_tier} isReturning={b.clients?.is_returning} trips={b.clients?.trips_completed} />
                   </div>
                   <p className="text-xs text-muted-foreground truncate">{b.trips?.title ?? "—"}</p>
@@ -95,21 +116,28 @@ export default function Bookings() {
               </div>
               <QuickActions phone={b.contact_phone} email={b.contact_email} compact className="mt-3" />
             </summary>
-            <div className="grid grid-cols-2 gap-3 border-t border-border p-4 text-sm">
+            <div className="grid grid-cols-2 gap-3 border-t border-border bg-muted/20 p-4 text-sm">
               <div><p className="text-xs text-muted-foreground">Pax</p><p className="font-medium">{b.num_adults}A {b.num_children > 0 && `+ ${b.num_children}E`}</p></div>
               <div><p className="text-xs text-muted-foreground">Reçu le</p><p className="font-medium">{fmtDateTime(b.created_at)}</p></div>
               <div><p className="text-xs text-muted-foreground">Total</p><p className="font-medium">{fmtMAD(b.total_amount_mad)}</p></div>
               <div><p className="text-xs text-muted-foreground">Payé</p><p className="font-medium">{fmtMAD(b.paid_amount_mad)}</p></div>
+              <div className="col-span-2 rounded-xl bg-background p-3">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Reste</span>
+                  <span className="font-semibold text-foreground">{fmtMAD(Math.max(0, remaining))}</span>
+                </div>
+              </div>
               <Link to={`/admin/bookings/${b.id}`} className="col-span-2 inline-flex h-11 items-center justify-center rounded-xl bg-accent px-4 text-sm font-semibold text-accent-foreground">
                 Ouvrir la réservation
               </Link>
             </div>
-          </details>
-        ))}
+          </motion.details>
+        );})}
       </div>
 
-      <div className="hidden md:block bg-background rounded-2xl border border-border overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="hidden overflow-hidden rounded-2xl border border-border bg-background shadow-sm md:block">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-secondary/50">
             <tr className="text-left">
               <th className="p-4 font-semibold">Réf</th>
@@ -144,7 +172,8 @@ export default function Bookings() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
