@@ -19,6 +19,11 @@ const SUPPORTED_ACTIONS = [
   "reset_password",
   "create_external_user",
 ];
+const EXTERNAL_MEMBER_LIST_ACTIONS = new Set([
+  "list_external_members",
+  "list_external_users",
+  "external_members",
+]);
 const PROFILE_COLUMNS = "id, full_name, phone";
 
 function makeTemporaryPassword() {
@@ -108,7 +113,7 @@ Deno.serve(async (req) => {
       return json({ users });
     }
 
-    if (action === "list_external_members") {
+    if (EXTERNAL_MEMBER_LIST_ACTIONS.has(action)) {
       const usersList = await listAllAuthUsers(admin);
 
       const { data: members, error: membersError } = await admin
@@ -314,10 +319,10 @@ Deno.serve(async (req) => {
       });
       if (error) return json({ error: "password reset failed", detail: error.message }, 500);
       return json({
-        ok: true,
+        success: true,
         email_sent: false,
         temporary_password: temporaryPassword,
-        message: "Temporary password generated. Communicate it manually to the user.",
+        password: temporaryPassword,
       });
     }
 

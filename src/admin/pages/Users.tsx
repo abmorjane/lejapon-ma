@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Edit, KeyRound, Loader2, Plus, ShieldOff } from "lucide-react";
+import { Copy, Edit, KeyRound, Loader2, Plus, ShieldOff } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -257,16 +257,28 @@ export default function UsersAdmin() {
       return;
     }
     const payload = (data ?? {}) as any;
+    const temporaryPassword = payload.temporary_password || payload.password || null;
     if (payload.function_version) setAdminUsersFunctionVersion(payload.function_version);
     setResetResult({
       user_id: userId,
       email,
-      temporary_password: payload.temporary_password ?? null,
+      temporary_password: temporaryPassword,
       email_sent: payload.email_sent ?? null,
       raw: payload,
     });
-    if (payload.temporary_password) toast.warning("Mot de passe provisoire généré. À communiquer manuellement.");
+    setRawError(JSON.stringify(payload, null, 2));
+    if (temporaryPassword) toast.warning("Mot de passe provisoire généré. Copiez-le depuis la fenêtre.");
     else toast.success("Mot de passe réinitialisé.");
+  };
+
+  const copyTemporaryPassword = async () => {
+    if (!resetResult?.temporary_password) return;
+    try {
+      await navigator.clipboard.writeText(resetResult.temporary_password);
+      toast.success("Mot de passe copié.");
+    } catch {
+      toast.error("Copie impossible. Sélectionnez le mot de passe manuellement.");
+    }
   };
 
   const saveProfile = async () => {
@@ -348,14 +360,6 @@ export default function UsersAdmin() {
       {!adminUsersFunctionVersion && !loading && (
         <Card className="border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
           admin-users Edge Function is not deployed or old version is running.
-        </Card>
-      )}
-
-      {resetResult?.temporary_password && (
-        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          <p className="font-semibold">Mot de passe provisoire à communiquer manuellement</p>
-          <p className="mt-1">Utilisateur: {resetResult.email || resetResult.user_id}</p>
-          <p className="mt-2 font-mono text-base">{resetResult.temporary_password}</p>
         </Card>
       )}
 
@@ -640,6 +644,51 @@ export default function UsersAdmin() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setProfileEdit(null)}>Annuler</Button>
             <Button onClick={saveProfile} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Enregistrer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(resetResult)} onOpenChange={(open) => !open && setResetResult(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Mot de passe réinitialisé</DialogTitle>
+          </DialogHeader>
+          {resetResult && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                <p className="font-semibold">Utilisateur: {resetResult.email || resetResult.user_id}</p>
+                {resetResult.temporary_password ? (
+                  <>
+                    <Label className="mt-4 block">Temporary password</Label>
+                    <div className="mt-2 flex items-center gap-2">
+                      <code className="min-w-0 flex-1 break-all rounded-md bg-background px-3 py-2 font-mono text-base">
+                        {resetResult.temporary_password}
+                      </code>
+                      <Button type="button" variant="outline" size="icon" onClick={copyTemporaryPassword} aria-label="Copier le mot de passe">
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <p className="mt-3 text-xs">
+                      À communiquer manuellement à l'utilisateur. Il doit changer ce mot de passe après sa connexion.
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-2">
+                    Aucun mot de passe provisoire n'a été retourné par la fonction.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <Label>Réponse JSON exacte</Label>
+                <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-muted p-3 text-xs text-muted-foreground">
+                  {JSON.stringify(resetResult.raw, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setResetResult(null)}>Fermer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
