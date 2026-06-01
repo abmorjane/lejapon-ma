@@ -63,10 +63,10 @@ import { fmtDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type OrganizationType = "internal" | "agency" | "japan_partner" | "supplier";
-type OrganizationStatus = "active" | "suspended" | "archived";
+type OrganizationStatus = "pending" | "active" | "suspended" | "archived";
 type OrganizationRole = "owner" | "admin" | "agent" | "finance" | "operations" | "viewer";
 type MemberStatus = "active" | "suspended";
-type CommissionScopeType = "agency_default" | "trip_override";
+type CommissionScopeType = "global" | "destination" | "product";
 type CommissionType = "percentage" | "fixed_amount";
 type CommissionAppliesTo = "booking_total" | "base_trip_price";
 type CommissionStatus = "active" | "inactive" | "archived";
@@ -117,12 +117,46 @@ type OrganizationMemberRow = {
   status: MemberStatus;
   created_by: string | null;
   created_at: string | null;
+  profile?: OrganizationMemberProfileRow | null;
+};
+
+type OrganizationMemberProfileRow = {
+  id: string;
+  organization_member_id: string;
+  user_id: string;
+  organization_id: string;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  secondary_phone: string | null;
+  secondary_email: string | null;
+  position_title: string | null;
+  point_of_sale: string | null;
+  notes: string | null;
+};
+
+type OrganizationDeleteCheck = {
+  organization: OrganizationRow;
+  checking: boolean;
+  blockers: string[];
+  warnings: string[];
+  membersCount: number;
+};
+
+type OnboardingReview = {
+  organization: OrganizationRow;
+  caseRow: Record<string, any> | null;
+  agencyProfile: AgencyProfileRow | null;
+  documents: Record<string, any>[];
+  loading: boolean;
+  error: string | null;
 };
 
 type ExistingUserRow = {
   id: string;
   email: string | null;
   full_name: string | null;
+  phone?: string | null;
   created_at: string | null;
 };
 
@@ -181,13 +215,16 @@ type AgencyProfileForm = Omit<AgencyProfileRow, "organization_id" | "created_at"
 type CommissionRuleRow = {
   id: string;
   organization_id: string;
-  scope_type: CommissionScopeType;
-  trip_id: string | null;
+  scope: CommissionScopeType;
+  destination: string | null;
+  product_trip_id: string | null;
   rule_name: string | null;
   commission_type: CommissionType;
   commission_value: number;
   currency: string;
   applies_to: CommissionAppliesTo;
+  effective_from: string;
+  effective_to: string | null;
   status: CommissionStatus;
   priority: number | null;
   notes: string | null;
@@ -198,13 +235,16 @@ type CommissionRuleRow = {
 };
 
 type CommissionRuleForm = {
-  scope_type: CommissionScopeType;
-  trip_id: string;
+  scope: CommissionScopeType;
+  destination: string;
+  product_trip_id: string;
   rule_name: string;
   commission_type: CommissionType;
   commission_value: string;
   currency: string;
   applies_to: CommissionAppliesTo;
+  effective_from: string;
+  effective_to: string;
   status: CommissionStatus;
   priority: string;
   notes: string;
@@ -252,6 +292,21 @@ const ORGANIZATION_MEMBER_COLUMNS = [
   "created_at",
 ].join(",");
 
+const ORGANIZATION_MEMBER_PROFILE_COLUMNS = [
+  "id",
+  "organization_member_id",
+  "user_id",
+  "organization_id",
+  "full_name",
+  "email",
+  "phone",
+  "secondary_phone",
+  "secondary_email",
+  "position_title",
+  "point_of_sale",
+  "notes",
+].join(",");
+
 const AGENCY_PROFILE_COLUMNS = [
   "organization_id",
   "agency_code",
@@ -288,13 +343,16 @@ const AGENCY_PROFILE_COLUMNS = [
 const COMMISSION_RULE_COLUMNS = [
   "id",
   "organization_id",
-  "scope_type",
-  "trip_id",
+  "scope",
+  "destination",
+  "product_trip_id",
   "rule_name",
   "commission_type",
   "commission_value",
   "currency",
   "applies_to",
+  "effective_from",
+  "effective_to",
   "status",
   "priority",
   "notes",
@@ -312,6 +370,7 @@ const TYPE_LABELS: Record<OrganizationType, string> = {
 };
 
 const STATUS_LABELS: Record<OrganizationStatus, string> = {
+  pending: "Pending",
   active: "Active",
   suspended: "Suspendue",
   archived: "Archivée",
@@ -410,26 +469,32 @@ const toAgencyProfileForm = (profile: AgencyProfileRow | null): AgencyProfileFor
 };
 
 const defaultRuleForm = (): CommissionRuleForm => ({
-  scope_type: "agency_default",
-  trip_id: "",
+  scope: "global",
+  destination: "",
+  product_trip_id: "",
   rule_name: "",
   commission_type: "percentage",
   commission_value: "",
   currency: "MAD",
   applies_to: "booking_total",
+  effective_from: new Date().toISOString().slice(0, 10),
+  effective_to: "",
   status: "active",
   priority: "100",
   notes: "",
 });
 
 const toRuleForm = (rule: CommissionRuleRow): CommissionRuleForm => ({
-  scope_type: rule.scope_type,
-  trip_id: rule.trip_id ?? "",
+  scope: rule.scope,
+  destination: rule.destination ?? "",
+  product_trip_id: rule.product_trip_id ?? "",
   rule_name: rule.rule_name ?? "",
   commission_type: rule.commission_type,
   commission_value: String(rule.commission_value ?? ""),
   currency: rule.currency ?? "MAD",
   applies_to: rule.applies_to ?? "booking_total",
+  effective_from: rule.effective_from ?? new Date().toISOString().slice(0, 10),
+  effective_to: rule.effective_to ?? "",
   status: rule.status ?? "active",
   priority: rule.priority == null ? "100" : String(rule.priority),
   notes: rule.notes ?? "",
@@ -481,6 +546,60 @@ const clean = (value: string) => {
   return trimmed.length ? trimmed : null;
 };
 
+const cleanUnknown = (value: unknown) => (typeof value === "string" && value.trim().length ? value.trim() : null);
+
+const normalizeOnboardingMetadata = (metadata: Record<string, any> | null | undefined) => {
+  const agency = metadata?.agency_information ?? metadata?.agencyInfo ?? {};
+  const contact = metadata?.contact_person ?? metadata?.contactPerson ?? {};
+  return {
+    agency_information: {
+      legal_name: cleanUnknown(agency.legal_name),
+      commercial_name: cleanUnknown(agency.commercial_name),
+      registration_number: cleanUnknown(agency.registration_number),
+      tax_number: cleanUnknown(agency.tax_number),
+      website: cleanUnknown(agency.website),
+      address: cleanUnknown(agency.address),
+      city: cleanUnknown(agency.city),
+      country: cleanUnknown(agency.country),
+    },
+    contact_person: {
+      full_name: cleanUnknown(contact.full_name),
+      position: cleanUnknown(contact.position),
+      email: cleanUnknown(contact.email),
+      phone: cleanUnknown(contact.phone),
+    },
+    documents: metadata?.documents && typeof metadata.documents === "object" ? metadata.documents : {},
+    digital_signature_acknowledged: Boolean(metadata?.digital_signature_acknowledged),
+    digital_signature_acknowledged_at: metadata?.digital_signature_acknowledged_at ?? null,
+  };
+};
+
+const buildOnboardingDisplayData = (
+  metadata: ReturnType<typeof normalizeOnboardingMetadata> | null,
+  agencyProfile: AgencyProfileRow | null,
+  organization: OrganizationRow | null
+) => ({
+  agency_information: {
+    legal_name: metadata?.agency_information.legal_name ?? agencyProfile?.billing_legal_name ?? organization?.legal_name ?? null,
+    commercial_name: metadata?.agency_information.commercial_name ?? agencyProfile?.commercial_name ?? organization?.display_name ?? null,
+    registration_number: metadata?.agency_information.registration_number ?? agencyProfile?.agency_code ?? null,
+    tax_number: metadata?.agency_information.tax_number ?? agencyProfile?.tax_identifier ?? organization?.tax_identifier ?? null,
+    website: metadata?.agency_information.website ?? agencyProfile?.website ?? organization?.website ?? null,
+    address: metadata?.agency_information.address ?? agencyProfile?.billing_address_line_1 ?? organization?.address_line_1 ?? null,
+    city: metadata?.agency_information.city ?? agencyProfile?.billing_city ?? organization?.city ?? null,
+    country: metadata?.agency_information.country ?? agencyProfile?.billing_country ?? organization?.country ?? null,
+  },
+  contact_person: {
+    full_name: metadata?.contact_person.full_name ?? agencyProfile?.contact_name ?? null,
+    position: metadata?.contact_person.position ?? null,
+    email: metadata?.contact_person.email ?? agencyProfile?.contact_email ?? organization?.email ?? null,
+    phone: metadata?.contact_person.phone ?? agencyProfile?.contact_phone ?? organization?.phone ?? null,
+  },
+  documents: metadata?.documents ?? {},
+  digital_signature_acknowledged: metadata?.digital_signature_acknowledged ?? false,
+  digital_signature_acknowledged_at: metadata?.digital_signature_acknowledged_at ?? null,
+});
+
 const formToPayload = (form: OrganizationForm) => ({
   display_name: form.display_name.trim(),
   type: form.type,
@@ -500,6 +619,7 @@ const formToPayload = (form: OrganizationForm) => ({
 
 const statusBadgeClass = (status: OrganizationStatus) =>
   ({
+    pending: "border-sky-200 bg-sky-50 text-sky-700",
     active: "border-emerald-200 bg-emerald-50 text-emerald-700",
     suspended: "border-amber-200 bg-amber-50 text-amber-800",
     archived: "border-stone-200 bg-stone-50 text-stone-600",
@@ -511,11 +631,22 @@ const isMissingTableError = (message: string) =>
 const isMissingMembersTableError = (message: string) =>
   /organization_members|schema cache|relation .* does not exist|could not find/i.test(message);
 
+const memberDisplay = (member: OrganizationMemberRow, fallbackUser?: ExistingUserRow) => ({
+  full_name: member.profile?.full_name || fallbackUser?.full_name || "—",
+  email: member.profile?.email || fallbackUser?.email || member.user_id,
+  phone: member.profile?.phone || fallbackUser?.phone || null,
+});
+
 const isMissingAgencyProfileTableError = (message: string) =>
   /agency_profiles|schema cache|relation .* does not exist|could not find/i.test(message);
 
 const isMissingCommissionRulesTableError = (message: string) =>
-  /commission_rules|schema cache|relation .* does not exist|could not find/i.test(message);
+  /commission_engine_rules|commission_rules|schema cache|relation .* does not exist|could not find/i.test(message);
+
+const isMissingOptionalRelationError = (message: string) =>
+  /schema cache|relation .* does not exist|does not exist|could not find|column .* does not exist/i.test(message);
+
+const ACTIVE_BOOKING_STATUSES = ["lead", "confirmed", "paid"];
 
 export default function OrganizationsAdmin() {
   const { user, isSuperAdmin } = useAuth();
@@ -535,6 +666,10 @@ export default function OrganizationsAdmin() {
     organization: OrganizationRow;
     status: OrganizationStatus;
   } | null>(null);
+  const [deleteCheck, setDeleteCheck] = useState<OrganizationDeleteCheck | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [onboardingReview, setOnboardingReview] = useState<OnboardingReview | null>(null);
+  const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [memberOrganization, setMemberOrganization] = useState<OrganizationRow | null>(null);
   const [members, setMembers] = useState<OrganizationMemberRow[]>([]);
@@ -735,6 +870,254 @@ export default function OrganizationsAdmin() {
     setSaving(false);
   };
 
+  const countLinkedRows = async (
+    table: string,
+    column: string,
+    value: string,
+    options: { optional?: boolean; label: string }
+  ) => {
+    const { count, error } = await db
+      .from(table)
+      .select("*", { count: "exact", head: true })
+      .eq(column, value);
+
+    if (!error) return { count: count ?? 0, warning: null as string | null, blocker: null as string | null };
+
+    const message = error.message ?? `Impossible de vérifier ${options.label}.`;
+    if (options.optional && isMissingOptionalRelationError(message)) {
+      return {
+        count: 0,
+        warning: `${options.label}: table/colonne absente, vérification ignorée.`,
+        blocker: null,
+      };
+    }
+
+    return {
+      count: 0,
+      warning: null,
+      blocker: `${options.label}: vérification impossible (${message})`,
+    };
+  };
+
+  const countActiveBookings = async (organizationId: string) => {
+    const { count, error } = await db
+      .from("bookings")
+      .select("*", { count: "exact", head: true })
+      .eq("agency_organization_id", organizationId)
+      .in("status", ACTIVE_BOOKING_STATUSES);
+
+    if (!error) return { count: count ?? 0, warning: null as string | null, blocker: null as string | null };
+
+    const message = error.message ?? "Impossible de vérifier les réservations actives.";
+    return {
+      count: 0,
+      warning: null,
+      blocker: `Réservations actives: vérification impossible (${message})`,
+    };
+  };
+
+  const deleteOptionalRows = async (table: string, column: string, value: string, label: string) => {
+    const { error } = await db.from(table).delete().eq(column, value);
+    if (!error) return null;
+    const message = error.message ?? `Impossible de nettoyer ${label}.`;
+    if (isMissingOptionalRelationError(message)) return `${label}: table/colonne absente, nettoyage ignoré.`;
+    throw new Error(`${label}: ${message}`);
+  };
+
+  const openPermanentDelete = async (organization: OrganizationRow) => {
+    setDeleteConfirm("");
+    setDeleteCheck({ organization, checking: true, blockers: [], warnings: [], membersCount: 0 });
+
+    const blockers: string[] = [];
+    const warnings: string[] = [];
+
+    const checks = [
+      await countActiveBookings(organization.id),
+      await countLinkedRows("partner_onboarding_cases", "organization_id", organization.id, {
+        optional: true,
+        label: "Dossiers onboarding",
+      }),
+      await countLinkedRows("partner_onboarding_documents", "organization_id", organization.id, {
+        optional: true,
+        label: "Documents onboarding",
+      }),
+      await countLinkedRows("partner_contracts", "organization_id", organization.id, {
+        optional: true,
+        label: "Contrats partenaires",
+      }),
+      await countLinkedRows("commission_rules", "organization_id", organization.id, {
+        optional: true,
+        label: "Anciennes règles de commission",
+      }),
+      await countLinkedRows("commission_engine_rules", "organization_id", organization.id, {
+        optional: true,
+        label: "Règles de commission",
+      }),
+      await countLinkedRows("organization_members", "organization_id", organization.id, {
+        optional: true,
+        label: "Membres organisation",
+      }),
+    ];
+
+    const [bookings, onboardingCases, onboardingDocuments, partnerContracts, legacyCommissionRules, commissionRules, organizationMembers] = checks;
+
+    if (bookings.count > 0) blockers.push(`${bookings.count} réservation(s) active(s) liée(s). Annulez/terminez ces réservations avant suppression.`);
+    if (onboardingCases.count > 0) warnings.push(`${onboardingCases.count} dossier(s) d'onboarding seront supprimés.`);
+    if (onboardingDocuments.count > 0) warnings.push(`${onboardingDocuments.count} document(s) d'onboarding seront supprimés.`);
+    if (partnerContracts.count > 0) warnings.push(`${partnerContracts.count} contrat(s) partenaire seront supprimés.`);
+    if (legacyCommissionRules.count > 0) warnings.push(`${legacyCommissionRules.count} ancienne(s) règle(s) de commission seront supprimées.`);
+    if (commissionRules.count > 0) warnings.push(`${commissionRules.count} règle(s) de commission seront supprimées.`);
+
+    checks.forEach((check) => {
+      if (check.warning) warnings.push(check.warning);
+      if (check.blocker) blockers.push(check.blocker);
+    });
+
+    setDeleteCheck({
+      organization,
+      checking: false,
+      blockers,
+      warnings,
+      membersCount: organizationMembers.count,
+    });
+  };
+
+  const deleteOrganizationPermanently = async () => {
+    if (!deleteCheck || deleteConfirm !== "DELETE" || deleteCheck.blockers.length > 0) return;
+
+    setSaving(true);
+    const organizationId = deleteCheck.organization.id;
+
+    try {
+      const cleanupWarnings = [
+        await deleteOptionalRows("partner_contract_signatures", "organization_id", organizationId, "Signatures contrat"),
+        await deleteOptionalRows("partner_contract_signatures", "agency_organization_id", organizationId, "Signatures contrat"),
+        await deleteOptionalRows("partner_onboarding_documents", "organization_id", organizationId, "Documents onboarding"),
+        await deleteOptionalRows("partner_contracts", "organization_id", organizationId, "Contrats partenaires"),
+        await deleteOptionalRows("partner_onboarding_cases", "organization_id", organizationId, "Dossiers onboarding"),
+        await deleteOptionalRows("commission_engine_rules", "organization_id", organizationId, "Règles de commission"),
+        await deleteOptionalRows("commission_rules", "organization_id", organizationId, "Règles de commission"),
+        await deleteOptionalRows("agency_profiles", "organization_id", organizationId, "Profil agence"),
+        await deleteOptionalRows("organization_members", "organization_id", organizationId, "Membres organisation"),
+      ].filter(Boolean);
+
+      const { error } = await db.from("organizations").delete().eq("id", organizationId);
+
+      if (error) {
+        toast.error(error.message ?? "Suppression définitive impossible.");
+        setSaving(false);
+        return;
+      }
+
+      setOrganizations((current) => current.filter((organization) => organization.id !== organizationId));
+      toast.success(
+        cleanupWarnings.length
+          ? `Organisation supprimée. ${cleanupWarnings.length} avertissement(s) de nettoyage ignoré(s).`
+          : "Organisation supprimée définitivement."
+      );
+      setDeleteCheck(null);
+      setDeleteConfirm("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Suppression définitive impossible.");
+    }
+
+    setSaving(false);
+  };
+
+  const openOnboardingReview = async (organization: OrganizationRow) => {
+    setOnboardingReview({ organization, caseRow: null, agencyProfile: null, documents: [], loading: true, error: null });
+
+    const [{ data, error }, profileResult] = await Promise.all([
+      db
+      .from("partner_onboarding_cases")
+      .select("*")
+      .eq("organization_id", organization.id)
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+        .maybeSingle(),
+      db
+        .from("agency_profiles")
+        .select(AGENCY_PROFILE_COLUMNS)
+        .eq("organization_id", organization.id)
+        .maybeSingle(),
+    ]);
+
+    let documents: Record<string, any>[] = [];
+    if (data?.id) {
+      const docsResult = await db
+        .from("partner_onboarding_documents")
+        .select("*")
+        .eq("onboarding_case_id", data.id)
+        .order("created_at", { ascending: false, nullsFirst: false });
+      if (!docsResult.error) {
+        documents = (docsResult.data ?? []) as Record<string, any>[];
+      }
+    }
+
+    setOnboardingReview({
+      organization,
+      caseRow: (data ?? null) as Record<string, any> | null,
+      agencyProfile: profileResult.error ? null : ((profileResult.data ?? null) as AgencyProfileRow | null),
+      documents,
+      loading: false,
+      error: error?.message ?? null,
+    });
+  };
+
+  const reviewOnboarding = async (status: "approved" | "rejected") => {
+    if (!onboardingReview?.caseRow?.id) return;
+    setOnboardingBusy(true);
+
+    let { data: updatedCase, error: caseError } = await db
+      .from("partner_onboarding_cases")
+      .update({
+        status,
+        reviewed_by: user?.id ?? null,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", onboardingReview.caseRow.id)
+      .select("*")
+      .single();
+
+    if (caseError && isMissingOptionalRelationError(caseError.message ?? "")) {
+      const fallback = await db
+        .from("partner_onboarding_cases")
+        .update({ status })
+        .eq("id", onboardingReview.caseRow.id)
+        .select("*")
+        .single();
+      updatedCase = fallback.data;
+      caseError = fallback.error;
+    }
+
+    if (caseError) {
+      toast.error(caseError.message ?? "Impossible de mettre à jour le dossier onboarding.");
+      setOnboardingBusy(false);
+      return;
+    }
+
+    const nextOrgStatus: OrganizationStatus = status === "approved" ? "active" : "suspended";
+    const { data: updatedOrganization, error: orgError } = await db
+      .from("organizations")
+      .update({ status: nextOrgStatus })
+      .eq("id", onboardingReview.organization.id)
+      .select(ORGANIZATION_COLUMNS)
+      .single();
+
+    if (orgError) {
+      toast.error(orgError.message ?? "Dossier mis à jour, mais statut organisation non modifié.");
+      setOnboardingReview((current) => current ? { ...current, caseRow: updatedCase as Record<string, any> } : current);
+      setOnboardingBusy(false);
+      return;
+    }
+
+    const organization = updatedOrganization as OrganizationRow;
+    setOrganizations((current) => current.map((row) => (row.id === organization.id ? organization : row)));
+    setOnboardingReview((current) => current ? { ...current, organization, caseRow: updatedCase as Record<string, any> } : current);
+    toast.success(status === "approved" ? "Onboarding approuvé. Agence activée." : "Onboarding rejeté. Agence suspendue.");
+    setOnboardingBusy(false);
+  };
+
   const loadExistingUsers = async () => {
     setUsersLoading(true);
     setUsersError(null);
@@ -751,6 +1134,7 @@ export default function OrganizationsAdmin() {
         id: existingUser.id,
         email: existingUser.email ?? null,
         full_name: existingUser.full_name ?? null,
+        phone: existingUser.phone ?? null,
         created_at: existingUser.created_at ?? null,
       }));
       setExistingUsers(users);
@@ -778,7 +1162,17 @@ export default function OrganizationsAdmin() {
       );
       setMembers([]);
     } else {
-      setMembers((data ?? []) as OrganizationMemberRow[]);
+      const memberRows = (data ?? []) as OrganizationMemberRow[];
+      let profileRows: OrganizationMemberProfileRow[] = [];
+      if (memberRows.length > 0) {
+        const { data: profilesData, error: profilesError } = await db
+          .from("organization_member_profiles")
+          .select(ORGANIZATION_MEMBER_PROFILE_COLUMNS)
+          .in("organization_member_id", memberRows.map((member) => member.id));
+        if (!profilesError) profileRows = (profilesData ?? []) as OrganizationMemberProfileRow[];
+      }
+      const profileByMemberId = new Map(profileRows.map((profile) => [profile.organization_member_id, profile]));
+      setMembers(memberRows.map((member) => ({ ...member, profile: profileByMemberId.get(member.id) ?? null })));
     }
 
     setMembersLoading(false);
@@ -829,7 +1223,19 @@ export default function OrganizationsAdmin() {
       return;
     }
 
-    setMembers((current) => [data as OrganizationMemberRow, ...current]);
+    const member = data as OrganizationMemberRow;
+    const selectedUser = existingUsers.find((existingUser) => existingUser.id === selectedUserId);
+    const { data: profileData, error: profileError } = await db.from("organization_member_profiles").upsert({
+      organization_member_id: member.id,
+      user_id: member.user_id,
+      organization_id: member.organization_id,
+      full_name: selectedUser?.full_name ?? null,
+      email: selectedUser?.email ?? null,
+      phone: selectedUser?.phone ?? null,
+    }, { onConflict: "organization_member_id" }).select(ORGANIZATION_MEMBER_PROFILE_COLUMNS).single();
+    if (profileError) toast.warning(`Profil membre non créé: ${profileError.message}`);
+
+    setMembers((current) => [{ ...member, profile: (profileData ?? null) as OrganizationMemberProfileRow | null }, ...current]);
     setSelectedUserId("");
     setSelectedRole("agent");
     toast.success("Membre ajouté à l'organisation.");
@@ -898,7 +1304,7 @@ export default function OrganizationsAdmin() {
     if (error) {
       toast.error(error.message ?? "Impossible de modifier le rôle organisation.");
     } else {
-      setMembers((current) => current.map((row) => (row.id === member.id ? (data as OrganizationMemberRow) : row)));
+      setMembers((current) => current.map((row) => (row.id === member.id ? { ...(data as OrganizationMemberRow), profile: row.profile } : row)));
       toast.success("Rôle organisation mis à jour.");
     }
 
@@ -918,7 +1324,7 @@ export default function OrganizationsAdmin() {
     if (error) {
       toast.error(error.message ?? "Impossible de modifier le statut du membre.");
     } else {
-      setMembers((current) => current.map((row) => (row.id === member.id ? (data as OrganizationMemberRow) : row)));
+      setMembers((current) => current.map((row) => (row.id === member.id ? { ...(data as OrganizationMemberRow), profile: row.profile } : row)));
       toast.success(status === "active" ? "Membre réactivé." : "Membre suspendu.");
     }
 
@@ -989,7 +1395,7 @@ export default function OrganizationsAdmin() {
     setCommissionRulesError(null);
 
     const { data, error } = await db
-      .from("commission_rules")
+      .from("commission_engine_rules")
       .select(COMMISSION_RULE_COLUMNS)
       .eq("organization_id", organization.id)
       .order("status", { ascending: true })
@@ -1000,7 +1406,7 @@ export default function OrganizationsAdmin() {
       const message = error.message ?? "Impossible de charger les règles de commission.";
       setCommissionRulesError(
         isMissingCommissionRulesTableError(message)
-          ? "La table public.commission_rules est introuvable ou non accessible. Vérifiez que la migration Commission Rules Foundation est appliquée dans Lovable/Supabase."
+          ? "La table public.commission_engine_rules est introuvable ou non accessible. Vérifiez que la migration V2 Commission Engine V1 est appliquée dans Lovable/Supabase."
           : message
       );
       setCommissionRules([]);
@@ -1104,9 +1510,9 @@ export default function OrganizationsAdmin() {
     setAgencyProfileSaving(false);
   };
 
-  const openCreateRule = (scopeType: CommissionScopeType = "agency_default") => {
+  const openCreateRule = (scope: CommissionScopeType = "global") => {
     setEditingRule(null);
-    setRuleForm({ ...defaultRuleForm(), scope_type: scopeType });
+    setRuleForm({ ...defaultRuleForm(), scope });
     setRuleDialogOpen(true);
   };
 
@@ -1123,22 +1529,33 @@ export default function OrganizationsAdmin() {
       toast.error("La valeur de commission est obligatoire.");
       return;
     }
-    if (ruleForm.scope_type === "trip_override" && !ruleForm.trip_id) {
-      toast.error("Sélectionnez un voyage pour une règle trip override.");
+    if (ruleForm.scope === "destination" && !ruleForm.destination.trim()) {
+      toast.error("Renseignez une destination pour cette règle.");
+      return;
+    }
+    if (ruleForm.scope === "product" && !ruleForm.product_trip_id) {
+      toast.error("Sélectionnez un voyage/produit pour cette règle.");
+      return;
+    }
+    if (ruleForm.effective_to && ruleForm.effective_from && ruleForm.effective_to < ruleForm.effective_from) {
+      toast.error("La date de fin doit être postérieure à la date de début.");
       return;
     }
 
     const duplicateActive = ruleForm.status === "active" && commissionRules.some((rule) => {
-      if (editingRule?.id === rule.id || rule.status !== "active" || rule.scope_type !== ruleForm.scope_type) return false;
-      if (ruleForm.scope_type === "agency_default") return true;
-      return rule.trip_id === ruleForm.trip_id;
+      if (editingRule?.id === rule.id || rule.status !== "active" || rule.scope !== ruleForm.scope) return false;
+      if (ruleForm.scope === "global") return true;
+      if (ruleForm.scope === "destination") return rule.destination?.toLowerCase() === ruleForm.destination.trim().toLowerCase();
+      return rule.product_trip_id === ruleForm.product_trip_id;
     });
 
     if (duplicateActive) {
       toast.error(
-        ruleForm.scope_type === "agency_default"
-          ? "Une règle agency_default active existe déjà pour cette agence."
-          : "Une règle trip_override active existe déjà pour ce voyage."
+        ruleForm.scope === "global"
+          ? "Une règle globale active existe déjà pour cette agence."
+          : ruleForm.scope === "destination"
+            ? "Une règle active existe déjà pour cette destination."
+            : "Une règle active existe déjà pour ce produit."
       );
       return;
     }
@@ -1146,13 +1563,16 @@ export default function OrganizationsAdmin() {
     setRuleSaving(true);
     const payload = {
       organization_id: agencyOrganization.id,
-      scope_type: ruleForm.scope_type,
-      trip_id: ruleForm.scope_type === "trip_override" ? ruleForm.trip_id : null,
+      scope: ruleForm.scope,
+      destination: ruleForm.scope === "destination" ? clean(ruleForm.destination) : null,
+      product_trip_id: ruleForm.scope === "product" ? ruleForm.product_trip_id : null,
       rule_name: clean(ruleForm.rule_name),
       commission_type: ruleForm.commission_type,
       commission_value: value,
       currency: clean(ruleForm.currency) ?? "MAD",
       applies_to: ruleForm.applies_to,
+      effective_from: ruleForm.effective_from || new Date().toISOString().slice(0, 10),
+      effective_to: clean(ruleForm.effective_to),
       status: ruleForm.status,
       priority: ruleForm.priority ? Number(ruleForm.priority) : 100,
       notes: clean(ruleForm.notes),
@@ -1160,8 +1580,8 @@ export default function OrganizationsAdmin() {
     };
 
     const request = editingRule
-      ? db.from("commission_rules").update(payload).eq("id", editingRule.id).select(COMMISSION_RULE_COLUMNS).single()
-      : db.from("commission_rules").insert(payload).select(COMMISSION_RULE_COLUMNS).single();
+      ? db.from("commission_engine_rules").update(payload).eq("id", editingRule.id).select(COMMISSION_RULE_COLUMNS).single()
+      : db.from("commission_engine_rules").insert(payload).select(COMMISSION_RULE_COLUMNS).single();
 
     const { data, error } = await request;
 
@@ -1179,6 +1599,13 @@ export default function OrganizationsAdmin() {
         : [saved, ...current]
     );
     toast.success(editingRule ? "Règle de commission mise à jour." : "Règle de commission créée.");
+    const { error: auditError } = await db.from("audit_logs").insert({
+      action: editingRule ? "commission_rule.updated" : "commission_rule.created",
+      resource_type: "commission_engine_rule",
+      resource_id: saved.id,
+      after_data: saved,
+    });
+    if (auditError) console.warn("[commission-engine] audit log failed", auditError);
     setRuleDialogOpen(false);
     setRuleSaving(false);
   };
@@ -1188,7 +1615,7 @@ export default function OrganizationsAdmin() {
     setRuleSaving(true);
 
     const { data, error } = await db
-      .from("commission_rules")
+      .from("commission_engine_rules")
       .update({ status: "archived" })
       .eq("id", ruleAction.id)
       .select(COMMISSION_RULE_COLUMNS)
@@ -1199,6 +1626,13 @@ export default function OrganizationsAdmin() {
     } else {
       const archived = data as CommissionRuleRow;
       setCommissionRules((current) => current.map((rule) => (rule.id === archived.id ? archived : rule)));
+      const { error: auditError } = await db.from("audit_logs").insert({
+        action: "commission_rule.archived",
+        resource_type: "commission_engine_rule",
+        resource_id: archived.id,
+        after_data: archived,
+      });
+      if (auditError) console.warn("[commission-engine] audit log failed", auditError);
       toast.success("Règle archivée.");
     }
 
@@ -1248,6 +1682,20 @@ export default function OrganizationsAdmin() {
       />
     </div>
   );
+
+  const onboardingMetadata = onboardingReview?.caseRow
+    ? normalizeOnboardingMetadata(onboardingReview.caseRow.form_data)
+    : null;
+  const onboardingDisplayData = buildOnboardingDisplayData(
+    onboardingMetadata,
+    null,
+    null
+  );
+  const onboardingDocumentsByType = new Map<string, Record<string, any>>();
+  for (const document of onboardingReview?.documents ?? []) {
+    const type = String(document.document_type ?? "");
+    if (type && !onboardingDocumentsByType.has(type)) onboardingDocumentsByType.set(type, document);
+  }
 
   return (
     <div className="space-y-6">
@@ -1401,6 +1849,12 @@ export default function OrganizationsAdmin() {
                               Profil agence
                             </Button>
                           )}
+                          {organization.type === "agency" && (
+                            <Button size="sm" variant="outline" onClick={() => openOnboardingReview(organization)}>
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Onboarding
+                            </Button>
+                          )}
                           <Button size="sm" variant="outline" onClick={() => openEdit(organization)}>
                             <Edit className="h-3.5 w-3.5" />
                             Edit
@@ -1412,7 +1866,7 @@ export default function OrganizationsAdmin() {
                               onClick={() => setStatusAction({ organization, status: "active" })}
                             >
                               <CheckCircle2 className="h-3.5 w-3.5" />
-                              Activer
+                              Réactiver
                             </Button>
                           )}
                           {organization.status !== "suspended" && organization.status !== "archived" && (
@@ -1433,6 +1887,16 @@ export default function OrganizationsAdmin() {
                             >
                               <Archive className="h-3.5 w-3.5" />
                               Archiver
+                            </Button>
+                          )}
+                          {isSuperAdmin && (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => openPermanentDelete(organization)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Supprimer définitivement
                             </Button>
                           )}
                         </div>
@@ -1471,13 +1935,19 @@ export default function OrganizationsAdmin() {
                         Profil agence
                       </Button>
                     )}
+                    {organization.type === "agency" && (
+                      <Button size="sm" variant="outline" onClick={() => openOnboardingReview(organization)}>
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Onboarding
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => openEdit(organization)}>
                       <Edit className="h-3.5 w-3.5" />
                       Edit
                     </Button>
                     {organization.status !== "active" && (
                       <Button size="sm" variant="outline" onClick={() => setStatusAction({ organization, status: "active" })}>
-                        Activer
+                        Réactiver
                       </Button>
                     )}
                     {organization.status !== "suspended" && organization.status !== "archived" && (
@@ -1488,6 +1958,12 @@ export default function OrganizationsAdmin() {
                     {organization.status !== "archived" && (
                       <Button size="sm" variant="outline" onClick={() => setStatusAction({ organization, status: "archived" })}>
                         Archiver
+                      </Button>
+                    )}
+                    {isSuperAdmin && (
+                      <Button size="sm" variant="destructive" onClick={() => openPermanentDelete(organization)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Supprimer définitivement
                       </Button>
                     )}
                   </div>
@@ -1690,11 +2166,13 @@ export default function OrganizationsAdmin() {
                         <TableBody>
                           {members.map((member) => {
                             const memberUser = userById.get(member.user_id);
+                            const display = memberDisplay(member, memberUser);
                             return (
                               <TableRow key={member.id}>
                                 <TableCell>
-                                  <div className="font-medium">{memberUser?.full_name || "—"}</div>
-                                  <div className="text-xs text-muted-foreground">{memberUser?.email || member.user_id}</div>
+                                  <div className="font-medium">{display.full_name}</div>
+                                  <div className="text-xs text-muted-foreground">{display.email}</div>
+                                  {display.phone && <div className="text-xs text-muted-foreground">{display.phone}</div>}
                                 </TableCell>
                                 <TableCell>
                                   <Select
@@ -1769,12 +2247,14 @@ export default function OrganizationsAdmin() {
                     <div className="divide-y md:hidden">
                       {members.map((member) => {
                         const memberUser = userById.get(member.user_id);
+                        const display = memberDisplay(member, memberUser);
                         return (
                           <div key={member.id} className="space-y-3 p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <h3 className="truncate font-medium">{memberUser?.full_name || "—"}</h3>
-                                <p className="break-all text-xs text-muted-foreground">{memberUser?.email || member.user_id}</p>
+                                <h3 className="truncate font-medium">{display.full_name}</h3>
+                                <p className="break-all text-xs text-muted-foreground">{display.email}</p>
+                                {display.phone && <p className="text-xs text-muted-foreground">{display.phone}</p>}
                               </div>
                               <Badge
                                 variant="outline"
@@ -1839,382 +2319,9 @@ export default function OrganizationsAdmin() {
               </Card>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={agencyProfileOpen} onOpenChange={setAgencyProfileOpen}>
-        <DialogContent className="flex max-h-[92vh] flex-col overflow-hidden sm:max-w-6xl">
-          <DialogHeader className="shrink-0">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <DialogTitle>Profil agence · {agencyOrganization?.display_name ?? "Agence"}</DialogTitle>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Foundation only — commissions non connectées aux réservations.
-                </p>
-              </div>
-              <Button onClick={saveAgencyProfile} disabled={agencyProfileSaving || agencyProfileLoading} className="min-h-11">
-                {agencyProfileSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Enregistrer le profil
-              </Button>
-            </div>
-          </DialogHeader>
-
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-            {agencyProfileLoading ? (
-              <div className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Chargement du profil agence…
-              </div>
-            ) : (
-              <Tabs defaultValue="summary" className="space-y-4">
-                <TabsList className="grid h-auto w-full grid-cols-2 md:grid-cols-5">
-                  <TabsTrigger value="summary">Résumé</TabsTrigger>
-                  <TabsTrigger value="commercial">Commercial</TabsTrigger>
-                  <TabsTrigger value="billing">Facturation</TabsTrigger>
-                  <TabsTrigger value="commission">Commission</TabsTrigger>
-                  <TabsTrigger value="bank">Banque & Notes</TabsTrigger>
-                </TabsList>
-
-                {agencyProfileError && (
-                  <Card className="border-amber-200 bg-amber-50 p-4 text-amber-950">
-                    <h3 className="font-semibold">Profil agence indisponible</h3>
-                    <p className="mt-1 text-sm">{agencyProfileError}</p>
-                  </Card>
-                )}
-
-                <TabsContent value="summary" className="mt-0">
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <Card className="p-4">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Code agence</p>
-                      <p className="mt-1 font-semibold">{agencyProfileForm.agency_code || "—"}</p>
-                    </Card>
-                    <Card className="p-4">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Nom commercial</p>
-                      <p className="mt-1 font-semibold">{agencyProfileForm.commercial_name || agencyOrganization?.display_name || "—"}</p>
-                    </Card>
-                    <Card className="p-4">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Contact</p>
-                      <p className="mt-1 font-semibold">{agencyProfileForm.contact_name || "—"}</p>
-                      <p className="text-xs text-muted-foreground">{agencyProfileForm.contact_email || agencyProfileForm.contact_phone || ""}</p>
-                    </Card>
-                    <Card className="p-4">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Règles actives</p>
-                      <p className="mt-1 font-semibold">{activeRules.length}</p>
-                      <p className="text-xs text-muted-foreground">Commission rules</p>
-                    </Card>
-                  </div>
-
-                  <Card className="mt-4 p-4">
-                    <h3 className="font-semibold">Commission par défaut</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {agencyProfileForm.default_commission_value
-                        ? `${agencyProfileForm.default_commission_value} ${
-                            agencyProfileForm.default_commission_type === "percentage" ? "%" : agencyProfileForm.commission_currency || "MAD"
-                          }`
-                        : "Non renseignée"}
-                    </p>
-                  </Card>
-                </TabsContent>
-
-                <TabsContent value="commercial" className="mt-0">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {profileInput("commercial_name", "Nom commercial")}
-                    {profileInput("agency_code", "Code agence")}
-                    {profileInput("contact_name", "Nom du contact")}
-                    {profileInput("contact_email", "Email contact", "email")}
-                    {profileInput("contact_phone", "Téléphone contact")}
-                    {profileInput("website", "Site web")}
-                    {profileInput("market_country", "Marché / Pays")}
-                    {profileInput("preferred_language", "Langue préférée")}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="billing" className="mt-0">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {profileInput("billing_legal_name", "Raison sociale facturation")}
-                    {profileInput("billing_email", "Email facturation", "email")}
-                    {profileInput("billing_phone", "Téléphone facturation")}
-                    {profileInput("tax_identifier", "Identifiant fiscal")}
-                    {profileInput("billing_address_line_1", "Adresse ligne 1")}
-                    {profileInput("billing_address_line_2", "Adresse ligne 2")}
-                    {profileInput("billing_city", "Ville")}
-                    {profileInput("billing_postal_code", "Code postal")}
-                    {profileInput("billing_country", "Pays")}
-                    {profileInput("payment_terms", "Conditions de paiement")}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="commission" className="mt-0 space-y-4">
-                  <Card className="p-4">
-                    <div className="grid gap-4 md:grid-cols-4">
-                      <div className="space-y-2">
-                        <Label>Type commission par défaut</Label>
-                        <Select
-                          value={agencyProfileForm.default_commission_type ?? "percentage"}
-                          onValueChange={(value) =>
-                            setAgencyProfileForm((current) => ({ ...current, default_commission_type: value as CommissionType }))
-                          }
-                        >
-                          <SelectTrigger className="min-h-11">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="percentage">Pourcentage</SelectItem>
-                            <SelectItem value="fixed_amount">Montant fixe</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      {profileInput("default_commission_value", "Valeur", "number")}
-                      {profileInput("commission_currency", "Devise")}
-                      <div className="flex items-end">
-                        <Button variant="outline" onClick={() => openCreateRule("agency_default")} className="min-h-11 w-full">
-                          <Plus className="h-4 w-4" />
-                          Règle défaut
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="mt-4">
-                      {profileTextarea("commission_notes", "Notes commission")}
-                    </div>
-                  </Card>
-
-                  <Card className="p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h3 className="font-semibold">Règles de commission</h3>
-                        <p className="text-sm text-muted-foreground">Agency default et trip overrides. Aucun calcul automatique.</p>
-                      </div>
-                      <Button variant="outline" onClick={() => openCreateRule("trip_override")} className="min-h-11">
-                        <Plus className="h-4 w-4" />
-                        Trip override
-                      </Button>
-                    </div>
-
-                    {commissionRulesError && (
-                      <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                        {commissionRulesError}
-                      </div>
-                    )}
-
-                    {commissionRulesLoading ? (
-                      <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Chargement des règles…
-                      </div>
-                    ) : commissionRules.length === 0 ? (
-                      <div className="p-8 text-center text-sm text-muted-foreground">
-                        Aucune règle de commission pour cette agence.
-                      </div>
-                    ) : (
-                      <div className="mt-4 overflow-hidden rounded-lg border border-border">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Portée</TableHead>
-                              <TableHead>Commission</TableHead>
-                              <TableHead>Appliquée à</TableHead>
-                              <TableHead>Statut</TableHead>
-                              <TableHead className="text-right">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {commissionRules.map((rule) => (
-                              <TableRow key={rule.id}>
-                                <TableCell>
-                                  <div className="font-medium">
-                                    {rule.scope_type === "agency_default" ? "Agency default" : "Trip override"}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {rule.scope_type === "trip_override"
-                                      ? tripById.get(rule.trip_id ?? "")?.title || rule.trip_id || "Voyage non renseigné"
-                                      : rule.rule_name || "Règle par défaut"}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  {rule.commission_type === "percentage"
-                                    ? `${rule.commission_value}%`
-                                    : `${rule.commission_value} ${rule.currency}`}
-                                  <div className="text-xs text-muted-foreground">{rule.commission_type}</div>
-                                </TableCell>
-                                <TableCell>{rule.applies_to}</TableCell>
-                                <TableCell>
-                                  <Badge
-                                    variant="outline"
-                                    className={cn(
-                                      rule.status === "active"
-                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                        : rule.status === "inactive"
-                                          ? "border-amber-200 bg-amber-50 text-amber-800"
-                                          : "border-stone-200 bg-stone-50 text-stone-600"
-                                    )}
-                                  >
-                                    {COMMISSION_STATUS_LABELS[rule.status]}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex justify-end gap-2">
-                                    <Button size="sm" variant="outline" onClick={() => openEditRule(rule)}>
-                                      <Edit className="h-3.5 w-3.5" />
-                                      Edit
-                                    </Button>
-                                    {rule.status !== "archived" && (
-                                      <Button size="sm" variant="outline" onClick={() => setRuleAction(rule)}>
-                                        <Archive className="h-3.5 w-3.5" />
-                                        Archiver
-                                      </Button>
-                                    )}
-                                  </div>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    )}
-                  </Card>
-                </TabsContent>
-
-                <TabsContent value="bank" className="mt-0">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {profileInput("bank_name", "Banque")}
-                    {profileInput("bank_account_name", "Titulaire du compte")}
-                    {profileInput("bank_account_number", "Numéro de compte")}
-                    <div className="md:col-span-2">{profileTextarea("commercial_notes", "Notes commerciales")}</div>
-                    <div className="md:col-span-2">{profileTextarea("notes", "Notes internes")}</div>
-                  </div>
-                </TabsContent>
-              </Tabs>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={ruleDialogOpen} onOpenChange={setRuleDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{editingRule ? "Modifier la règle de commission" : "Créer une règle de commission"}</DialogTitle>
-          </DialogHeader>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Portée</Label>
-              <Select
-                value={ruleForm.scope_type}
-                onValueChange={(value) =>
-                  setRuleForm((current) => ({ ...current, scope_type: value as CommissionScopeType, trip_id: "" }))
-                }
-              >
-                <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="agency_default">Agency default</SelectItem>
-                  <SelectItem value="trip_override">Trip override</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {ruleForm.scope_type === "trip_override" && (
-              <div className="space-y-2">
-                <Label>Voyage *</Label>
-                <Select value={ruleForm.trip_id} onValueChange={(value) => setRuleForm((current) => ({ ...current, trip_id: value }))}>
-                  <SelectTrigger className="min-h-11"><SelectValue placeholder="Sélectionner un voyage" /></SelectTrigger>
-                  <SelectContent>
-                    {trips.map((trip) => (
-                      <SelectItem key={trip.id} value={trip.id}>{trip.title}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label>Nom de règle</Label>
-              <Input
-                value={ruleForm.rule_name}
-                onChange={(event) => setRuleForm((current) => ({ ...current, rule_name: event.target.value }))}
-                className="min-h-11"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Type</Label>
-              <Select value={ruleForm.commission_type} onValueChange={(value) => setRuleForm((current) => ({ ...current, commission_type: value as CommissionType }))}>
-                <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="percentage">Pourcentage</SelectItem>
-                  <SelectItem value="fixed_amount">Montant fixe</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Valeur *</Label>
-              <Input
-                type="number"
-                min="0"
-                value={ruleForm.commission_value}
-                onChange={(event) => setRuleForm((current) => ({ ...current, commission_value: event.target.value }))}
-                className="min-h-11"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Devise</Label>
-              <Input
-                value={ruleForm.currency}
-                onChange={(event) => setRuleForm((current) => ({ ...current, currency: event.target.value }))}
-                className="min-h-11"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Appliquée à</Label>
-              <Select value={ruleForm.applies_to} onValueChange={(value) => setRuleForm((current) => ({ ...current, applies_to: value as CommissionAppliesTo }))}>
-                <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="booking_total">Booking total</SelectItem>
-                  <SelectItem value="base_trip_price">Base trip price</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Statut</Label>
-              <Select value={ruleForm.status} onValueChange={(value) => setRuleForm((current) => ({ ...current, status: value as CommissionStatus }))}>
-                <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                  <SelectItem value="archived">Archivée</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Priorité</Label>
-              <Input
-                type="number"
-                value={ruleForm.priority}
-                onChange={(event) => setRuleForm((current) => ({ ...current, priority: event.target.value }))}
-                className="min-h-11"
-              />
-            </div>
-
-            <div className="space-y-2 md:col-span-2">
-              <Label>Notes</Label>
-              <Textarea
-                value={ruleForm.notes}
-                onChange={(event) => setRuleForm((current) => ({ ...current, notes: event.target.value }))}
-                rows={4}
-              />
-            </div>
-          </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRuleDialogOpen(false)} disabled={ruleSaving}>Annuler</Button>
-            <Button onClick={saveCommissionRule} disabled={ruleSaving}>
-              {ruleSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-              Enregistrer
-            </Button>
+            <Button variant="outline" onClick={() => setMembersOpen(false)} disabled={memberBusy}>Fermer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2264,6 +2371,7 @@ export default function OrganizationsAdmin() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="pending">Pending</SelectItem>
                   <SelectItem value="active">Active</SelectItem>
                   <SelectItem value="suspended">Suspendue</SelectItem>
                   <SelectItem value="archived">Archivée</SelectItem>
@@ -2340,6 +2448,229 @@ export default function OrganizationsAdmin() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={Boolean(deleteCheck)} onOpenChange={(open) => !open && setDeleteCheck(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Supprimer définitivement l'organisation ?
+            </DialogTitle>
+          </DialogHeader>
+          {deleteCheck && (
+            <div className="space-y-4 text-sm">
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+                <p className="font-semibold">{deleteCheck.organization.display_name}</p>
+                <p className="mt-1 text-muted-foreground">
+                  Cette action supprimera l'organisation, ses membres, ses dossiers onboarding, ses contrats partenaires,
+                  son profil agence et ses règles de commission. L'archivage reste l'action normale pour préserver les données.
+                </p>
+              </div>
+
+              {deleteCheck.checking ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Vérification des liens avant suppression…
+                </div>
+              ) : (
+                <>
+                  {deleteCheck.blockers.length > 0 ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950">
+                      <p className="font-semibold">Suppression bloquée</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {deleteCheck.blockers.map((blocker) => (
+                          <li key={blocker}>{blocker}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
+                      <p className="font-semibold">Suppression autorisée</p>
+                      {deleteCheck.membersCount > 0 ? (
+                        <p className="mt-2">
+                          Cette organisation contient {deleteCheck.membersCount} membre(s). Confirmer retirera aussi ces membres.
+                        </p>
+                      ) : (
+                        <p className="mt-2">Aucune réservation active détectée.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {deleteCheck.warnings.length > 0 && (
+                    <div className="rounded-lg border border-border bg-secondary/40 p-4">
+                      <p className="font-semibold">Avertissements</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+                        {deleteCheck.warnings.map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {deleteCheck.blockers.length === 0 && (
+                    <div>
+                      <Label htmlFor="delete_org_confirm">Tapez DELETE pour confirmer</Label>
+                      <Input
+                        id="delete_org_confirm"
+                        value={deleteConfirm}
+                        onChange={(event) => setDeleteConfirm(event.target.value)}
+                        placeholder="DELETE"
+                        className="mt-2"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteCheck(null)} disabled={saving}>
+              Annuler
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={deleteOrganizationPermanently}
+              disabled={saving || deleteConfirm !== "DELETE" || Boolean(deleteCheck?.checking) || Boolean(deleteCheck?.blockers.length)}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Supprimer définitivement
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(onboardingReview)} onOpenChange={(open) => !open && setOnboardingReview(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Validation onboarding · {onboardingReview?.organization.display_name ?? "Agence"}</DialogTitle>
+          </DialogHeader>
+          {onboardingReview?.loading ? (
+            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Chargement du dossier…
+            </div>
+          ) : onboardingReview?.error ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+              {onboardingReview.error}
+            </div>
+          ) : !onboardingReview?.caseRow ? (
+            <div className="rounded-lg border border-border bg-secondary/40 p-4 text-sm text-muted-foreground">
+              Aucun dossier onboarding trouvé pour cette organisation.
+            </div>
+          ) : (
+            <div className="space-y-5 text-sm">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline">Statut dossier: {String(onboardingReview.caseRow.status ?? "—")}</Badge>
+                <Badge variant="outline">Organisation: {onboardingReview.organization.status}</Badge>
+                <Badge variant="outline">Créé le {fmtDateTime(onboardingReview.caseRow.created_at)}</Badge>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <Card className="p-4">
+                  <p className="font-semibold">Agence</p>
+                  <div className="mt-2 space-y-2 text-muted-foreground">
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Raison sociale</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.agency_information.legal_name || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Nom commercial</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.agency_information.commercial_name || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">RC</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.agency_information.registration_number || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Tax</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.agency_information.tax_number || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Site web</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.agency_information.website || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Adresse</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.agency_information.address || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Ville</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.agency_information.city || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Pays</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.agency_information.country || "—"}</p></div>
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <p className="font-semibold">Contact</p>
+                  <div className="mt-2 space-y-2 text-muted-foreground">
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Nom complet</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.contact_person.full_name || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Fonction</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.contact_person.position || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Email</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.contact_person.email || "—"}</p></div>
+                    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">Téléphone</p><p className="mt-0.5 break-words font-medium">{onboardingDisplayData.contact_person.phone || "—"}</p></div>
+                  </div>
+                </Card>
+              </div>
+
+              <Card className="p-4">
+                <p className="font-semibold">Documents reçus</p>
+                <div className="mt-3 grid gap-2">
+                  {[
+                    { key: "company_registration", label: "Company registration" },
+                    { key: "tax_certificate", label: "Tax certificate" },
+                    { key: "id_passport", label: "ID / passport" },
+                    { key: "bank_certificate", label: "Bank certificate" },
+                  ].map(({ key, label }) => {
+                    const doc = onboardingDocumentsByType.get(key) ?? onboardingDisplayData.documents?.[key];
+                    const fileName = doc?.file_name ?? doc?.filename ?? doc?.name ?? null;
+                    return (
+                      <div key={key} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                        <div className="min-w-0">
+                          <span>{label}</span>
+                          {fileName && <p className="truncate text-xs text-muted-foreground">{fileName}</p>}
+                        </div>
+                        <Badge variant="outline" className={doc ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
+                          {doc ? String(doc.status ?? "Reçu") : "Manquant"}
+                        </Badge>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <p className="font-semibold">Signature digitale</p>
+                <p className="mt-2 text-muted-foreground">
+                  {onboardingDisplayData.digital_signature_acknowledged
+                    ? `Accusé accepté le ${fmtDateTime(onboardingDisplayData.digital_signature_acknowledged_at)}`
+                    : "Accusé non accepté"}
+                </p>
+              </Card>
+            </div>
+          )}
+
+          {onboardingReview?.caseRow && (
+            <details className="rounded-lg border border-border p-4 text-xs">
+              <summary className="cursor-pointer font-mono font-semibold text-muted-foreground hover:text-foreground">
+                🐛 Debug: onboarding raw data
+              </summary>
+              <div className="mt-3 grid gap-4 md:grid-cols-3">
+                <div>
+                  <p className="mb-2 font-semibold text-muted-foreground">onboarding_case</p>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.caseRow, null, 2)}</pre>
+                </div>
+                <div>
+                  <p className="mb-2 font-semibold text-muted-foreground">agency_profile</p>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.agencyProfile, null, 2)}</pre>
+                </div>
+                <div>
+                  <p className="mb-2 font-semibold text-muted-foreground">organization</p>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.organization, null, 2)}</pre>
+                </div>
+              </div>
+            </details>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOnboardingReview(null)} disabled={onboardingBusy}>
+              Fermer
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => reviewOnboarding("rejected")}
+              disabled={onboardingBusy || !onboardingReview?.caseRow}
+            >
+              {onboardingBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+              Rejeter
+            </Button>
+            <Button
+              onClick={() => reviewOnboarding("approved")}
+              disabled={onboardingBusy || !onboardingReview?.caseRow}
+            >
+              {onboardingBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Approuver
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={Boolean(memberAction)} onOpenChange={(open) => !open && setMemberAction(null)}>
         <AlertDialogContent>

@@ -62,20 +62,25 @@ export type AgencyBooking = {
   trip_id: string | null;
   agency_organization_id: string | null;
   agency_attributed_at?: string | null;
+  assigned_to?: string | null;
   num_adults?: number | null;
   num_children?: number | null;
+  trips?: TripSummary | null;
 };
 
 export type CommissionRule = {
   id: string;
   organization_id: string;
-  scope_type: "agency_default" | "trip_override";
-  trip_id: string | null;
+  scope: "global" | "destination" | "product";
+  destination: string | null;
+  product_trip_id: string | null;
   rule_name: string | null;
   commission_type: "percentage" | "fixed_amount";
   commission_value: number;
   currency: string;
   applies_to: "booking_total" | "base_trip_price";
+  effective_from: string;
+  effective_to: string | null;
   status: "active" | "inactive" | "archived";
   priority: number | null;
 };
@@ -86,4 +91,5 @@ export type TripSummary = {
   start_date?: string | null;
   end_date?: string | null;
   destination?: string | null;
+  base_price_mad?: number | null;
 };

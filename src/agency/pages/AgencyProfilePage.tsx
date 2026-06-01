@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
-import { Building2, Loader2 } from "lucide-react";
+import { Building2, KeyRound, Loader2, Save } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import { useAgencyContext } from "../useAgencyContext";
 import type { AgencyProfile } from "../agencyTypes";
 
@@ -37,9 +42,20 @@ const Field = ({ label, value }: { label: string; value: unknown }) => (
 );
 
 export default function AgencyProfilePage() {
+  const { user } = useAuth();
   const { organization, currentMembership } = useAgencyContext();
   const [profile, setProfile] = useState<AgencyProfile | null>(null);
+  const [account, setAccount] = useState({
+    full_name: "",
+    phone: "",
+    secondary_phone: "",
+    secondary_email: "",
+    position_title: "",
+    point_of_sale: "",
+  });
+  const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(true);
+  const [savingAccount, setSavingAccount] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -54,10 +70,91 @@ export default function AgencyProfilePage() {
         .maybeSingle();
       if (error) setError(error.message);
       else setProfile((data ?? null) as AgencyProfile | null);
+
+      if (user) {
+        let memberProfile: Record<string, any> | null = null;
+        if (currentMembership?.id) {
+          const profileResult = await db
+            .from("organization_member_profiles")
+            .select("full_name,email,phone,secondary_phone,secondary_email,position_title,point_of_sale")
+            .eq("organization_member_id", currentMembership.id)
+            .maybeSingle();
+          if (!profileResult.error) memberProfile = profileResult.data ?? null;
+        }
+
+        const authMetadata = user.user_metadata ?? {};
+        setAccount({
+          full_name: memberProfile?.full_name ?? authMetadata.full_name ?? authMetadata.name ?? "",
+          phone: memberProfile?.phone ?? authMetadata.phone ?? "",
+          secondary_phone: memberProfile?.secondary_phone ?? "",
+          secondary_email: memberProfile?.secondary_email ?? "",
+          position_title: memberProfile?.position_title ?? "",
+          point_of_sale: memberProfile?.point_of_sale ?? "",
+        });
+      }
       setLoading(false);
     };
     load();
-  }, [organization?.id]);
+  }, [organization?.id, currentMembership?.id, user?.id]);
+
+  const saveAccount = async () => {
+    if (!user) return;
+    setSavingAccount(true);
+
+    const { error: profileError } = await db.from("profiles").upsert({
+      id: user.id,
+      full_name: account.full_name || null,
+      phone: account.phone || null,
+    });
+    if (profileError) {
+      toast.error(profileError.message);
+      setSavingAccount(false);
+      return;
+    }
+
+    const { error: authError } = await supabase.auth.updateUser({
+      data: {
+        full_name: account.full_name,
+        name: account.full_name,
+        phone: account.phone,
+      },
+    });
+    if (authError) toast.warning(`Profil Auth non mis à jour: ${authError.message}`);
+
+    if (currentMembership?.id && organization) {
+      const { error: memberProfileError } = await db
+        .from("organization_member_profiles")
+        .upsert({
+          organization_member_id: currentMembership.id,
+          user_id: user.id,
+          organization_id: organization.id,
+          full_name: account.full_name || null,
+          email: user.email ?? null,
+          phone: account.phone || null,
+          secondary_phone: account.secondary_phone || null,
+          secondary_email: account.secondary_email || null,
+          position_title: account.position_title || null,
+          point_of_sale: account.point_of_sale || null,
+        }, { onConflict: "organization_member_id" });
+      if (memberProfileError) toast.warning(`Champs organisation non enregistrés: ${memberProfileError.message}`);
+    }
+
+    toast.success("Profil enregistré.");
+    setSavingAccount(false);
+  };
+
+  const changePassword = async () => {
+    if (newPassword.length < 8) {
+      toast.error("Le mot de passe doit contenir au moins 8 caractères.");
+      return;
+    }
+    setSavingAccount(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setSavingAccount(false);
+    if (error) return toast.error(error.message);
+    setNewPassword("");
+    toast.success("Mot de passe mis à jour.");
+  };
 
   return (
     <div className="space-y-6">
@@ -84,6 +181,57 @@ export default function AgencyProfilePage() {
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="p-5 lg:col-span-2">
+          <div className="flex flex-col gap-1">
+            <h2 className="font-display text-xl">Mon compte</h2>
+            <p className="text-sm text-muted-foreground">Vous pouvez modifier vos coordonnées. Votre rôle organisation reste géré par Moroccan Express / LeJapon.ma.</p>
+          </div>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-2">
+              <Label>Nom complet</Label>
+              <Input value={account.full_name} onChange={(event) => setAccount((current) => ({ ...current, full_name: event.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Téléphone</Label>
+              <Input value={account.phone} onChange={(event) => setAccount((current) => ({ ...current, phone: event.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Téléphone secondaire</Label>
+              <Input value={account.secondary_phone} onChange={(event) => setAccount((current) => ({ ...current, secondary_phone: event.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Email secondaire</Label>
+              <Input type="email" value={account.secondary_email} onChange={(event) => setAccount((current) => ({ ...current, secondary_email: event.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Fonction / titre</Label>
+              <Input value={account.position_title} onChange={(event) => setAccount((current) => ({ ...current, position_title: event.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Point de vente</Label>
+              <Input value={account.point_of_sale} onChange={(event) => setAccount((current) => ({ ...current, point_of_sale: event.target.value }))} />
+            </div>
+          </div>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <Button onClick={saveAccount} disabled={savingAccount}>
+              {savingAccount ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Enregistrer mon profil
+            </Button>
+            <div className="flex flex-1 gap-2">
+              <Input
+                type="password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                placeholder="Nouveau mot de passe"
+              />
+              <Button variant="outline" onClick={changePassword} disabled={savingAccount || !newPassword}>
+                <KeyRound className="h-4 w-4" />
+                Changer
+              </Button>
+            </div>
+          </div>
+        </Card>
+
         <Card className="p-5">
           <h2 className="font-display text-xl">Organisation</h2>
           <div className="mt-5 grid gap-4 sm:grid-cols-2">

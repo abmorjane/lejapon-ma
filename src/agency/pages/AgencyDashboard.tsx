@@ -8,12 +8,18 @@ import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { useAgencyContext } from "../useAgencyContext";
 import type { AgencyBooking, CommissionRule } from "../agencyTypes";
 import { AgencyStatusBadge } from "../components/AgencyStatusBadge";
+import {
+  commissionRuleColumns,
+  estimateCommissionForBooking,
+  formatCommissionRuleValue,
+  getApplicableCommissionRule,
+  getCommissionScopeLabel,
+} from "../commissionEngine";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
 
-const bookingColumns = "id,reference,contact_name,contact_email,contact_phone,status,total_amount_mad,paid_amount_mad,created_at,preferred_dates,trip_id,agency_organization_id";
-const ruleColumns = "id,organization_id,scope_type,trip_id,rule_name,commission_type,commission_value,currency,applies_to,status,priority";
+const bookingColumns = "id,reference,contact_name,contact_email,contact_phone,status,total_amount_mad,paid_amount_mad,created_at,preferred_dates,trip_id,agency_organization_id,trips:trip_id(id,title,destination,base_price_mad)";
 
 export default function AgencyDashboard() {
   const { organization } = useAgencyContext();
@@ -32,10 +38,10 @@ export default function AgencyDashboard() {
           .select(bookingColumns, { count: "exact" })
           .eq("agency_organization_id", organization.id)
           .order("created_at", { ascending: false })
-          .limit(5),
+          .limit(500),
         db
-          .from("commission_rules")
-          .select(ruleColumns)
+          .from("commission_engine_rules")
+          .select(commissionRuleColumns)
           .eq("organization_id", organization.id)
           .eq("status", "active")
           .order("priority", { ascending: true, nullsFirst: false })
@@ -49,7 +55,14 @@ export default function AgencyDashboard() {
     load();
   }, [organization?.id]);
 
-  const defaultRule = useMemo(() => rules.find((rule) => rule.scope_type === "agency_default"), [rules]);
+  const defaultRule = useMemo(() => rules.find((rule) => rule.scope === "global"), [rules]);
+  const estimatedEarnings = useMemo(
+    () => bookings.reduce((sum, booking) => {
+      const rule = getApplicableCommissionRule(rules, booking);
+      return sum + estimateCommissionForBooking(booking, rule);
+    }, 0),
+    [bookings, rules]
+  );
 
   return (
     <div className="space-y-6">
@@ -71,17 +84,15 @@ export default function AgencyDashboard() {
         </Card>
         <Card className="p-5">
           <Wallet className="h-5 w-5 text-accent" />
-          <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">Montant total visible</p>
-          <p className="mt-1 text-3xl font-semibold">{fmtMAD(bookings.reduce((sum, booking) => sum + Number(booking.total_amount_mad || 0), 0))}</p>
+          <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">Gains estimés</p>
+          <p className="mt-1 text-3xl font-semibold">{fmtMAD(estimatedEarnings)}</p>
         </Card>
         <Card className="p-5">
           <Percent className="h-5 w-5 text-accent" />
           <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">Règle active</p>
           <p className="mt-1 text-lg font-semibold">
             {defaultRule
-              ? defaultRule.commission_type === "percentage"
-                ? `${defaultRule.commission_value}%`
-                : `${defaultRule.commission_value} ${defaultRule.currency}`
+              ? formatCommissionRuleValue(defaultRule)
               : "Non renseignée"}
           </p>
         </Card>
@@ -104,7 +115,7 @@ export default function AgencyDashboard() {
             <p className="p-8 text-center text-sm text-muted-foreground">Aucune réservation attribuée.</p>
           ) : (
             <div className="divide-y divide-border">
-              {bookings.map((booking) => (
+              {bookings.slice(0, 5).map((booking) => (
                 <Link key={booking.id} to={`/agency/bookings/${booking.id}`} className="block p-4 transition hover:bg-secondary/40">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -132,9 +143,9 @@ export default function AgencyDashboard() {
               rules.map((rule) => (
                 <div key={rule.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium">{rule.scope_type === "agency_default" ? "Agency default" : "Trip override"}</p>
+                    <p className="font-medium">{getCommissionScopeLabel(rule)}</p>
                     <p className="text-sm font-semibold">
-                      {rule.commission_type === "percentage" ? `${rule.commission_value}%` : `${rule.commission_value} ${rule.currency}`}
+                      {formatCommissionRuleValue(rule)}
                     </p>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{rule.applies_to}</p>

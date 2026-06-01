@@ -300,6 +300,25 @@ async function ensureMember(admin: any, organizationId: string, userId: string, 
   return data;
 }
 
+async function ensureMemberProfile(admin: any, member: any, request: PartnerRequest, warnings: Warning[]) {
+  if (!member?.id || !member.user_id || !member.organization_id) return false;
+  const { error } = await admin.from("organization_member_profiles").upsert({
+    organization_member_id: member.id,
+    user_id: member.user_id,
+    organization_id: member.organization_id,
+    full_name: request.manager_name ?? null,
+    email: normalizeEmail(request.email) || null,
+    phone: request.phone ?? null,
+    position_title: "Owner",
+    notes: `Created from partner request ${request.id}`,
+  }, { onConflict: "organization_member_id" });
+  if (error) {
+    warn(warnings, "ensure_member_profile", error.message);
+    return false;
+  }
+  return true;
+}
+
 async function createOnboardingCaseWithFallbacks(admin: any, organizationId: string, requestId: string, callerId: string, warnings: Warning[]) {
   const attempts = [
     { organization_id: organizationId, partner_request_id: requestId, status: "draft", created_by: callerId },
@@ -408,6 +427,7 @@ Deno.serve(async (req) => {
     const member = organizationId && authUser?.id
       ? await ensureMember(admin, organizationId, authUser.id, callerId, warnings)
       : null;
+    if (member) await ensureMemberProfile(admin, member, partnerRequest, warnings);
 
     if (organizationId) {
       onboardingCase = await ensureOnboardingCase(admin, organizationId, partnerRequest.id, callerId, onboardingCase, warnings);

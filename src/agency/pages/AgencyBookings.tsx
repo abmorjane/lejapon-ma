@@ -15,7 +15,7 @@ type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
 
 const PAGE_SIZE = 20;
-const bookingColumns = "id,reference,contact_name,contact_email,contact_phone,status,total_amount_mad,paid_amount_mad,created_at,preferred_dates,trip_id,agency_organization_id";
+const bookingColumns = "id,reference,contact_name,contact_email,contact_phone,status,total_amount_mad,paid_amount_mad,created_at,preferred_dates,trip_id,agency_organization_id,assigned_to,agency_attributed_at,trips:trip_id(id,title,start_date,end_date,destination)";
 
 export default function AgencyBookings() {
   const { organization } = useAgencyContext();
@@ -24,6 +24,9 @@ export default function AgencyBookings() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [travelFrom, setTravelFrom] = useState("");
+  const [travelTo, setTravelTo] = useState("");
+  const [destination, setDestination] = useState("");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
 
@@ -31,6 +34,34 @@ export default function AgencyBookings() {
     if (!organization) return;
     setLoading(true);
     setError(null);
+
+    let tripIds: string[] | null = null;
+    const destinationNeedle = destination.trim().replace(/,/g, " ");
+    if (travelFrom || travelTo || destinationNeedle) {
+      let tripQuery = db.from("trips").select("id").limit(1000);
+      if (destinationNeedle) {
+        tripQuery = tripQuery.or(`title.ilike.%${destinationNeedle}%,destination.ilike.%${destinationNeedle}%`);
+      }
+      if (travelFrom) tripQuery = tripQuery.gte("start_date", travelFrom);
+      if (travelTo) tripQuery = tripQuery.lte("start_date", travelTo);
+
+      const { data: tripRows, error: tripError } = await tripQuery;
+      if (tripError) {
+        setError(tripError.message);
+        setRows([]);
+        setTotal(0);
+        setLoading(false);
+        return;
+      }
+
+      tripIds = (tripRows ?? []).map((trip: { id: string }) => trip.id);
+      if (tripIds.length === 0) {
+        setRows([]);
+        setTotal(0);
+        setLoading(false);
+        return;
+      }
+    }
 
     let query = db
       .from("bookings")
@@ -40,9 +71,11 @@ export default function AgencyBookings() {
       .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
 
     if (status !== "all") query = query.eq("status", status);
+    if (tripIds) query = query.in("trip_id", tripIds);
     const needle = search.trim();
     if (needle) {
-      query = query.or(`reference.ilike.%${needle}%,contact_name.ilike.%${needle}%,contact_email.ilike.%${needle}%`);
+      const safeNeedle = needle.replace(/,/g, " ");
+      query = query.or(`reference.ilike.%${safeNeedle}%,contact_name.ilike.%${safeNeedle}%,contact_email.ilike.%${safeNeedle}%`);
     }
 
     const { data, error, count } = await query;
@@ -60,7 +93,7 @@ export default function AgencyBookings() {
   useEffect(() => {
     const timer = setTimeout(load, 250);
     return () => clearTimeout(timer);
-  }, [organization?.id, page, search, status]);
+  }, [organization?.id, page, search, status, travelFrom, travelTo, destination]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -72,7 +105,7 @@ export default function AgencyBookings() {
       </div>
 
       <Card className="p-4">
-        <div className="grid gap-3 md:grid-cols-[1fr_190px]">
+        <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_170px_150px_150px_170px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
             <Input
@@ -82,6 +115,26 @@ export default function AgencyBookings() {
               className="min-h-11 pl-9"
             />
           </div>
+          <Input
+            value={destination}
+            onChange={(event) => { setPage(0); setDestination(event.target.value); }}
+            placeholder="Destination"
+            className="min-h-11"
+          />
+          <Input
+            type="date"
+            value={travelFrom}
+            onChange={(event) => { setPage(0); setTravelFrom(event.target.value); }}
+            className="min-h-11"
+            aria-label="Date voyage depuis"
+          />
+          <Input
+            type="date"
+            value={travelTo}
+            onChange={(event) => { setPage(0); setTravelTo(event.target.value); }}
+            className="min-h-11"
+            aria-label="Date voyage jusqu'à"
+          />
           <Select value={status} onValueChange={(value) => { setPage(0); setStatus(value); }}>
             <SelectTrigger className="min-h-11">
               <SelectValue />
@@ -121,6 +174,7 @@ export default function AgencyBookings() {
                   <tr className="text-left">
                     <th className="p-4 font-semibold">Référence</th>
                     <th className="p-4 font-semibold">Client</th>
+                    <th className="p-4 font-semibold">Voyage</th>
                     <th className="p-4 font-semibold">Total</th>
                     <th className="p-4 font-semibold">Payé</th>
                     <th className="p-4 font-semibold">Statut</th>
@@ -136,6 +190,12 @@ export default function AgencyBookings() {
                       <td className="p-4">
                         <p className="font-medium">{booking.contact_name}</p>
                         <p className="text-xs text-muted-foreground">{booking.contact_email}</p>
+                      </td>
+                      <td className="p-4">
+                        <p className="font-medium">{booking.trips?.title ?? "—"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {booking.trips?.destination || booking.preferred_dates || "—"}
+                        </p>
                       </td>
                       <td className="p-4">{fmtMAD(booking.total_amount_mad)}</td>
                       <td className="p-4">{fmtMAD(booking.paid_amount_mad)}</td>
@@ -155,6 +215,7 @@ export default function AgencyBookings() {
                       <p className="font-semibold text-accent">{booking.reference}</p>
                       <p className="text-sm font-medium">{booking.contact_name}</p>
                       <p className="text-xs text-muted-foreground">{booking.contact_email}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{booking.trips?.title ?? booking.preferred_dates ?? "Voyage non défini"}</p>
                     </div>
                     <AgencyStatusBadge value={booking.status} />
                   </div>

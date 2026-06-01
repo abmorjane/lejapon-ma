@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Edit, KeyRound, Loader2, Plus, ShieldOff } from "lucide-react";
+import { AlertTriangle, Copy, Edit, KeyRound, Loader2, Plus, ShieldOff, Trash2, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 const ALL_ROLES: Role[] = ["super_admin", "admin", "manager", "agent", "content_manager", "supplier", "marketing_manager"];
@@ -48,8 +50,16 @@ type ExternalMemberRow = {
   email: string | null;
   full_name: string | null;
   phone: string | null;
+  secondary_phone: string | null;
+  secondary_email: string | null;
+  position_title: string | null;
+  point_of_sale: string | null;
+  notes: string | null;
+  avatar_url: string | null;
   organization_id: string;
   organization_name: string | null;
+  organization_legal_name: string | null;
+  organization_website: string | null;
   organization_type: string | null;
   organization_status: string | null;
   role: string;
@@ -78,7 +88,34 @@ type ResetResult = {
   raw: unknown;
 };
 
+type ProfileEditState = {
+  user_id: string;
+  member_id?: string | null;
+  email: string;
+  organization_name?: string;
+  full_name: string;
+  phone: string;
+  secondary_phone: string;
+  secondary_email: string;
+  position_title: string;
+  point_of_sale: string;
+  notes: string;
+  role: string;
+  status: string;
+  isExternal: boolean;
+};
+
 type VisaFilter = "hide_staff" | "all";
+
+type DeleteAction = {
+  title: string;
+  description: string;
+  label: string;
+  action: "delete_user_safely" | "remove_organization_member" | "delete_external_user_safely" | "deactivate_user";
+  user_id?: string;
+  member_id?: string;
+  remove_memberships?: boolean;
+};
 
 type DbClient = {
   from: (table: string) => any;
@@ -88,33 +125,72 @@ const db = supabase as unknown as DbClient;
 
 async function readFunctionError(error: any) {
   const context = error?.context;
-  if (context && typeof context.json === "function") {
+  const result: {
+    status?: number;
+    statusText?: string;
+    message?: string;
+    json?: any;
+    text?: string;
+  } = {
+    status: context?.status,
+    statusText: context?.statusText,
+    message: error?.message,
+  };
+
+  if (context && typeof context.clone === "function") {
     try {
-      return await context.json();
+      result.json = await context.clone().json();
+      return result;
     } catch {
-      return null;
+      try {
+        result.text = await context.clone().text();
+      } catch {
+        result.text = null as any;
+      }
+      return result;
     }
   }
-  return null;
+
+  if (context && typeof context.json === "function") {
+    try {
+      result.json = await context.json();
+      return result;
+    } catch {
+      if (typeof context.text === "function") {
+        try {
+          result.text = await context.text();
+        } catch {
+          result.text = null as any;
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 const functionErrorMessage = async (error: any) => {
   const body = await readFunctionError(error);
-  return body?.detail || body?.error || error?.message || "Edge Function returned a non-2xx status code.";
+  return body?.json?.detail || body?.json?.error || body?.text || body?.message || error?.message || "Edge Function returned a non-2xx status code.";
 };
 
 export default function UsersAdmin() {
-  const { isSuperAdmin } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [externalMembers, setExternalMembers] = useState<ExternalMemberRow[]>([]);
   const [visaClients, setVisaClients] = useState<VisaClientRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [openCreate, setOpenCreate] = useState(false);
-  const [profileEdit, setProfileEdit] = useState<{ user_id: string; full_name: string; phone: string } | null>(null);
+  const [profileEdit, setProfileEdit] = useState<ProfileEditState | null>(null);
   const [resetResult, setResetResult] = useState<ResetResult | null>(null);
+  const [deleteAction, setDeleteAction] = useState<DeleteAction | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
   const [rawError, setRawError] = useState<string | null>(null);
   const [externalRawResponse, setExternalRawResponse] = useState<string | null>(null);
+  const [externalRequestPayload, setExternalRequestPayload] = useState<string | null>(null);
+  const [externalDebugResponse, setExternalDebugResponse] = useState<string | null>(null);
+  const [externalDebugOpen, setExternalDebugOpen] = useState(false);
   const [adminUsersFunctionVersion, setAdminUsersFunctionVersion] = useState<string | null>(null);
   const [visaFilter, setVisaFilter] = useState<VisaFilter>("hide_staff");
   const [form, setForm] = useState({ email: "", password: "", full_name: "", roles: [] as Role[] });
@@ -132,17 +208,38 @@ export default function UsersAdmin() {
   const loadUsers = async () => {
     setLoading(true);
     setRawError(null);
+    setExternalRequestPayload(null);
+    setExternalDebugResponse(null);
     setAdminUsersFunctionVersion(null);
 
-    const [usersResult, externalResult, visaResult] = await Promise.all([
+    const externalPayload = { action: "list_external_members" };
+    const debugPayload = {
+      action: "debug_echo",
+      target: "external_users",
+      next_payload: externalPayload,
+    };
+    setExternalRequestPayload(JSON.stringify(externalPayload, null, 2));
+
+    const [usersResult, externalDebugResult, visaResult] = await Promise.all([
       supabase.functions.invoke("admin-users", { body: { action: "list" } }),
-      supabase.functions.invoke("admin-users", { body: { action: "list_external_members" } }),
+      supabase.functions.invoke("admin-users", { body: debugPayload }),
       db
         .from("visa_applications")
         .select("id,reference,user_id,surname,given_names,residential_email,passport_no,status,created_at,submitted_at")
         .order("created_at", { ascending: false })
         .limit(250),
     ]);
+
+    if (externalDebugResult.error) {
+      const body = await readFunctionError(externalDebugResult.error);
+      setExternalDebugResponse(JSON.stringify(body ?? { error: externalDebugResult.error.message }, null, 2));
+    } else {
+      const payload = (externalDebugResult.data as any) ?? {};
+      setExternalDebugResponse(JSON.stringify(payload, null, 2));
+      if (payload.function_version) setAdminUsersFunctionVersion(payload.function_version);
+    }
+
+    const externalResult = await supabase.functions.invoke("admin-users", { body: externalPayload });
 
     if (usersResult.error) {
       const body = await readFunctionError(usersResult.error);
@@ -156,24 +253,63 @@ export default function UsersAdmin() {
       setUsers((payload.users ?? []) as UserRow[]);
     }
 
+    const authUserMap = new Map<string, any>();
+    if (!usersResult.error && usersResult.data) {
+      const rawUsers = ((usersResult.data as any)?.users ?? []) as any[];
+      rawUsers.forEach((u: any) => authUserMap.set(u.id, u));
+    }
+
     if (externalResult.error) {
       const body = await readFunctionError(externalResult.error);
       const message = await functionErrorMessage(externalResult.error);
       toast.error(`Utilisateurs externes: ${message}`);
       setRawError(JSON.stringify(body ?? { error: message }, null, 2));
       setExternalRawResponse(JSON.stringify(body ?? { error: message }, null, 2));
-      if (body?.function_version) setAdminUsersFunctionVersion(body.function_version);
+      if (body?.json?.function_version) setAdminUsersFunctionVersion(body.json.function_version);
       setExternalMembers([]);
     } else {
       const payload = (externalResult.data as any) ?? {};
-      const rows = ((payload.external_members ?? []) as any[]).map((member) => ({
-        ...member,
-        role: member.role ?? member.member_role ?? "viewer",
-        status: member.status ?? member.member_status ?? "suspended",
-      }));
       if (payload.function_version) setAdminUsersFunctionVersion(payload.function_version);
-      setExternalRawResponse(JSON.stringify(payload, null, 2));
-      setExternalMembers(rows as ExternalMemberRow[]);
+      if (payload.success === false) {
+        const raw = JSON.stringify(payload, null, 2);
+        setRawError(raw);
+        setExternalRawResponse(raw);
+        setExternalMembers([]);
+        toast.error(payload.error ? `Utilisateurs externes: ${payload.error}` : "Impossible de charger les utilisateurs externes.");
+      } else {
+        const sourceRows =
+          payload.rows ??
+          payload.members ??
+          payload.items ??
+          payload.organization_members ??
+          payload.external_members ??
+          [];
+        const rows = (sourceRows as any[]).map((member) => ({
+          ...member,
+          member_id: member.member_id ?? member.id ?? `${member.organization_id ?? "org"}-${member.user_id ?? Math.random()}`,
+          user_id: member.user_id ?? "",
+          organization_id: member.organization_id ?? "",
+          email: member.email ?? authUserMap.get(member.user_id)?.email ?? null,
+          full_name: member.full_name ?? authUserMap.get(member.user_id)?.full_name ?? null,
+          phone: member.phone ?? authUserMap.get(member.user_id)?.phone ?? null,
+          secondary_phone: member.secondary_phone ?? null,
+          secondary_email: member.secondary_email ?? null,
+          position_title: member.position_title ?? null,
+          point_of_sale: member.point_of_sale ?? null,
+          notes: member.notes ?? null,
+          avatar_url: member.avatar_url ?? null,
+          organization_name: member.organization_name ?? null,
+          organization_legal_name: member.organization_legal_name ?? null,
+          organization_website: member.organization_website ?? null,
+          organization_type: member.organization_type ?? null,
+          organization_status: member.organization_status ?? null,
+          role: member.role ?? member.member_role ?? "viewer",
+          status: member.status ?? member.member_status ?? "suspended",
+          created_at: member.created_at ?? null,
+        }));
+        setExternalRawResponse(JSON.stringify(payload, null, 2));
+        setExternalMembers(rows as ExternalMemberRow[]);
+      }
     }
 
     if (visaResult.error) {
@@ -215,7 +351,7 @@ export default function UsersAdmin() {
       return;
     }
     setBusy(true);
-    const { error } = await supabase.functions.invoke("admin-users", {
+    const { data, error } = await supabase.functions.invoke("admin-users", {
       body: { action: "create", ...form },
     });
     setBusy(false);
@@ -284,18 +420,31 @@ export default function UsersAdmin() {
   const saveProfile = async () => {
     if (!profileEdit) return;
     setBusy(true);
-    const { error } = await supabase.functions.invoke("admin-users", {
+    const { data: profileData, error } = await supabase.functions.invoke("admin-users", {
       body: {
         action: "update_profile",
         user_id: profileEdit.user_id,
+        member_id: profileEdit.member_id,
         full_name: profileEdit.full_name,
         phone: profileEdit.phone,
+        secondary_phone: profileEdit.secondary_phone,
+        secondary_email: profileEdit.secondary_email,
+        position_title: profileEdit.position_title,
+        point_of_sale: profileEdit.point_of_sale,
+        notes: profileEdit.notes,
+        role: profileEdit.role,
+        status: profileEdit.status,
       },
     });
     setBusy(false);
     if (error) {
       toast.error(await functionErrorMessage(error));
       return;
+    }
+    const payload = (profileData ?? {}) as any;
+    if (payload.warnings?.length) {
+      setRawError(JSON.stringify(payload, null, 2));
+      toast.warning("Profil mis à jour avec avertissement. Vérifiez la réponse brute.");
     }
     toast.success("Profil mis à jour.");
     setProfileEdit(null);
@@ -314,8 +463,84 @@ export default function UsersAdmin() {
     loadUsers();
   };
 
+  const openDeleteAction = (action: DeleteAction) => {
+    setDeleteAction(action);
+    setDeleteConfirm("");
+  };
+
+  const runDeleteAction = async () => {
+    if (!deleteAction || deleteConfirm !== "DELETE") return;
+
+    const requestPayload = {
+      action: deleteAction.action,
+      user_id: deleteAction.user_id,
+      member_id: deleteAction.member_id,
+      remove_memberships: deleteAction.remove_memberships,
+    };
+
+    setBusy(true);
+    const { data, error } = await supabase.functions.invoke("admin-users", {
+      body: requestPayload,
+    });
+    setBusy(false);
+
+    if (error) {
+      const body = await readFunctionError(error);
+      const message = await functionErrorMessage(error);
+      setRawError(JSON.stringify({ request: requestPayload, response: body ?? { error: message } }, null, 2));
+      toast.error(message);
+      return;
+    }
+
+    const payload = (data ?? {}) as any;
+    setRawError(JSON.stringify({ request: requestPayload, response: payload }, null, 2));
+
+    if (payload.success === false) {
+      const reasons = (payload.blocked_reasons ?? []).join(", ") || payload.error || "Action bloquée.";
+      toast.error(`Action bloquée: ${reasons}`);
+      return;
+    }
+
+    toast.success("Action de nettoyage exécutée.");
+    setDeleteAction(null);
+    setDeleteConfirm("");
+    loadUsers();
+  };
+
   const openProfileEdit = (userId: string, fullName?: string | null, phone?: string | null) => {
-    setProfileEdit({ user_id: userId, full_name: fullName ?? "", phone: phone ?? "" });
+    setProfileEdit({
+      user_id: userId,
+      email: "",
+      full_name: fullName ?? "",
+      phone: phone ?? "",
+      secondary_phone: "",
+      secondary_email: "",
+      position_title: "",
+      point_of_sale: "",
+      notes: "",
+      role: "viewer",
+      status: "active",
+      isExternal: false,
+    });
+  };
+
+  const openExternalProfileEdit = (member: ExternalMemberRow) => {
+    setProfileEdit({
+      user_id: member.user_id,
+      member_id: member.member_id,
+      email: member.email ?? "",
+      organization_name: member.organization_name || member.organization_legal_name || member.organization_id,
+      full_name: member.full_name ?? "",
+      phone: member.phone ?? "",
+      secondary_phone: member.secondary_phone ?? "",
+      secondary_email: member.secondary_email ?? "",
+      position_title: member.position_title ?? "",
+      point_of_sale: member.point_of_sale ?? "",
+      notes: member.notes ?? "",
+      role: member.role,
+      status: member.status,
+      isExternal: true,
+    });
   };
 
   const SummaryCards = () => (
@@ -425,6 +650,27 @@ export default function UsersAdmin() {
                           <KeyRound className="h-3.5 w-3.5" />
                           Réinitialiser
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() =>
+                            openDeleteAction({
+                              title: "Supprimer définitivement ce staff ?",
+                              label: staff.full_name || staff.email || staff.id,
+                              description:
+                                externalMembers.some((member) => member.user_id === staff.id)
+                                  ? "Les rôles internes seront supprimés, les appartenances organisation seront retirées, puis le compte Auth sera supprimé. L'action sera bloquée si ce compte est le dernier super admin ou possède des demandes visa."
+                                  : "Les rôles internes seront supprimés puis le compte Auth sera supprimé. L'action sera bloquée si ce compte est le dernier super admin ou possède des demandes visa.",
+                              action: "delete_user_safely",
+                              user_id: staff.id,
+                              remove_memberships: externalMembers.some((member) => member.user_id === staff.id),
+                            })
+                          }
+                          disabled={busy || staff.id === user?.id}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Supprimer
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -435,14 +681,48 @@ export default function UsersAdmin() {
         </TabsContent>
 
         <TabsContent value="external" className="mt-0">
-          <div className="mb-3 rounded-lg border border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground">
-            organization_members retournés: <span className="font-semibold text-foreground">{externalMembers.length}</span>
-          </div>
+          <Collapsible open={externalDebugOpen} onOpenChange={setExternalDebugOpen} className="mb-3">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/30 px-4 py-3 text-sm">
+              <p className="text-muted-foreground">
+                organization_members retournés: <span className="font-semibold text-foreground">{externalMembers.length}</span>
+              </p>
+              <CollapsibleTrigger asChild>
+                <Button variant="outline" size="sm">Debug</Button>
+              </CollapsibleTrigger>
+            </div>
+            <CollapsibleContent className="space-y-3 rounded-b-lg border-x border-b border-border bg-secondary/20 px-4 py-3 text-sm text-muted-foreground">
+              {externalRequestPayload && (
+                <div>
+                  <p className="font-medium text-foreground">Payload envoyé à admin-users</p>
+                  <pre className="mt-1 max-h-40 overflow-auto rounded-md bg-background p-3 text-xs text-muted-foreground">
+                    {externalRequestPayload}
+                  </pre>
+                </div>
+              )}
+              {externalDebugResponse && (
+                <div>
+                  <p className="font-medium text-foreground">Réponse debug_echo</p>
+                  <pre className="mt-1 max-h-56 overflow-auto rounded-md bg-background p-3 text-xs text-muted-foreground">
+                    {externalDebugResponse}
+                  </pre>
+                </div>
+              )}
+              {externalRawResponse && (
+                <div>
+                  <p className="font-medium text-foreground">Réponse list_external_members</p>
+                  <pre className="mt-1 max-h-64 overflow-auto rounded-md bg-background p-3 text-xs text-muted-foreground">
+                    {externalRawResponse}
+                  </pre>
+                </div>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
           <Card className="overflow-hidden">
             <table className="w-full min-w-[980px] text-sm">
               <thead className="bg-secondary/50">
                 <tr className="text-left">
                   <th className="p-4 font-semibold">Utilisateur</th>
+                  <th className="p-4 font-semibold">Contact agence</th>
                   <th className="p-4 font-semibold">Organisation</th>
                   <th className="p-4 font-semibold">Rôle organisation</th>
                   <th className="p-4 font-semibold">Statut membre</th>
@@ -451,31 +731,50 @@ export default function UsersAdmin() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {loading && <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">Chargement…</td></tr>}
+                {loading && <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Chargement…</td></tr>}
                 {!loading && externalMembers.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="space-y-3 p-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="space-y-3 p-8 text-center text-muted-foreground">
                       <p>Aucun utilisateur externe.</p>
-                      {externalRawResponse && (
-                        <pre className="mx-auto max-h-64 max-w-3xl overflow-auto rounded-lg bg-muted p-3 text-left text-xs text-muted-foreground">
-                          {externalRawResponse}
-                        </pre>
-                      )}
                     </td>
                   </tr>
                 )}
-                {externalMembers.map((member) => (
+                {externalMembers.map((member) => {
+                  const authUser = usersById.get(member.user_id);
+                  const displayName = authUser?.full_name ?? member.full_name ?? member.user_id;
+                  const displayEmail = authUser?.email ?? member.email;
+                  const organizationLabel = member.organization_name || member.organization_legal_name || member.organization_id;
+                  const organizationMeta = [member.organization_type, member.organization_status, member.organization_website].filter(Boolean).join(" · ");
+
+                  return (
                   <tr key={member.member_id} className="align-top hover:bg-secondary/30">
                     <td className="p-4">
-                      <p className="font-medium">{member.full_name || "—"}</p>
-                      <p className="text-xs text-muted-foreground">{member.email || member.user_id}</p>
+                      <div className="flex items-start gap-3">
+                        {member.avatar_url ? (
+                          <img src={member.avatar_url} alt="" className="h-9 w-9 rounded-full object-cover" />
+                        ) : (
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-muted-foreground">
+                            {displayName.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-medium">{displayName}</p>
+                          <p className="break-all text-xs text-muted-foreground">{displayEmail || "Email non renseigné"}</p>
+                        </div>
+                      </div>
                       {usersById.get(member.user_id)?.roles?.length ? (
                         <Badge variant="outline" className="mt-2 border-amber-200 bg-amber-50 text-amber-800">Accès mixte interne + organisation</Badge>
                       ) : null}
                     </td>
                     <td className="p-4">
-                      <p className="font-medium">{member.organization_name || "—"}</p>
-                      <p className="text-xs text-muted-foreground">{member.organization_type || "—"} · {member.organization_status || "—"}</p>
+                      <p className="font-medium">{member.phone || "Téléphone non renseigné"}</p>
+                      <p className="text-xs text-muted-foreground">{member.secondary_phone || "Téléphone secondaire —"}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">{member.position_title || "Fonction —"}</p>
+                      <p className="text-xs text-muted-foreground">{member.point_of_sale || "Point de vente —"}</p>
+                    </td>
+                    <td className="p-4">
+                      <p className="font-medium">{organizationLabel}</p>
+                      <p className="text-xs text-muted-foreground">{organizationMeta || "Informations organisation non renseignées"}</p>
                     </td>
                     <td className="p-4">
                       <Select value={member.role} onValueChange={(value) => updateExternalMember(member, { role: value })}>
@@ -496,18 +795,54 @@ export default function UsersAdmin() {
                     <td className="p-4 text-xs text-muted-foreground">{fmtDateTime(member.created_at)}</td>
                     <td className="p-4">
                       <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="outline" onClick={() => openProfileEdit(member.user_id, member.full_name, member.phone)}>
+                        <Button size="sm" variant="outline" onClick={() => openExternalProfileEdit(member)}>
                           <Edit className="h-3.5 w-3.5" />
                           Profil
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => resetPassword(member.user_id, member.email)} disabled={busy}>
+                        <Button size="sm" variant="outline" onClick={() => resetPassword(member.user_id, displayEmail)} disabled={busy}>
                           <KeyRound className="h-3.5 w-3.5" />
                           Réinitialiser
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            openDeleteAction({
+                              title: "Retirer ce membre de l'organisation ?",
+                              label: displayName,
+                              description: "Seule l'appartenance à cette organisation sera supprimée. Le compte Auth restera disponible s'il existe.",
+                              action: "remove_organization_member",
+                              member_id: member.member_id,
+                            })
+                          }
+                          disabled={busy}
+                        >
+                          <UserX className="h-3.5 w-3.5" />
+                          Retirer
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() =>
+                            openDeleteAction({
+                              title: "Supprimer définitivement cet utilisateur externe ?",
+                              label: displayName,
+                              description:
+                                "Toutes ses appartenances organisation seront retirées, puis le compte Auth sera supprimé. L'action sera bloquée si ce compte possède des rôles internes ou des demandes visa.",
+                              action: "delete_external_user_safely",
+                              user_id: member.user_id,
+                            })
+                          }
+                          disabled={busy || member.user_id === user?.id}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Supprimer compte
                         </Button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </Card>
@@ -568,10 +903,30 @@ export default function UsersAdmin() {
                       <td className="p-4 text-xs text-muted-foreground">{fmtDateTime(visa.created_at)}</td>
                       <td className="p-4">
                         {authUser ? (
-                          <Button size="sm" variant="outline" onClick={() => resetPassword(visa.user_id, authUser.email || visa.residential_email)} disabled={busy}>
-                            <KeyRound className="h-3.5 w-3.5" />
-                            Réinitialiser
-                          </Button>
+                          <div className="flex flex-wrap gap-2">
+                            <Button size="sm" variant="outline" onClick={() => resetPassword(visa.user_id, authUser.email || visa.residential_email)} disabled={busy}>
+                              <KeyRound className="h-3.5 w-3.5" />
+                              Réinitialiser
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() =>
+                                openDeleteAction({
+                                  title: "Désactiver l'accès Auth de ce client visa ?",
+                                  label: authUser.email || visa.residential_email || visa.user_id,
+                                  description:
+                                    "Le compte Auth sera désactivé, mais les demandes visa ne seront pas supprimées. Utilisez cette option pour retirer l'accès sans perdre l'historique.",
+                                  action: "deactivate_user",
+                                  user_id: visa.user_id,
+                                })
+                              }
+                              disabled={busy || visa.user_id === user?.id}
+                            >
+                              <ShieldOff className="h-3.5 w-3.5" />
+                              Désactiver
+                            </Button>
+                          </div>
                         ) : (
                           <span className="text-xs text-muted-foreground">Compte Auth non résolu</span>
                         )}
@@ -627,18 +982,92 @@ export default function UsersAdmin() {
       </Dialog>
 
       <Dialog open={Boolean(profileEdit)} onOpenChange={(open) => !open && setProfileEdit(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Modifier le profil</DialogTitle></DialogHeader>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{profileEdit?.isExternal ? "Profil utilisateur externe" : "Modifier le profil"}</DialogTitle>
+          </DialogHeader>
           {profileEdit && (
             <div className="space-y-4">
-              <div>
-                <Label htmlFor="profile_full_name">Nom complet</Label>
-                <Input id="profile_full_name" value={profileEdit.full_name} onChange={(event) => setProfileEdit({ ...profileEdit, full_name: event.target.value })} />
+              {profileEdit.isExternal && (
+                <div className="rounded-lg border border-border bg-secondary/30 p-4 text-sm">
+                  <p className="font-medium">{profileEdit.organization_name || "Organisation"}</p>
+                  <p className="text-xs text-muted-foreground">{profileEdit.email || "Email non renseigné"}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Les champs additionnels sont stockés dans <span className="font-mono">organization_member_profiles</span>.
+                  </p>
+                </div>
+              )}
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="profile_full_name">Nom complet</Label>
+                  <Input id="profile_full_name" value={profileEdit.full_name} onChange={(event) => setProfileEdit({ ...profileEdit, full_name: event.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="profile_phone">Téléphone</Label>
+                  <Input id="profile_phone" value={profileEdit.phone} onChange={(event) => setProfileEdit({ ...profileEdit, phone: event.target.value })} />
+                </div>
               </div>
-              <div>
-                <Label htmlFor="profile_phone">Téléphone</Label>
-                <Input id="profile_phone" value={profileEdit.phone} onChange={(event) => setProfileEdit({ ...profileEdit, phone: event.target.value })} />
-              </div>
+
+              {profileEdit.isExternal && (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="secondary_phone">Téléphone secondaire</Label>
+                      <Input id="secondary_phone" value={profileEdit.secondary_phone} onChange={(event) => setProfileEdit({ ...profileEdit, secondary_phone: event.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="secondary_email">Email secondaire</Label>
+                      <Input id="secondary_email" type="email" value={profileEdit.secondary_email} onChange={(event) => setProfileEdit({ ...profileEdit, secondary_email: event.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="position_title">Fonction / titre</Label>
+                      <Input id="position_title" value={profileEdit.position_title} onChange={(event) => setProfileEdit({ ...profileEdit, position_title: event.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="point_of_sale">Point de vente</Label>
+                      <Input id="point_of_sale" value={profileEdit.point_of_sale} onChange={(event) => setProfileEdit({ ...profileEdit, point_of_sale: event.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Rôle organisation</Label>
+                      <Select value={profileEdit.role} onValueChange={(value) => setProfileEdit({ ...profileEdit, role: value })}>
+                        <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {ORG_ROLES.map((role) => <SelectItem key={role} value={role}>{role}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Statut membre</Label>
+                      <Select value={profileEdit.status} onValueChange={(value) => setProfileEdit({ ...profileEdit, status: value })}>
+                        <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {ORG_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="external_notes">Notes</Label>
+                      <Textarea id="external_notes" rows={4} value={profileEdit.notes} onChange={(event) => setProfileEdit({ ...profileEdit, notes: event.target.value })} />
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                    <p className="font-semibold">Sécurité mot de passe</p>
+                    <p className="mt-1 text-xs">Le mot de passe provisoire est affiché une seule fois après réinitialisation et n'est jamais stocké en base.</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-3 bg-background"
+                      onClick={() => resetPassword(profileEdit.user_id, profileEdit.email)}
+                      disabled={busy}
+                    >
+                      <KeyRound className="h-4 w-4" />
+                      Générer un mot de passe provisoire
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           )}
           <DialogFooter>
@@ -689,6 +1118,44 @@ export default function UsersAdmin() {
           )}
           <DialogFooter>
             <Button onClick={() => setResetResult(null)}>Fermer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteAction)} onOpenChange={(open) => !open && setDeleteAction(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              {deleteAction?.title ?? "Confirmer le nettoyage"}
+            </DialogTitle>
+          </DialogHeader>
+          {deleteAction && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm">
+                <p className="font-semibold">{deleteAction.label}</p>
+                <p className="mt-2 text-muted-foreground">{deleteAction.description}</p>
+              </div>
+              <div>
+                <Label htmlFor="delete_confirm">Tapez DELETE pour confirmer</Label>
+                <Input
+                  id="delete_confirm"
+                  value={deleteConfirm}
+                  onChange={(event) => setDeleteConfirm(event.target.value)}
+                  placeholder="DELETE"
+                  className="mt-2"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteAction(null)} disabled={busy}>
+              Annuler
+            </Button>
+            <Button variant="destructive" onClick={runDeleteAction} disabled={busy || deleteConfirm !== "DELETE"}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Confirmer
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

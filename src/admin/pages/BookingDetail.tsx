@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { StatusBadge } from "../components/StatusBadge";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown } from "lucide-react";
+import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { generateQuotePdf, generateReceiptPdf, downloadBytes } from "@/lib/booking-pdfs";
 import { PdfPreviewDialog } from "../components/PdfPreviewDialog";
@@ -36,13 +36,22 @@ export default function BookingDetail() {
   const [auditLog, setAuditLog] = useState<any[]>([]);
   const [messageExpanded, setMessageExpanded] = useState(false);
   const [agency, setAgency] = useState<AgencySettings | null>(null);
+  const [agencyOrganizations, setAgencyOrganizations] = useState<any[]>([]);
+  const [agencyMembers, setAgencyMembers] = useState<any[]>([]);
+  const [selectedAgencyOrgId, setSelectedAgencyOrgId] = useState("");
+  const [selectedAgencyUserId, setSelectedAgencyUserId] = useState("");
+  const [assignmentNotes, setAssignmentNotes] = useState("");
+  const [assignmentBusy, setAssignmentBusy] = useState(false);
   const canEdit = isAdmin || isSuperAdmin || roles.includes("manager");
   const reduceMotion = useReducedMotion();
 
   const load = async () => {
     if (!id) return;
-    const { data } = await supabase.from("bookings").select("*, trips(title, season)").eq("id", id).single();
+    const { data } = await supabase.from("bookings").select("*, trips(title, season, destination, start_date, end_date)").eq("id", id).single();
     setB(data);
+    setSelectedAgencyOrgId(data?.agency_organization_id ?? "");
+    setSelectedAgencyUserId(data?.assigned_to ?? "");
+    setAssignmentNotes(data?.agency_attribution_notes ?? "");
     const { data: p } = await supabase.from("payments").select("*").eq("booking_id", id).order("created_at", { ascending: false });
     setPayments(p ?? []);
     const { data: e } = await supabase.from("booking_extras").select("*").eq("booking_id", id);
@@ -51,9 +60,65 @@ export default function BookingDetail() {
     setDocs((d as any) ?? []);
     const { data: log } = await supabase.from("booking_audit_log" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false }).limit(50);
     setAuditLog((log as any) ?? []);
+    const { data: orgs, error: orgError } = await (supabase as any)
+      .from("organizations")
+      .select("id,type,status,display_name,legal_name,email,phone")
+      .eq("type", "agency")
+      .neq("status", "archived")
+      .order("display_name", { ascending: true });
+    if (orgError) {
+      console.warn("[booking-agency-assignment] organizations unavailable", orgError);
+      setAgencyOrganizations([]);
+    } else {
+      setAgencyOrganizations(orgs ?? []);
+    }
     fetchAgencySettings().then(setAgency);
   };
   useEffect(() => { load(); }, [id]);
+
+  const loadAgencyMembers = useCallback(async (organizationId: string) => {
+    if (!organizationId) {
+      setAgencyMembers([]);
+      return;
+    }
+
+    const { data: members, error } = await (supabase as any)
+      .from("organization_members")
+      .select("id,user_id,role,status,created_at")
+      .eq("organization_id", organizationId)
+      .eq("status", "active")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.warn("[booking-agency-assignment] organization members unavailable", error);
+      setAgencyMembers([]);
+      return;
+    }
+
+    const userIds = Array.from(new Set((members ?? []).map((member: any) => member.user_id).filter(Boolean)));
+    let profileMap = new Map<string, any>();
+    if (userIds.length > 0) {
+      const { data: profiles, error: profileError } = await (supabase as any)
+        .from("profiles")
+        .select("id,full_name,phone")
+        .in("id", userIds);
+      if (profileError) {
+        console.warn("[booking-agency-assignment] profiles unavailable", profileError);
+      } else {
+        profileMap = new Map((profiles ?? []).map((profile: any) => [profile.id, profile]));
+      }
+    }
+
+    setAgencyMembers((members ?? []).map((member: any) => ({
+      ...member,
+      full_name: profileMap.get(member.user_id)?.full_name ?? null,
+      phone: profileMap.get(member.user_id)?.phone ?? null,
+    })));
+  }, []);
+
+  useEffect(() => {
+    void loadAgencyMembers(selectedAgencyOrgId);
+  }, [loadAgencyMembers, selectedAgencyOrgId]);
 
   const buildQuote = useCallback(
     () => generateQuotePdf({
@@ -91,6 +156,59 @@ export default function BookingDetail() {
     const { error } = await supabase.from("bookings").update({ [field]: value } as any).eq("id", b.id);
     if (error) return toast.error(error.message);
     toast.success("Enregistré");
+  };
+
+  const saveAgencyAssignment = async () => {
+    if (!b) return;
+    if (selectedAgencyUserId && !selectedAgencyOrgId) {
+      toast.error("Sélectionnez une organisation avant un utilisateur agence.");
+      return;
+    }
+
+    const currentOrg = agencyOrganizations.find((org) => org.id === b.agency_organization_id);
+    const nextOrg = agencyOrganizations.find((org) => org.id === selectedAgencyOrgId);
+    const currentMember = agencyMembers.find((member) => member.user_id === b.assigned_to);
+    const nextMember = agencyMembers.find((member) => member.user_id === selectedAgencyUserId);
+
+    const oldValue = [
+      currentOrg?.display_name || currentOrg?.legal_name || b.agency_organization_id || "Aucune organisation",
+      currentMember?.full_name || b.assigned_to || "Aucun utilisateur agence",
+    ].join(" / ");
+    const newValue = [
+      nextOrg?.display_name || nextOrg?.legal_name || selectedAgencyOrgId || "Aucune organisation",
+      nextMember?.full_name || selectedAgencyUserId || "Aucun utilisateur agence",
+    ].join(" / ");
+
+    setAssignmentBusy(true);
+    try {
+      const patch: any = {
+        agency_organization_id: selectedAgencyOrgId || null,
+        assigned_to: selectedAgencyUserId || null,
+        agency_attributed_at: selectedAgencyOrgId ? new Date().toISOString() : null,
+        agency_attributed_by: selectedAgencyOrgId ? user?.id ?? null : null,
+        agency_attribution_notes: assignmentNotes.trim() || null,
+      };
+      const { error } = await (supabase as any).from("bookings").update(patch).eq("id", b.id);
+      if (error) throw error;
+
+      const auditValue = assignmentNotes.trim() ? `${newValue} · ${assignmentNotes.trim()}` : newValue;
+      const { error: auditError } = await (supabase as any).from("booking_audit_log").insert({
+        booking_id: b.id,
+        field: "Attribution agence V2",
+        old_value: oldValue,
+        new_value: auditValue,
+        user_id: user?.id ?? null,
+        user_email: user?.email ?? null,
+      });
+      if (auditError) console.warn("[booking-agency-assignment] audit log failed", auditError);
+
+      toast.success(selectedAgencyOrgId ? "Réservation attribuée à l’agence." : "Attribution agence retirée.");
+      load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Impossible d’enregistrer l’attribution agence.");
+    } finally {
+      setAssignmentBusy(false);
+    }
   };
 
   const addPayment = async () => {
@@ -378,6 +496,82 @@ export default function BookingDetail() {
         </div>
 
         <aside className="space-y-5 lg:space-y-6">
+          <Card className="rounded-2xl shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 font-display text-lg">
+                <Building2 className="h-4 w-4 text-accent" />
+                Attribution agence V2
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 p-4 pt-0 sm:p-6 sm:pt-0">
+              <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-950">
+                Lecture seule côté agence. Aucune commission ni paiement n’est calculé ici.
+              </p>
+              <div>
+                <Label className="text-xs">Organisation agence</Label>
+                <Select
+                  value={selectedAgencyOrgId || "none"}
+                  onValueChange={(value) => {
+                    const nextValue = value === "none" ? "" : value;
+                    setSelectedAgencyOrgId(nextValue);
+                    setSelectedAgencyUserId("");
+                  }}
+                >
+                  <SelectTrigger className="min-h-11">
+                    <SelectValue placeholder="Sélectionner une agence" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucune agence</SelectItem>
+                    {agencyOrganizations.map((org) => (
+                      <SelectItem key={org.id} value={org.id}>
+                        {org.display_name || org.legal_name || org.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label className="text-xs">Utilisateur agence assigné</Label>
+                <Select
+                  value={selectedAgencyUserId || "none"}
+                  onValueChange={(value) => setSelectedAgencyUserId(value === "none" ? "" : value)}
+                  disabled={!selectedAgencyOrgId}
+                >
+                  <SelectTrigger className="min-h-11">
+                    <SelectValue placeholder="Sélectionner un utilisateur" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Aucun utilisateur spécifique</SelectItem>
+                    {agencyMembers.map((member) => (
+                      <SelectItem key={member.id} value={member.user_id}>
+                        {member.full_name || member.user_id} · {member.role}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedAgencyOrgId && agencyMembers.length === 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">Aucun membre actif trouvé pour cette agence.</p>
+                )}
+              </div>
+
+              <div>
+                <Label className="text-xs">Notes d’attribution</Label>
+                <Textarea
+                  rows={3}
+                  value={assignmentNotes}
+                  onChange={(event) => setAssignmentNotes(event.target.value)}
+                  placeholder="Contexte interne pour cette attribution"
+                />
+              </div>
+
+              <Button className="min-h-11 w-full" onClick={saveAgencyAssignment} disabled={assignmentBusy || !canEdit}>
+                <UserCheck className="h-4 w-4" />
+                {assignmentBusy ? "Enregistrement…" : "Enregistrer l’attribution"}
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card className="rounded-2xl shadow-sm">
             <CardHeader className="pb-3">
               <CardTitle className="font-display text-lg">Documents PDF</CardTitle>
