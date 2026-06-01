@@ -205,7 +205,7 @@ export default function AgencyProfilePage() {
           <div className="min-w-0">
             <h2 className="font-display text-2xl">{organization?.display_name}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Pour modifier ces informations, contactez Moroccan Express / LeJapon.ma.
+              Pour modifier ces informations, contactez Moroccan Express Travel & Events / LeJapon.ma.
             </p>
           </div>
         </div>
@@ -215,7 +215,7 @@ export default function AgencyProfilePage() {
         <Card className="p-5 lg:col-span-2">
           <div className="flex flex-col gap-1">
             <h2 className="font-display text-xl">Mon compte</h2>
-            <p className="text-sm text-muted-foreground">Vous pouvez modifier vos coordonnées. Votre rôle organisation reste géré par Moroccan Express / LeJapon.ma.</p>
+            <p className="text-sm text-muted-foreground">Vous pouvez modifier vos coordonnées. Votre rôle organisation reste géré par Moroccan Express Travel & Events / LeJapon.ma.</p>
           </div>
           <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-2">

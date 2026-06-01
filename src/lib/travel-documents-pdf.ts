@@ -47,6 +47,68 @@ const dateToTime = (value?: string | null) => {
   return Number.isNaN(d.getTime()) ? null : d.getTime();
 };
 
+const inclusiveDayCount = (start?: string | null, end?: string | null) => {
+  const startTime = dateToTime(start);
+  const endTime = dateToTime(end);
+  if (startTime === null || endTime === null || endTime < startTime) return 0;
+  return Math.floor((endTime - startTime) / 86400000) + 1;
+};
+
+const parseDurationDays = (value: unknown) => {
+  const match = String(value ?? "").match(/\d+/);
+  return match ? Number(match[0]) : 0;
+};
+
+const isCustomProgramme = (programme: any) => {
+  const slug = String(programme?.slug ?? "");
+  return !!programme && slug !== "programme-1" && slug !== "programme-2";
+};
+
+const programmeLabel = (programme: any, durationDays: number) => {
+  if (!programme) return `Programme (${durationDays} jours)`;
+  if (isCustomProgramme(programme)) return `Programme personnalisé (${durationDays} jours)`;
+  return `Programme (${durationDays} jours)`;
+};
+
+const resolveProgrammeDuration = (app: any, ctx: TravelContext, sourceDays: any[]) => {
+  const programmeDuration = parseDurationDays(ctx.programme?.duration);
+  if (programmeDuration > 0) return programmeDuration;
+  const tripDateDuration = inclusiveDayCount(ctx.trip?.start_date, ctx.trip?.end_date);
+  if (tripDateDuration > 0) return tripDateDuration;
+  const tripDuration = Number(ctx.trip?.duration_days || 0);
+  if (tripDuration > 0) return tripDuration;
+  const visaDuration = parseDurationDays(app.intended_length_of_stay);
+  if (visaDuration > 0) return visaDuration;
+  const maxProgrammeDay = Math.max(0, ...sourceDays.map((day) => Number(day.day_number || 0)));
+  if (maxProgrammeDay > 0) return maxProgrammeDay;
+  return 17;
+};
+
+const buildProgrammeDays = (ctx: TravelContext, durationDays: number) => {
+  const sourceDays = (ctx.days ?? [])
+    .filter((day) => day.is_active !== false)
+    .sort((a, b) => Number(a.day_number || 0) - Number(b.day_number || 0));
+  const byNumber = new Map<number, any>();
+  sourceDays.forEach((day) => {
+    const dayNumber = Number(day.day_number || 0);
+    if (dayNumber > 0 && !byNumber.has(dayNumber)) byNumber.set(dayNumber, day);
+  });
+  return Array.from({ length: durationDays }, (_, index) => {
+    const dayNumber = index + 1;
+    const day = byNumber.get(dayNumber);
+    return day ?? {
+      day_number: dayNumber,
+      city: "",
+      title: "Programme à compléter",
+      description: "À compléter",
+      schedule_items: [],
+      included_items: [],
+      icons: [],
+      is_fallback_day: true,
+    };
+  });
+};
+
 async function embedImage(pdf: PDFDocument, url?: string | null) {
   if (!url) return null;
   try {
@@ -167,16 +229,18 @@ async function pageWithHeader(pdf: PDFDocument, title: string, ref: string, font
 function dayActivities(day: any) {
   const schedule = Array.isArray(day.schedule_items) ? day.schedule_items : [];
   const scheduleText = schedule.map((s: any) => [s.time, s.title].filter(Boolean).join(" ")).filter(Boolean).join(" · ");
-  return scheduleText || day.description || day.title || "-";
+  return scheduleText || day.description || day.title || "À compléter";
 }
 
 function dayTransport(day: any) {
+  if (day.is_fallback_day) return "";
   const icons = Array.isArray(day.icons) ? day.icons : [];
   const known = icons.filter((i: string) => ["bus", "train", "shinkansen", "plane", "boat", "walk"].includes(i));
-  return known.length ? known.join(", ") : "-";
+  return known.length ? known.join(", ") : "";
 }
 
 function hotelForDay(day: any, ctx: TravelContext, app: any, date?: string | null) {
+  if (day.is_fallback_day) return "";
   const hotels = ctx.hotels ?? [];
   const dateTime = dateToTime(date);
   const dateMatch = dateTime
@@ -189,7 +253,7 @@ function hotelForDay(day: any, ctx: TravelContext, app: any, date?: string | nul
   if (dateMatch?.name) return [dateMatch.name, dateMatch.city].filter(Boolean).join(", ");
   const city = String(day.city ?? "").toLowerCase();
   const match = hotels.find((h) => city && String(h.city ?? "").toLowerCase().includes(city));
-  return match?.name ? [match.name, match.city].filter(Boolean).join(", ") : app.hotel_name || ctx.trip?.visa_hotel_name || "-";
+  return match?.name ? [match.name, match.city].filter(Boolean).join(", ") : app.hotel_name || ctx.trip?.visa_hotel_name || "";
 }
 
 function hotelReservationLine(hotel: any, fallbackArrival?: string | null, fallbackDeparture?: string | null) {
@@ -216,23 +280,24 @@ export async function generateTravelProgrammePdf(app: any, ctx: TravelContext = 
 
   const fullName = [app.surname, app.given_names].filter(Boolean).join(" ") || "Client";
   const tripTitle = ctx.trip?.title || ctx.programme?.title || "Voyage Japon";
+  const programmeTitle = ctx.programme?.title || tripTitle;
   const arrival = app.date_of_arrival || ctx.trip?.visa_japan_arrival_date || ctx.trip?.start_date;
-  const departure = ctx.trip?.visa_japan_departure_date || ctx.trip?.end_date;
-  const days = (ctx.days ?? []).filter((d) => d.is_active !== false).sort((a, b) => (a.sort_order ?? a.day_number ?? 0) - (b.sort_order ?? b.day_number ?? 0));
+  const departure = ctx.trip?.end_date || ctx.trip?.visa_japan_departure_date;
+  const sourceDays = (ctx.days ?? []).filter((d) => d.is_active !== false);
+  const durationDays = resolveProgrammeDuration(app, ctx, sourceDays);
+  const days = buildProgrammeDays(ctx, durationDays);
+  const dayDateBase = ctx.trip?.start_date || arrival;
+  const label = programmeLabel(ctx.programme, durationDays);
 
   text(page, sanitizePdfText(fullName).toUpperCase(), 40, y, bold, 13);
-  text(page, tripTitle, 40, y - 18, font, 10, GREY);
+  text(page, programmeTitle, 40, y - 18, bold, 10, BLACK);
+  if (ctx.trip?.title && ctx.trip.title !== programmeTitle) {
+    text(page, `Voyage : ${ctx.trip.title}`, 40, y - 32, font, 8.5, GREY);
+  }
   field(page, "Arrivee Japon", fmtDate(arrival), 40, y - 48, 160, font, bold);
   field(page, "Depart Japon", fmtDate(departure), 218, y - 48, 160, font, bold);
-  field(page, "Programme", ctx.programme?.title || tripTitle, 396, y - 48, 159, font, bold);
+  field(page, "Programme", label, 396, y - 48, 159, font, bold);
   y -= 108;
-
-  if (!days.length) {
-    const message = ctx.programme
-      ? "Aucun jour n'est renseigné pour ce programme dans Gestion des programmes."
-      : "Aucun programme n'est lié à ce départ. Merci de choisir un programme dans Gestion des voyages.";
-    wrap(message, font, 10, 500).forEach((line, idx) => text(page, line, 40, y - idx * 13, font, 10, GREY));
-  }
 
   for (const day of days) {
     const boxHeight = 82;
@@ -243,10 +308,10 @@ export async function generateTravelProgrammePdf(app: any, ctx: TravelContext = 
     page.drawRectangle({ x: 40, y: y - boxHeight, width: 515, height: boxHeight, color: rgb(1, 1, 1), borderColor: BORDER, borderWidth: 0.6 });
     page.drawRectangle({ x: 40, y: y - boxHeight, width: 4, height: boxHeight, color: RED });
     const dayNo = Number(day.day_number || 1);
-    const dayDate = addDays(arrival, dayNo - 1);
+    const dayDate = addDays(dayDateBase, dayNo - 1);
     text(page, `Jour ${dayNo} · ${fmtDate(dayDate)}`, 52, y - 17, bold, 10.5, BLACK);
     text(page, day.city || "-", 430, y - 17, font, 9, GREY);
-    text(page, day.title || "-", 52, y - 33, bold, 10, BLACK);
+    text(page, day.title || "Programme à compléter", 52, y - 33, bold, 10, BLACK);
     const activityLines = wrap(`Visites / activites : ${dayActivities(day)}`, font, 8.5, 480).slice(0, 2);
     activityLines.forEach((line, idx) => text(page, line, 52, y - 49 - idx * 11, font, 8.5, GREY));
     text(page, `Hotel : ${hotelForDay(day, ctx, app, dayDate)}`, 52, y - 72, font, 8.5, GREY);

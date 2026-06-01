@@ -133,7 +133,7 @@ export default function AgencyDashboard() {
         <Card className="p-5">
           <h2 className="font-display text-xl">Commission preview</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Les commissions affichées sont des règles de référence. Les montants définitifs seront validés par Moroccan Express.
+            Les commissions affichées sont des règles de référence. Les montants définitifs seront validés par Moroccan Express Travel & Events.
           </p>
           <div className="mt-5 space-y-3">
             {rules.length === 0 ? (

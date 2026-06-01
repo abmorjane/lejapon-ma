@@ -149,7 +149,7 @@ export async function generateGuaranteeLetter(
 ): Promise<Uint8Array> {
   // Overlay applicant information on top of the official Letter of Guarantee
   // template. The template already contains "MOROCCO", the boilerplate, the
-  // guarantor block (Tapis Volant) and the company seal — we only fill the
+  // guarantor block (Moroccan Express Travel & Events) and the company seal — we only fill the
   // application date (top right) and the Visa Applicant block.
   const tplBytes = await fetch("/visa/guarantee-letter-template.pdf").then((r) => r.arrayBuffer());
   const pdf = await PDFDocument.load(tplBytes);

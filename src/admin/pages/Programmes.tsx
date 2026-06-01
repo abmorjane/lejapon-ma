@@ -7,10 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Upload, FileText, Loader2, ExternalLink, Save, Image as ImageIcon, Copy, ChevronUp, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { DayIcon } from "@/components/programmes/DayIcon";
 import { optimizeImage } from "@/lib/image-upload";
+import { slugify } from "@/lib/format";
 
 type Day = { day: number; title: string; city?: string; description?: string };
 type Programme = {
@@ -32,6 +34,15 @@ type Programme = {
   pdf_path: string | null;
   is_published: boolean;
   sort_order: number;
+};
+
+type TripOption = {
+  id: string;
+  title: string;
+  start_date: string | null;
+  end_date: string | null;
+  duration_days: number | null;
+  programme_id: string | null;
 };
 
 type ScheduleItem = { time: string; title: string; description?: string };
@@ -69,17 +80,34 @@ const ICON_OPTIONS: { id: string; label: string }[] = [
   { id: "boat", label: "Bateau" },
 ];
 
+const PUBLIC_PROGRAMME_SLUGS = new Set(["programme-1", "programme-2"]);
+
+const isPublicProgrammePreset = (programme: Programme) => PUBLIC_PROGRAMME_SLUGS.has(programme.slug);
+
+const parseDurationDays = (value: unknown) => {
+  const match = String(value ?? "").match(/\d+/);
+  return match ? Number(match[0]) : 0;
+};
+
 export default function Programmes() {
   const [rows, setRows] = useState<Programme[]>([]);
+  const [trips, setTrips] = useState<TripOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState<string>("");
+  const [highlightedProgrammeId, setHighlightedProgrammeId] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = async (nextActive?: string) => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("programmes")
-      .select("*")
-      .order("sort_order");
+    const [{ data, error }, { data: tripRows }] = await Promise.all([
+      supabase
+        .from("programmes")
+        .select("*")
+        .order("sort_order"),
+      supabase
+        .from("trips")
+        .select("id,title,start_date,end_date,duration_days,programme_id")
+        .order("start_date", { ascending: false }),
+    ]);
     if (error) toast.error(error.message);
     const list = (data ?? []).map((r: any) => ({
       ...r,
@@ -87,8 +115,20 @@ export default function Programmes() {
       days: Array.isArray(r.days) ? r.days : [],
     })) as Programme[];
     setRows(list);
-    if (list.length && !active) setActive(list[0].id);
+    setTrips((tripRows ?? []) as TripOption[]);
+    if (nextActive) setActive(nextActive);
+    else if (list.length && !active) setActive(list.find(isPublicProgrammePreset)?.id ?? "custom");
     setLoading(false);
+  };
+
+  const handleCustomProgrammeCreated = async (programmeId?: string) => {
+    setHighlightedProgrammeId(programmeId ?? null);
+    await load("custom");
+    if (programmeId) {
+      window.setTimeout(() => {
+        document.getElementById(`custom-programme-${programmeId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+    }
   };
 
   useEffect(() => {
@@ -115,19 +155,414 @@ export default function Programmes() {
       ) : (
         <Tabs value={active} onValueChange={setActive} className="space-y-6">
           <TabsList>
-            {rows.map((r) => (
+            {rows.filter(isPublicProgrammePreset).map((r) => (
               <TabsTrigger key={r.id} value={r.id}>
                 {r.title}
               </TabsTrigger>
             ))}
+            <TabsTrigger value="custom">Programmes personnalisés</TabsTrigger>
           </TabsList>
-          {rows.map((r) => (
+          {rows.filter(isPublicProgrammePreset).map((r) => (
             <TabsContent key={r.id} value={r.id}>
               <ProgrammeEditor initial={r} onSaved={load} />
             </TabsContent>
           ))}
+          <TabsContent value="custom" className="space-y-6">
+            <CustomProgrammeCreator programmes={rows} trips={trips} onCreated={handleCustomProgrammeCreated} />
+            {rows.filter((r) => !isPublicProgrammePreset(r)).length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border bg-background p-6 text-sm text-muted-foreground">
+                Aucun programme personnalisé. Créez un programme pour un voyage spécial ou privé.
+              </div>
+            ) : (
+              rows.filter((r) => !isPublicProgrammePreset(r)).map((r) => (
+                <section
+                  key={r.id}
+                  id={`custom-programme-${r.id}`}
+                  className={`rounded-2xl border border-border bg-secondary/20 p-4 ${highlightedProgrammeId === r.id ? "ring-2 ring-accent/40" : ""}`}
+                >
+                  <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {r.is_published ? "Public" : "Admin only"} · Programme personnalisé
+                      </p>
+                      <h2 className="font-display text-xl">{r.title}</h2>
+                    </div>
+                    <LinkedTrips programmeId={r.id} trips={trips} />
+                  </div>
+                  <ProgrammeEditor initial={r} onSaved={load} />
+                </section>
+              ))
+            )}
+          </TabsContent>
         </Tabs>
       )}
+    </div>
+  );
+}
+
+function CustomProgrammeCreator({
+  programmes,
+  trips,
+  onCreated,
+}: {
+  programmes: Programme[];
+  trips: TripOption[];
+  onCreated: (programmeId?: string) => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const [title, setTitle] = useState("");
+  const [durationDays, setDurationDays] = useState(25);
+  const [subtitle, setSubtitle] = useState("");
+  const [intro, setIntro] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "admin_only">("admin_only");
+  const [tripId, setTripId] = useState("none");
+  const [sourceProgrammeId, setSourceProgrammeId] = useState(programmes[0]?.id ?? "");
+  const [duplicateTitle, setDuplicateTitle] = useState("");
+  const [duplicateDurationDays, setDuplicateDurationDays] = useState(25);
+  const [duplicateVisibility, setDuplicateVisibility] = useState<"public" | "admin_only">("admin_only");
+
+  const programmeLabel = (programme: Programme) => {
+    if (programme.slug === "programme-1") return "Programme (17 jours)";
+    if (programme.slug === "programme-2") return "Programme (13 jours)";
+    return programme.title;
+  };
+
+  const selectedSource = programmes.find((programme) => programme.id === sourceProgrammeId);
+
+  const openDuplicateForm = () => {
+    const source = selectedSource ?? programmes[0];
+    if (source) {
+      const days = parseDurationDays(source.duration) || 25;
+      setSourceProgrammeId(source.id);
+      setDuplicateTitle(`${source.title} personnalisé`);
+      setDuplicateDurationDays(days);
+    }
+    setDuplicateOpen((value) => !value);
+  };
+
+  const create = async () => {
+    const cleanTitle = title.trim();
+    const days = Math.max(1, Number(durationDays || 1));
+    if (!cleanTitle) return toast.error("Titre requis.");
+    setSaving(true);
+    const baseSlug = slugify(cleanTitle) || "programme-personnalise";
+    const slug = `${baseSlug}-${Date.now().toString().slice(-6)}`;
+    const sortOrder = Math.max(0, ...programmes.map((p) => p.sort_order ?? 0)) + 10;
+    const { data, error } = await supabase
+      .from("programmes")
+      .insert({
+        slug,
+        title: cleanTitle,
+        duration: `${days} jours`,
+        subtitle: subtitle.trim(),
+        introduction: intro.trim(),
+        description: intro.trim(),
+        cities: [],
+        days: [],
+        is_published: visibility === "public",
+        sort_order: sortOrder,
+        cta_label: "Demander un devis",
+        cta_url: "/contact",
+      })
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      setSaving(false);
+      return toast.error(error?.message ?? "Création impossible.");
+    }
+
+    const dayRows = Array.from({ length: days }, (_, index) => ({
+      programme_id: data.id,
+      day_number: index + 1,
+      sort_order: (index + 1) * 10,
+      title: "",
+      city: "",
+      description: "",
+    }));
+    const { error: daysError } = await supabase.from("programme_days").insert(dayRows);
+    if (daysError) toast.error(daysError.message);
+
+    if (tripId !== "none") {
+      const { error: tripError } = await supabase.from("trips").update({ programme_id: data.id }).eq("id", tripId);
+      if (tripError) toast.error(tripError.message);
+    }
+
+    setTitle("");
+    setDurationDays(25);
+    setSubtitle("");
+    setIntro("");
+    setVisibility("admin_only");
+    setTripId("none");
+    setOpen(false);
+    setSaving(false);
+    toast.success("Programme personnalisé créé");
+    onCreated(data.id);
+  };
+
+  const duplicateFromSource = async () => {
+    const source = programmes.find((programme) => programme.id === sourceProgrammeId);
+    const cleanTitle = duplicateTitle.trim();
+    const days = Math.max(1, Number(duplicateDurationDays || 1));
+    if (!source) return toast.error("Sélectionnez un programme source.");
+    if (!cleanTitle) return toast.error("Titre requis.");
+
+    setDuplicating(true);
+    const baseSlug = slugify(cleanTitle) || "programme-personnalise";
+    const slug = `${baseSlug}-${Date.now().toString().slice(-6)}`;
+    const sortOrder = Math.max(0, ...programmes.map((p) => p.sort_order ?? 0)) + 10;
+    const { data: created, error } = await supabase
+      .from("programmes")
+      .insert({
+        slug,
+        title: cleanTitle,
+        duration: `${days} jours`,
+        subtitle: source.subtitle ?? "",
+        introduction: source.introduction ?? "",
+        hero_image_url: source.hero_image_url,
+        hero_alt: source.hero_alt,
+        cta_label: source.cta_label ?? "Demander un devis",
+        cta_url: source.cta_url ?? "/contact",
+        meta_description: source.meta_description,
+        cities: source.cities ?? [],
+        description: source.description ?? "",
+        days: source.days as any,
+        pdf_url: null,
+        pdf_path: null,
+        is_published: duplicateVisibility === "public",
+        sort_order: sortOrder,
+      })
+      .select("*")
+      .single();
+
+    if (error || !created) {
+      setDuplicating(false);
+      return toast.error(error?.message ?? "Duplication impossible.");
+    }
+
+    const { data: sourceDays, error: sourceDaysError } = await supabase
+      .from("programme_days")
+      .select("*")
+      .eq("programme_id", source.id)
+      .order("day_number", { ascending: true });
+
+    if (sourceDaysError) {
+      await supabase.from("programmes").delete().eq("id", created.id);
+      setDuplicating(false);
+      return toast.error(sourceDaysError.message);
+    }
+
+    const sourceByNumber = new Map<number, any>();
+    (sourceDays ?? []).forEach((day: any) => {
+      const dayNumber = Number(day.day_number);
+      if (dayNumber >= 1 && dayNumber <= days && !sourceByNumber.has(dayNumber)) {
+        sourceByNumber.set(dayNumber, day);
+      }
+    });
+
+    const dayRows = Array.from({ length: days }, (_, index) => {
+      const dayNumber = index + 1;
+      const sourceDay = sourceByNumber.get(dayNumber);
+      if (!sourceDay) {
+        return {
+          programme_id: created.id,
+          day_number: dayNumber,
+          sort_order: dayNumber * 10,
+          title: "Programme à compléter",
+          city: "",
+          description: "À compléter",
+          badge: null,
+          main_image_url: null,
+          gallery_images: [],
+          schedule_items: [],
+          included_items: [],
+          icons: [],
+          special_note: null,
+          is_optional: false,
+          is_active: true,
+        };
+      }
+      return {
+        programme_id: created.id,
+        day_number: dayNumber,
+        sort_order: dayNumber * 10,
+        title: sourceDay.title ?? "",
+        city: sourceDay.city ?? "",
+        description: sourceDay.description ?? "",
+        badge: sourceDay.badge ?? null,
+        main_image_url: sourceDay.main_image_url ?? null,
+        gallery_images: Array.isArray(sourceDay.gallery_images) ? sourceDay.gallery_images : [],
+        schedule_items: Array.isArray(sourceDay.schedule_items) ? sourceDay.schedule_items : [],
+        included_items: Array.isArray(sourceDay.included_items) ? sourceDay.included_items : [],
+        icons: Array.isArray(sourceDay.icons) ? sourceDay.icons : [],
+        special_note: sourceDay.special_note ?? null,
+        is_optional: Boolean(sourceDay.is_optional),
+        is_active: sourceDay.is_active ?? true,
+      };
+    });
+
+    const { error: daysError } = await supabase.from("programme_days").insert(dayRows);
+    if (daysError) {
+      await supabase.from("programmes").delete().eq("id", created.id);
+      setDuplicating(false);
+      return toast.error(daysError.message);
+    }
+
+    setDuplicateOpen(false);
+    setDuplicateTitle("");
+    setDuplicateDurationDays(25);
+    setDuplicateVisibility("admin_only");
+    setDuplicating(false);
+    toast.success("Programme dupliqué");
+    onCreated(created.id);
+  };
+
+  return (
+    <section className="rounded-2xl border border-border bg-background p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-medium">Créer un programme personnalisé</h2>
+          <p className="text-sm text-muted-foreground">Pour les voyages spéciaux, privés ou non publiés sur le site.</p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button type="button" variant="outline" onClick={openDuplicateForm} className="min-h-11">
+            <Copy className="h-4 w-4" /> Créer depuis un programme existant
+          </Button>
+          <Button type="button" onClick={() => setOpen((v) => !v)} className="min-h-11">
+            <Plus className="h-4 w-4" /> Nouveau personnalisé
+          </Button>
+        </div>
+      </div>
+      {duplicateOpen && (
+        <div className="mt-5 rounded-xl border border-border bg-secondary/20 p-4">
+          <div className="mb-4">
+            <h3 className="font-medium">Créer depuis un programme existant</h3>
+            <p className="text-sm text-muted-foreground">
+              Copie le contenu et les jours du programme source, puis crée un nouveau programme indépendant.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Label>Programme source</Label>
+              <Select
+                value={sourceProgrammeId}
+                onValueChange={(value) => {
+                  const source = programmes.find((programme) => programme.id === value);
+                  setSourceProgrammeId(value);
+                  if (source) {
+                    setDuplicateTitle(`${source.title} personnalisé`);
+                    setDuplicateDurationDays(parseDurationDays(source.duration) || 25);
+                  }
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Sélectionner un programme" /></SelectTrigger>
+                <SelectContent>
+                  {programmes.map((programme) => (
+                    <SelectItem key={programme.id} value={programme.id}>
+                      {programmeLabel(programme)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Nouveau titre</Label>
+              <Input value={duplicateTitle} onChange={(event) => setDuplicateTitle(event.target.value)} placeholder="Programme spécial 25 jours" />
+            </div>
+            <div>
+              <Label>Nouvelle durée (jours)</Label>
+              <Input
+                type="number"
+                min={1}
+                value={duplicateDurationDays}
+                onChange={(event) => setDuplicateDurationDays(Number(event.target.value || 1))}
+              />
+            </div>
+            <div>
+              <Label>Visibilité</Label>
+              <Select value={duplicateVisibility} onValueChange={(value) => setDuplicateVisibility(value as "public" | "admin_only")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin_only">Admin only</SelectItem>
+                  <SelectItem value="public">Public</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-end text-sm text-muted-foreground">
+              {selectedSource ? `${parseDurationDays(selectedSource.duration) || 0} jour(s) disponibles dans la source.` : "Aucun programme source sélectionné."}
+            </div>
+            <div className="sm:col-span-2 flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setDuplicateOpen(false)}>Annuler</Button>
+              <Button type="button" onClick={duplicateFromSource} disabled={duplicating || !sourceProgrammeId || !duplicateTitle.trim()}>
+                {duplicating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                Créer la copie
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {open && (
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label>Titre</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Voyage spécial 25 jours" />
+          </div>
+          <div>
+            <Label>Durée (jours)</Label>
+            <Input type="number" min={1} value={durationDays} onChange={(e) => setDurationDays(Number(e.target.value || 1))} />
+          </div>
+          <div className="sm:col-span-2">
+            <Label>Sous-titre</Label>
+            <Input value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
+          </div>
+          <div className="sm:col-span-2">
+            <Label>Introduction / description</Label>
+            <Textarea rows={3} value={intro} onChange={(e) => setIntro(e.target.value)} />
+          </div>
+          <div>
+            <Label>Visibilité</Label>
+            <Select value={visibility} onValueChange={(value) => setVisibility(value as "public" | "admin_only")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin_only">Admin only</SelectItem>
+                <SelectItem value="public">Public</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Voyage associé (optionnel)</Label>
+            <Select value={tripId} onValueChange={setTripId}>
+              <SelectTrigger><SelectValue placeholder="Aucun voyage" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Aucun voyage</SelectItem>
+                {trips.map((trip) => (
+                  <SelectItem key={trip.id} value={trip.id}>{trip.title}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="sm:col-span-2 flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>Annuler</Button>
+            <Button type="button" onClick={create} disabled={saving || !title.trim()}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Créer le programme
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LinkedTrips({ programmeId, trips }: { programmeId: string; trips: TripOption[] }) {
+  const linked = trips.filter((trip) => trip.programme_id === programmeId);
+  if (!linked.length) return <p className="text-xs text-muted-foreground">Aucun voyage lié</p>;
+  return (
+    <div className="text-xs text-muted-foreground">
+      Lié à {linked.length} voyage{linked.length > 1 ? "s" : ""}: {linked.map((trip) => trip.title).join(", ")}
     </div>
   );
 }
@@ -370,7 +805,7 @@ function ProgrammeEditor({ initial, onSaved }: { initial: Programme; onSaved: ()
       </section>
 
       {/* Rich days editor (programme_days table) */}
-      <RichDaysEditor programmeId={p.id} />
+      <RichDaysEditor programmeId={p.id} durationDays={parseDurationDays(p.duration)} />
 
       <div className="sticky bottom-4 flex justify-end">
         <Button onClick={save} disabled={saving} size="lg" className="shadow-lg">
@@ -447,7 +882,7 @@ function HeroImageField({ p, setP }: { p: Programme; setP: React.Dispatch<React.
 }
 
 // ───────────────────── Rich days editor ─────────────────────
-function RichDaysEditor({ programmeId }: { programmeId: string }) {
+function RichDaysEditor({ programmeId, durationDays }: { programmeId: string; durationDays: number }) {
   const [days, setDays] = useState<ProgrammeDay[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -479,6 +914,29 @@ function RichDaysEditor({ programmeId }: { programmeId: string }) {
     }).select("*").single();
     if (error) return toast.error(error.message);
     setDays((d) => [...d, data as any]);
+  };
+
+  const ensureDayBlocks = async () => {
+    const target = Math.max(1, Number(durationDays || 1));
+    const existingNumbers = new Set(days.map((day) => day.day_number));
+    const missing = Array.from({ length: target }, (_, index) => index + 1).filter((dayNumber) => !existingNumbers.has(dayNumber));
+    if (!missing.length) {
+      toast.info("Tous les blocs de jour existent déjà.");
+      return;
+    }
+    const { error } = await supabase.from("programme_days").insert(
+      missing.map((dayNumber) => ({
+        programme_id: programmeId,
+        day_number: dayNumber,
+        sort_order: dayNumber * 10,
+        title: "",
+        city: "",
+        description: "",
+      })),
+    );
+    if (error) return toast.error(error.message);
+    toast.success(`${missing.length} bloc${missing.length > 1 ? "s" : ""} de jour créé${missing.length > 1 ? "s" : ""}.`);
+    load();
   };
 
   const removeDay = async (id: string) => {
@@ -521,6 +979,11 @@ function RichDaysEditor({ programmeId }: { programmeId: string }) {
         <Button variant="outline" size="sm" onClick={addDay}>
           <Plus className="w-4 h-4" /> Ajouter un jour
         </Button>
+        {durationDays > 0 && (
+          <Button variant="outline" size="sm" onClick={ensureDayBlocks}>
+            Créer {durationDays} jours
+          </Button>
+        )}
       </div>
 
       {loading ? (

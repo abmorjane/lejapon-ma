@@ -21,8 +21,8 @@ export type AgencySettings = {
 };
 
 export const DEFAULT_AGENCY_SETTINGS: AgencySettings = {
-  agency_display_name: "Moroccan Express Travel and Events / LeJapon.ma",
-  legal_company_name: "Moroccan Express Travel and Events",
+  agency_display_name: "Moroccan Express Travel & Events / LeJapon.ma",
+  legal_company_name: "Moroccan Express Travel & Events",
   brand_name: "LeJapon.ma",
   address_line_1: "Rue Annour, Hay El Wifaq",
   address_line_2: null,

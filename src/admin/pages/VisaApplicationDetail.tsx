@@ -42,7 +42,6 @@ const normalizeMatchText = (value: unknown) =>
     .trim();
 
 const hasText = (value: unknown) => String(value ?? "").trim().length > 0;
-const CONFIGURED_TRIP_ID = "54cbc276-1d5c-4c9a-b184-501104d9e87a";
 
 type TravelContext = {
   trip?: any | null;
@@ -81,7 +80,9 @@ async function loadTravelContextForTrip(tripId: string | null | undefined, parti
   }
 
   const [daysRes, hotelsRes] = await Promise.all([
-    programmeId ? supabase.from("programme_days").select("*").eq("programme_id", programmeId).order("sort_order") : Promise.resolve({ data: [] } as any),
+    programmeId
+      ? supabase.from("programme_days").select("*").eq("programme_id", programmeId).order("day_number", { ascending: true })
+      : Promise.resolve({ data: [] } as any),
     supabase
       .from("trip_hotels")
       .select("*")
@@ -135,17 +136,6 @@ export default function VisaApplicationDetail() {
           .order("created_at");
         nextBookingTripId = (booking as any)?.trip_id ?? null;
         participants = participantRows ?? [];
-        if (import.meta.env.DEV) {
-          console.info("[confirmation-voyage-pdf] booking trip link", {
-            application_id: appRow.id,
-            booking_id: appRow.booking_id,
-            document_trip_id: documentTripId,
-            booking_trip_id: nextBookingTripId,
-            effective_travel_trip_id: documentTripId || nextBookingTripId,
-            configured_trip_id: CONFIGURED_TRIP_ID,
-            matches_configured_trip_id: nextBookingTripId === CONFIGURED_TRIP_ID,
-          });
-        }
       }
 
       const effectiveTravelTripId = documentTripId || nextBookingTripId;
@@ -211,13 +201,10 @@ export default function VisaApplicationDetail() {
     toast.success("Informations voyage enregistrées");
   };
 
-  const bookingMatchesConfiguredTrip = bookingTripId === CONFIGURED_TRIP_ID;
-  const selectedMatchesConfiguredTrip = selectedTravelTripId === CONFIGURED_TRIP_ID;
   const documentTripId = app?.document_trip_id ?? null;
   const travelTripWarnings = [
     !selectedTravelTripId ? "Aucun voyage n'est sélectionné pour les documents de voyage." : null,
     !documentTripId && !bookingTripId ? "Aucun voyage n'est lié à la réservation de cette demande visa." : null,
-    !bookingMatchesConfiguredTrip ? "Cette demande visa n’est pas liée au voyage configuré." : null,
     !travelCtx.trip?.id ? "Aucun voyage n'est sélectionné pour les documents de voyage." : null,
   ].filter(Boolean) as string[];
 
@@ -259,20 +246,6 @@ export default function VisaApplicationDetail() {
     setSelectedTravelTripId(effectiveTravelTripId);
     setTravelCtx(nextCtx);
     toast.success("Voyage utilisé pour les documents enregistré.");
-    if (import.meta.env.DEV) {
-      console.info("[confirmation-voyage-pdf] selected travel-doc trip changed", {
-        application_id: app?.id ?? null,
-        booking_id: app?.booking_id ?? null,
-        document_trip_id: tripId,
-        booking_trip_id: bookingTripId,
-        selected_travel_trip_id: effectiveTravelTripId,
-        configured_trip_id: CONFIGURED_TRIP_ID,
-        booking_matches_configured_trip_id: bookingTripId === CONFIGURED_TRIP_ID,
-        selected_matches_configured_trip_id: effectiveTravelTripId === CONFIGURED_TRIP_ID,
-        loaded_trip_title: nextCtx.trip?.title ?? null,
-        trip_hotels_count: nextCtx.hotels?.length ?? 0,
-      });
-    }
   };
 
   const requestDocs = async () => {
@@ -326,7 +299,6 @@ export default function VisaApplicationDetail() {
         generateInvitationLetter(app, settings),
         generateGuaranteeLetter(app, settings),
       ]);
-      if (import.meta.env.DEV) logConfirmationPdfContext("zip");
       warnIfConfirmationIncomplete();
       const [programmeBytes, confirmationBytes] = await Promise.all([
         generateTravelProgrammePdf(app, travelCtx),
@@ -352,49 +324,22 @@ export default function VisaApplicationDetail() {
     finally { setBusy(false); }
   };
 
-  const logConfirmationPdfContext = useCallback((source: string) => {
-    if (!import.meta.env.DEV) return;
-    console.info("[confirmation-voyage-pdf] context before generation", {
-      source,
-      trip_id: travelCtx.trip?.id ?? null,
-      trip_title: travelCtx.trip?.title ?? null,
-      outbound_flight_text: travelCtx.trip?.outbound_flight_text ?? null,
-      return_flight_text: travelCtx.trip?.return_flight_text ?? null,
-      trip_hotels_count: travelCtx.hotels?.length ?? 0,
-      trip_hotels_rows: travelCtx.hotels ?? [],
-      visa_japan_arrival_date: travelCtx.trip?.visa_japan_arrival_date ?? null,
-      visa_japan_departure_date: travelCtx.trip?.visa_japan_departure_date ?? null,
-      booking_id: app?.booking_id ?? null,
-      document_trip_id: app?.document_trip_id ?? null,
-      booking_trip_id: bookingTripId,
-      selected_travel_trip_id: selectedTravelTripId,
-      configured_trip_id: CONFIGURED_TRIP_ID,
-      booking_matches_configured_trip_id: bookingTripId === CONFIGURED_TRIP_ID,
-      selected_matches_configured_trip_id: selectedTravelTripId === CONFIGURED_TRIP_ID,
-      programme_id: travelCtx.trip?.programme_id ?? null,
-      programme_title: travelCtx.programme?.title ?? null,
-      participants_count: travelCtx.participants?.length ?? 0,
-    });
-  }, [app?.booking_id, app?.document_trip_id, bookingTripId, selectedTravelTripId, travelCtx]);
-
-  const generateProgrammeWithDiagnostics = useCallback(async () => {
+  const generateProgramme = useCallback(async () => {
     if (!travelCtx.trip?.id) throw new Error("Aucun voyage n'est sélectionné pour les documents de voyage.");
-    logConfirmationPdfContext("programme-preview");
     return generateTravelProgrammePdf(app ?? {}, travelCtx);
-  }, [app, travelCtx, logConfirmationPdfContext]);
+  }, [app, travelCtx]);
 
-  const generateConfirmationWithDiagnostics = useCallback(async () => {
+  const generateConfirmation = useCallback(async () => {
     if (!travelCtx.trip?.id) throw new Error("Aucun voyage n'est sélectionné pour les documents de voyage.");
-    logConfirmationPdfContext("preview");
     return generateTravelConfirmationPdf(app ?? {}, settings ?? {}, travelCtx);
-  }, [app, settings, travelCtx, logConfirmationPdfContext]);
+  }, [app, settings, travelCtx]);
 
   const generators = {
     visa: useCallback(() => generateVisaPdf(app ?? {}, settings ?? {}), [app, settings]),
     invitation: useCallback(() => generateInvitationLetter(app ?? {}, settings ?? {}), [app, settings]),
     guarantee: useCallback(() => generateGuaranteeLetter(app ?? {}, settings ?? {}), [app, settings]),
-    programme: generateProgrammeWithDiagnostics,
-    confirmation: generateConfirmationWithDiagnostics,
+    programme: generateProgramme,
+    confirmation: generateConfirmation,
   };
 
   const openPreview = (kind: "visa" | "invitation" | "guarantee" | "programme" | "confirmation") => {
@@ -408,9 +353,6 @@ export default function VisaApplicationDetail() {
     if ((kind === "programme" || kind === "confirmation") && !ensureTravelTripSelected()) return;
     setBusy(true);
     try {
-      if (kind === "programme" || kind === "confirmation") {
-        logConfirmationPdfContext("download");
-      }
       if (kind === "confirmation") {
         warnIfConfirmationIncomplete();
       }
@@ -522,11 +464,6 @@ export default function VisaApplicationDetail() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                <p>booking.trip_id : {bookingTripId || "—"} {bookingMatchesConfiguredTrip ? "(voyage configuré)" : ""}</p>
-                <p>document_trip_id : {documentTripId || "—"} {!documentTripId && bookingTripId ? "(fallback booking)" : ""}</p>
-                <p>voyage PDF : {selectedTravelTripId || "—"} {selectedMatchesConfiguredTrip ? "(voyage configuré)" : ""}</p>
-              </div>
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>

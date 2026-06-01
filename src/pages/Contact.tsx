@@ -12,7 +12,7 @@ const DEFAULTS = {
   title_accent: "voyage.",
   intro: "Une question, un projet de voyage de groupe, une demande sur mesure ? Notre équipe vous répond sous 24 heures.",
   email: "info@lejapon.ma",
-  agency_name: "Moroccan Express Travel and Events",
+  agency_name: "Moroccan Express Travel & Events",
   addresses: [
     { city: "Temara", line: "Rue Annour, Hay El Wifaq 3, Temara" },
     { city: "Casablanca", line: "4 Rue de Vimy, Casablanca" },
@@ -146,7 +146,7 @@ const Contact = () => {
     <div className="container-app py-16 md:py-28">
       <Seo
         title="Contact — lejapon.ma | Agence voyage Japon Casablanca & Témara"
-        description="Contactez lejapon.ma (Moroccan Express Travel and Events) à Casablanca et Témara. Réponse sous 24h par email, téléphone ou formulaire."
+        description="Contactez LeJapon.ma (Moroccan Express Travel & Events) à Casablanca et Témara. Réponse sous 24h par email, téléphone ou formulaire."
         canonical="/contact"
       />
       <div className="grid lg:grid-cols-12 gap-12 lg:gap-16">

@@ -105,7 +105,7 @@ async function smtpConfig(admin: any) {
       username: normalizeEmail(settings.smtp_username),
       password: String(settings.smtp_password ?? ""),
       from: normalizeEmail(settings.from_email),
-      fromName: String(settings.from_name || "LeJapon.ma / Moroccan Express").trim(),
+      fromName: String(settings.from_name || "LeJapon.ma / Moroccan Express Travel & Events").trim(),
       replyTo: normalizeEmail(settings.reply_to) || undefined,
     }
     : {
@@ -116,7 +116,7 @@ async function smtpConfig(admin: any) {
       username: normalizeEmail(Deno.env.get("SMTP_USER")),
       password: String(Deno.env.get("SMTP_PASS") ?? ""),
       from: normalizeEmail(Deno.env.get("SMTP_FROM")),
-      fromName: "LeJapon.ma / Moroccan Express",
+      fromName: "LeJapon.ma / Moroccan Express Travel & Events",
       replyTo: undefined,
     };
 
@@ -163,7 +163,7 @@ function emailShell(
   intro: string,
   rows: Array<[string, unknown]>,
   action?: EmailAction,
-  footer = "Notification automatique — Lejapon.ma",
+  footer = "Notification automatique — LeJapon.ma",
 ) {
   const introHtml = escapeHtml(intro).replace(/\n/g, "<br>");
   const tableRows = rows.map(([label, value]) => `
@@ -177,8 +177,8 @@ function emailShell(
     <div style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#171412">
       <div style="max-width:680px;margin:0 auto;padding:28px 14px">
         <div style="padding:0 0 16px;text-align:center">
-          <div style="font-size:24px;font-weight:700;color:#E21B2D;letter-spacing:.02em">Lejapon.ma</div>
-          <div style="margin-top:4px;font-size:12px;color:#766f68">Moroccan Express Travel and Events</div>
+          <div style="font-size:24px;font-weight:700;color:#E21B2D;letter-spacing:.02em">LeJapon.ma</div>
+          <div style="margin-top:4px;font-size:12px;color:#766f68">Moroccan Express Travel & Events</div>
         </div>
         <div style="background:#ffffff;border-radius:14px;border:1px solid #e8e4e1;padding:26px;box-shadow:0 6px 24px rgba(0,0,0,.05)">
           <div style="border-bottom:3px solid #E21B2D;padding-bottom:14px;margin-bottom:20px">
@@ -302,7 +302,7 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
   const total = Number(booking.total_amount_mad || 0);
   const paid = Number(booking.paid_amount_mad || 0);
   const balance = Math.max(0, total - paid);
-  const subject = "Nouvelle inscription voyage — Lejapon.ma";
+  const subject = "Nouvelle inscription voyage — LeJapon.ma";
 
   return {
     eventType: "booking_internal",
@@ -327,7 +327,7 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
       ["Référence", booking.reference],
       ["Statut", booking.status],
       ["Source", booking.source],
-    ], { label: "Contacter le client", href: mailto(booking.contact_email, "Votre inscription Lejapon.ma") }),
+    ], { label: "Contacter le client", href: mailto(booking.contact_email, "Votre inscription LeJapon.ma") }),
     text: `Nouvelle inscription voyage\n\nClient: ${plain(booking.contact_name)}\nEmail: ${plain(booking.contact_email)}\nTéléphone: ${plain(booking.contact_phone)}\nVoyage: ${tripLabel}\nDate de départ: ${plain(departureDate)}\nDates: ${dateLabel}\nVoyageurs: ${booking.num_adults || 0} adulte(s), ${booking.num_children || 0} enfant(s)\nFormule/hôtel: ${plain(booking.formula)}\nChambre: ${plain(booking.room_type)}\nOptions: ${extrasLabel}\nTotal: ${fmtMAD(total)}\nPayé: ${fmtMAD(paid)}\nSolde: ${fmtMAD(balance)}\nAdmin: ${adminUrl}`,
     related_booking_id: booking.id,
     metadata: { reference: booking.reference, admin_url: adminUrl },
@@ -349,11 +349,11 @@ async function bookingClientEmail(admin: any, bookingId: string, fullBookingData
   const phone = booking.contact_phone || "—";
   const trip = booking.trips;
   const tripLabel = [trip?.season, trip?.title].filter(Boolean).join(" — ") || booking.preferred_dates || "votre voyage";
-  const subject = "Confirmation de votre inscription au voyage au Japon — Lejapon.ma";
+  const subject = "Confirmation de votre inscription au voyage au Japon — LeJapon.ma";
   const intro = `Bonjour ${plain(booking.contact_name)},\n\nMerci pour votre inscription à notre prochain voyage au Japon.`;
   const html = emailShell(
     "Confirmation de votre inscription",
-    `${intro}\n\nNous avons bien noté vos informations et vos choix de voyage. Un conseiller va prendre contact avec vous très bientôt sur le téléphone suivant : ${plain(phone)}, afin de confirmer votre inscription et répondre à vos questions.\n\nVeuillez noter que le prix à payer pour votre voyage est de ${fmtMAD(total)}.\n\nPensez à payer la somme totale de votre voyage très rapidement pour profiter de 2% de réduction. Offre valable uniquement jusqu'à six mois avant la date de départ de votre voyage.\n\nCordialement,\nL'équipe Lejapon.ma`,
+    `${intro}\n\nNous avons bien noté vos informations et vos choix de voyage. Un conseiller va prendre contact avec vous très bientôt sur le téléphone suivant : ${plain(phone)}, afin de confirmer votre inscription et répondre à vos questions.\n\nVeuillez noter que le prix à payer pour votre voyage est de ${fmtMAD(total)}.\n\nPensez à payer la somme totale de votre voyage très rapidement pour profiter de 2% de réduction. Offre valable uniquement jusqu'à six mois avant la date de départ de votre voyage.\n\nCordialement,\nL'équipe LeJapon.ma`,
     [
       ["Nom", booking.contact_name],
       ["Email", booking.contact_email],
@@ -362,7 +362,7 @@ async function bookingClientEmail(admin: any, bookingId: string, fullBookingData
       ["Prix total", fmtMAD(total)],
     ],
     undefined,
-    "Lejapon.ma",
+    "LeJapon.ma",
   );
 
   return {
@@ -370,7 +370,7 @@ async function bookingClientEmail(admin: any, bookingId: string, fullBookingData
     recipient: normalizeEmail(booking.contact_email),
     subject,
     html,
-    text: `Bonjour ${plain(booking.contact_name)},\n\nMerci pour votre inscription à notre prochain voyage au Japon.\n\nNous avons bien noté vos informations et vos choix de voyage. Un conseiller va prendre contact avec vous très bientôt sur le téléphone suivant : ${plain(phone)}, afin de confirmer votre inscription et répondre à vos questions.\n\nVeuillez noter que le prix à payer pour votre voyage est de ${fmtMAD(total)}.\n\nPensez à payer la somme totale de votre voyage très rapidement pour profiter de 2% de réduction.\nOffre valable uniquement jusqu'à six mois avant la date de départ de votre voyage.\n\nCordialement,\nL'équipe Lejapon.ma`,
+    text: `Bonjour ${plain(booking.contact_name)},\n\nMerci pour votre inscription à notre prochain voyage au Japon.\n\nNous avons bien noté vos informations et vos choix de voyage. Un conseiller va prendre contact avec vous très bientôt sur le téléphone suivant : ${plain(phone)}, afin de confirmer votre inscription et répondre à vos questions.\n\nVeuillez noter que le prix à payer pour votre voyage est de ${fmtMAD(total)}.\n\nPensez à payer la somme totale de votre voyage très rapidement pour profiter de 2% de réduction.\nOffre valable uniquement jusqu'à six mois avant la date de départ de votre voyage.\n\nCordialement,\nL'équipe LeJapon.ma`,
     related_booking_id: booking.id,
     metadata: { reference: booking.reference, client_email: booking.contact_email },
   };
@@ -427,7 +427,7 @@ function contactEmailPayload(contact: any): EmailPayload {
       ["Sujet", contact.subject],
       ["Date d'envoi", sentAt],
       ["Message", contact.message],
-    ], { label: "Répondre au client", href: mailto(contact.email, "Votre message Lejapon.ma") }),
+    ], { label: "Répondre au client", href: mailto(contact.email, "Votre message LeJapon.ma") }),
     text: `Nouveau message depuis LeJapon.ma\n\nNom: ${contact.name}\nEmail: ${contact.email}\nTéléphone: ${contact.phone ?? "—"}\nSujet: ${contact.subject ?? "—"}\nDate: ${sentAt}\n\nMessage:\n${contact.message}`,
     related_contact_id: contact.id,
     metadata: { email: contact.email, name: contact.name },
@@ -435,14 +435,14 @@ function contactEmailPayload(contact: any): EmailPayload {
 }
 
 function contactClientEmailPayload(contact: any): EmailPayload {
-  const subject = "Nous avons bien reçu votre message — Lejapon.ma";
+  const subject = "Nous avons bien reçu votre message — LeJapon.ma";
   return {
     eventType: "contact_client",
     recipient: normalizeEmail(contact.email),
     subject,
     html: emailShell(
       "Nous avons bien reçu votre message",
-      `Bonjour ${plain(contact.name)},\n\nMerci pour votre message.\n\nNous avons bien reçu votre demande et un conseiller Lejapon.ma va vous répondre dans les plus brefs délais.\n\nCordialement,\nL'équipe Lejapon.ma`,
+      `Bonjour ${plain(contact.name)},\n\nMerci pour votre message.\n\nNous avons bien reçu votre demande et un conseiller LeJapon.ma va vous répondre dans les plus brefs délais.\n\nCordialement,\nL'équipe LeJapon.ma`,
       [
         ["Nom", contact.name],
         ["Email", contact.email],
@@ -450,9 +450,9 @@ function contactClientEmailPayload(contact: any): EmailPayload {
         ["Message", contact.message],
       ],
       undefined,
-      "Lejapon.ma",
+      "LeJapon.ma",
     ),
-    text: `Bonjour ${plain(contact.name)},\n\nMerci pour votre message.\n\nNous avons bien reçu votre demande et un conseiller Lejapon.ma va vous répondre dans les plus brefs délais.\n\nRésumé de votre demande :\n- Nom : ${plain(contact.name)}\n- Email : ${plain(contact.email)}\n- Téléphone : ${plain(contact.phone)}\n- Message : ${plain(contact.message)}\n\nCordialement,\nL'équipe Lejapon.ma`,
+    text: `Bonjour ${plain(contact.name)},\n\nMerci pour votre message.\n\nNous avons bien reçu votre demande et un conseiller LeJapon.ma va vous répondre dans les plus brefs délais.\n\nRésumé de votre demande :\n- Nom : ${plain(contact.name)}\n- Email : ${plain(contact.email)}\n- Téléphone : ${plain(contact.phone)}\n- Message : ${plain(contact.message)}\n\nCordialement,\nL'équipe LeJapon.ma`,
     related_contact_id: contact.id,
     metadata: { email: contact.email, name: contact.name },
   };

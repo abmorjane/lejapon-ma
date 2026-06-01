@@ -10,18 +10,42 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
-import { fmtDateTime, fmtMAD } from "@/lib/format";
+import { fmtDate, fmtDateTime, fmtMAD } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgencyContext } from "../useAgencyContext";
-import type { AgencyBooking } from "../agencyTypes";
+import type { AgencyBooking, CommissionRule } from "../agencyTypes";
 import { AgencyStatusBadge } from "../components/AgencyStatusBadge";
+import { commissionRuleColumns, getCommissionScopeLabel } from "../commissionEngine";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
 
 const PAGE_SIZE = 20;
 const bookingColumns = "id,reference,contact_name,contact_email,contact_phone,status,total_amount_mad,paid_amount_mad,created_at,preferred_dates,trip_id,agency_organization_id,assigned_to,agency_attributed_at,trips:trip_id(id,title,start_date,end_date,destination)";
-const requestColumns = "id,organization_id,requested_by,client_full_name,client_email,client_phone,trip_interest,travelers_count,preferred_departure_date,message,status,created_at";
+const requestColumns = "id,organization_id,requested_by,client_full_name,client_email,client_phone,trip_interest,travelers_count,preferred_departure_date,message,status,metadata,created_at";
+const tripColumns = "id,title,season,start_date,end_date,destination,destinations,base_price_mad,slots_left,status,label";
+const extraColumns = "id,name,description,price_mad,category,city,sort_order";
+
+const SINGLE_SUPPLEMENT_MAD = 15000;
+const TRIPLE_DISCOUNT_PER_PERSON_MAD = 1000;
+const HOTEL_CATEGORY_SUPPLEMENTS: Record<HotelCategory, number> = {
+  standard: 0,
+  superior: 2500,
+  premium: 5000,
+};
+
+const ROOM_TYPE_LABELS: Record<RoomType, string> = {
+  single: "Single",
+  double: "Double",
+  twin: "Twin",
+  triple: "Triple",
+};
+
+const HOTEL_CATEGORY_LABELS: Record<HotelCategory, string> = {
+  standard: "Standard",
+  superior: "Supérieur",
+  premium: "Premium",
+};
 
 type AgencyBookingRequestStatus = "new" | "contacted" | "quoted" | "converted" | "rejected";
 
@@ -36,28 +60,89 @@ type AgencyBookingRequest = {
   travelers_count: number;
   preferred_departure_date: string | null;
   message: string | null;
+  metadata: RequestMetadata | null;
   status: AgencyBookingRequestStatus;
   created_at: string;
+};
+
+type RoomType = "single" | "double" | "twin" | "triple";
+type HotelCategory = "standard" | "superior" | "premium";
+
+type TripOption = {
+  id: string;
+  title: string;
+  season: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  destination: string | null;
+  destinations: string[] | null;
+  base_price_mad: number | null;
+  slots_left: number | null;
+  status: string | null;
+  label: string | null;
+};
+
+type ExtraOption = {
+  id: string;
+  name: string;
+  description: string | null;
+  price_mad: number | null;
+  category: string | null;
+  city: string | null;
+  sort_order: number | null;
+};
+
+type SelectedExtraMetadata = {
+  id: string;
+  name: string;
+  price_mad: number | null;
+};
+
+type RequestMetadata = {
+  crm_client_id?: string | null;
+  agency_organization_id?: string | null;
+  agency_name?: string | null;
+  trip_id?: string | null;
+  trip_title?: string | null;
+  destination?: string | null;
+  room_type?: RoomType | null;
+  hotel_category?: HotelCategory | null;
+  selected_extras?: SelectedExtraMetadata[];
+  base_price?: number | null;
+  room_supplement?: number | null;
+  hotel_supplement?: number | null;
+  extras_total?: number | null;
+  estimated_total?: number | null;
+  estimated_commission?: number | null;
+  commission_rule_id?: string | null;
+  commission_rule_label?: string | null;
+  special_requests?: string | null;
 };
 
 type RequestForm = {
   client_full_name: string;
   client_email: string;
   client_phone: string;
-  trip_interest: string;
+  trip_id: string;
   travelers_count: string;
   preferred_departure_date: string;
-  message: string;
+  room_type: RoomType;
+  hotel_category: HotelCategory;
+  selected_extra_ids: string[];
+  special_requests: string;
 };
 
 const emptyRequestForm = (): RequestForm => ({
   client_full_name: "",
   client_email: "",
   client_phone: "",
-  trip_interest: "",
+  trip_id: "",
   travelers_count: "1",
   preferred_departure_date: "",
-  message: "",
+  room_type: "double",
+  hotel_category: "standard",
+  selected_extra_ids: [],
+  special_requests: "",
 });
 
 const REQUEST_STATUS_LABELS: Record<AgencyBookingRequestStatus, string> = {
@@ -66,6 +151,93 @@ const REQUEST_STATUS_LABELS: Record<AgencyBookingRequestStatus, string> = {
   quoted: "Devis envoyé",
   converted: "Convertie",
   rejected: "Rejetée",
+};
+
+const normalize = (value: unknown) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const formatTripDates = (trip: Pick<TripOption, "start_date" | "end_date" | "season"> | null) => {
+  if (!trip) return "—";
+  if (trip.start_date && trip.end_date) return `${fmtDate(trip.start_date)} → ${fmtDate(trip.end_date)}`;
+  if (trip.start_date || trip.end_date) return fmtDate(trip.start_date ?? trip.end_date);
+  return trip.season || "—";
+};
+
+const getTripDestination = (trip: TripOption | null) =>
+  trip?.destination || trip?.destinations?.filter(Boolean).join(", ") || null;
+
+const getRoomSupplement = (roomType: RoomType) => {
+  if (roomType === "single") return SINGLE_SUPPLEMENT_MAD;
+  if (roomType === "triple") return -TRIPLE_DISCOUNT_PER_PERSON_MAD;
+  return 0;
+};
+
+const isRuleEffective = (rule: CommissionRule) => {
+  const today = new Date().toISOString().slice(0, 10);
+  if (rule.starts_at && today < rule.starts_at.slice(0, 10)) return false;
+  if (rule.ends_at && today > rule.ends_at.slice(0, 10)) return false;
+  return rule.status === "active";
+};
+
+const getApplicableRuleForRequest = (rules: CommissionRule[], trip: TripOption | null) => {
+  if (!trip) return null;
+  const destination = normalize(getTripDestination(trip));
+  const title = normalize(trip.title);
+  const product = normalize([trip.label, trip.season].filter(Boolean).join(" "));
+
+  return rules
+    .filter(isRuleEffective)
+    .filter((rule) => {
+      if (rule.scope === "agency_default") return true;
+      if (rule.scope === "trip_override") return Boolean(rule.trip_id && rule.trip_id === trip.id);
+      if (rule.scope === "product") {
+        const target = normalize(rule.product_type);
+        return Boolean(target && (product.includes(target) || title.includes(target) || destination.includes(target)));
+      }
+      if (rule.scope === "destination") {
+        const target = normalize(rule.destination);
+        return Boolean(target && (destination.includes(target) || title.includes(target)));
+      }
+      return false;
+    })
+    .sort((a, b) => {
+      const scopeWeight = { trip_override: 0, product: 1, destination: 2, agency_default: 3 };
+      return scopeWeight[a.scope] - scopeWeight[b.scope];
+    })[0] ?? null;
+};
+
+const calculateCommission = (total: number | null, rule: CommissionRule | null) => {
+  if (!rule || total === null) return null;
+  if (rule.rule_type === "fixed_amount") return Number(rule.value || 0);
+  return Math.round((total * Number(rule.value || 0)) / 100);
+};
+
+const mergeClientAgencyMetadata = async (
+  clientId: string,
+  organization: { id: string; display_name?: string | null }
+) => {
+  try {
+    const { data } = await db.from("clients").select("metadata").eq("id", clientId).maybeSingle();
+    const currentMetadata = data?.metadata && typeof data.metadata === "object" ? data.metadata : {};
+    await db
+      .from("clients")
+      .update({
+        source: "agency",
+        metadata: {
+          ...currentMetadata,
+          agency_origin: true,
+          agency_organization_id: organization.id,
+          agency_name: organization.display_name ?? null,
+        },
+      })
+      .eq("id", clientId);
+  } catch (error) {
+    console.warn("[agency-booking-request] CRM agency metadata update failed", error);
+  }
 };
 
 export default function AgencyBookings() {
@@ -87,6 +259,14 @@ export default function AgencyBookings() {
   const [requestOpen, setRequestOpen] = useState(false);
   const [requestForm, setRequestForm] = useState<RequestForm>(emptyRequestForm);
   const [requestSaving, setRequestSaving] = useState(false);
+  const [tripOptions, setTripOptions] = useState<TripOption[]>([]);
+  const [tripsLoading, setTripsLoading] = useState(false);
+  const [tripsError, setTripsError] = useState<string | null>(null);
+  const [extraOptions, setExtraOptions] = useState<ExtraOption[]>([]);
+  const [extrasLoading, setExtrasLoading] = useState(false);
+  const [extrasError, setExtrasError] = useState<string | null>(null);
+  const [commissionRules, setCommissionRules] = useState<CommissionRule[]>([]);
+  const [commissionRulesError, setCommissionRulesError] = useState<string | null>(null);
 
   const load = async () => {
     if (!organization) return;
@@ -169,6 +349,58 @@ export default function AgencyBookings() {
     setRequestsLoading(false);
   };
 
+  const loadRequestOptions = async () => {
+    setTripsLoading(true);
+    setTripsError(null);
+    const { data: tripsData, error: tripsError } = await db
+      .from("trips")
+      .select(tripColumns)
+      .in("status", ["open", "completed"])
+      .order("start_date", { ascending: true, nullsFirst: false });
+
+    if (tripsError) {
+      setTripsError(tripsError.message);
+      setTripOptions([]);
+    } else {
+      setTripOptions((tripsData ?? []) as TripOption[]);
+    }
+    setTripsLoading(false);
+
+    setExtrasLoading(true);
+    setExtrasError(null);
+    const { data: extrasData, error: extrasError } = await db
+      .from("extras")
+      .select(extraColumns)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (extrasError) {
+      setExtrasError(extrasError.message);
+      setExtraOptions([]);
+    } else {
+      setExtraOptions((extrasData ?? []) as ExtraOption[]);
+    }
+    setExtrasLoading(false);
+  };
+
+  const loadCommissionRules = async () => {
+    if (!organization) return;
+    setCommissionRulesError(null);
+    const { data, error } = await db
+      .from("commission_engine_rules")
+      .select(commissionRuleColumns)
+      .eq("organization_id", organization.id)
+      .eq("status", "active");
+
+    if (error) {
+      setCommissionRules([]);
+      setCommissionRulesError(error.message);
+      return;
+    }
+    setCommissionRules((data ?? []) as CommissionRule[]);
+  };
+
   useEffect(() => {
     const timer = setTimeout(load, 250);
     return () => clearTimeout(timer);
@@ -178,30 +410,103 @@ export default function AgencyBookings() {
     loadRequests();
   }, [organization?.id]);
 
+  useEffect(() => {
+    if (requestOpen && !requestForm.trip_id && tripOptions[0]?.id) {
+      updateRequestForm("trip_id", tripOptions[0].id);
+    }
+  }, [requestOpen, requestForm.trip_id, tripOptions]);
+
   const openRequest = () => {
-    setRequestForm(emptyRequestForm());
+    const firstTripId = tripOptions[0]?.id ?? "";
+    setRequestForm({ ...emptyRequestForm(), trip_id: firstTripId });
     setRequestOpen(true);
+    void loadRequestOptions();
+    void loadCommissionRules();
   };
 
-  const updateRequestForm = (key: keyof RequestForm, value: string) => {
+  const updateRequestForm = <K extends keyof RequestForm>(key: K, value: RequestForm[K]) => {
     setRequestForm((current) => ({ ...current, [key]: value }));
   };
 
+  const toggleExtra = (extraId: string) => {
+    setRequestForm((current) => ({
+      ...current,
+      selected_extra_ids: current.selected_extra_ids.includes(extraId)
+        ? current.selected_extra_ids.filter((id) => id !== extraId)
+        : [...current.selected_extra_ids, extraId],
+    }));
+  };
+
+  const selectedTrip = tripOptions.find((trip) => trip.id === requestForm.trip_id) ?? null;
+  const selectedExtras = extraOptions.filter((extra) => requestForm.selected_extra_ids.includes(extra.id));
+  const travelersCount = Number(requestForm.travelers_count);
+  const safeTravelersCount = Number.isFinite(travelersCount) && travelersCount > 0 ? travelersCount : 1;
+  const tripBasePrice = selectedTrip?.base_price_mad ?? null;
+  const basePriceTotal = tripBasePrice === null ? null : tripBasePrice * safeTravelersCount;
+  const roomSupplementPerTraveler = getRoomSupplement(requestForm.room_type);
+  const hotelSupplementPerTraveler = HOTEL_CATEGORY_SUPPLEMENTS[requestForm.hotel_category] ?? 0;
+  const roomSupplementTotal = roomSupplementPerTraveler * safeTravelersCount;
+  const hotelSupplementTotal = hotelSupplementPerTraveler * safeTravelersCount;
+  const extrasTotal = selectedExtras.reduce((sum, extra) => sum + Number(extra.price_mad ?? 0), 0);
+  const estimatedTotal = basePriceTotal === null
+    ? null
+    : basePriceTotal + roomSupplementTotal + hotelSupplementTotal + extrasTotal;
+  const applicableCommissionRule = getApplicableRuleForRequest(commissionRules, selectedTrip);
+  const estimatedCommission = calculateCommission(estimatedTotal, applicableCommissionRule);
+
   const submitRequest = async () => {
     if (!organization || !user || !isActiveAgency) return;
-    const travelersCount = Number(requestForm.travelers_count);
     if (!requestForm.client_full_name.trim()) {
       toast.error("Le nom du client est obligatoire.");
       return;
     }
-    if (!requestForm.trip_interest.trim()) {
-      toast.error("La destination ou le voyage souhaité est obligatoire.");
+    if (!selectedTrip) {
+      toast.error("Sélectionnez un voyage.");
       return;
     }
     if (!Number.isFinite(travelersCount) || travelersCount < 1) {
       toast.error("Le nombre de voyageurs est obligatoire.");
       return;
     }
+
+    let crmClientId: string | null = null;
+    try {
+      const { data: upsertedId } = await supabase.rpc("upsert_client_from_booking" as any, {
+        _name: requestForm.client_full_name.trim(),
+        _email: requestForm.client_email.trim(),
+        _phone: requestForm.client_phone.trim(),
+        _city: "",
+      });
+      crmClientId = (upsertedId as string) ?? null;
+      if (crmClientId) await mergeClientAgencyMetadata(crmClientId, organization);
+    } catch (error) {
+      console.warn("[agency-booking-request] CRM upsert failed", error);
+    }
+
+    const metadata: RequestMetadata = {
+      crm_client_id: crmClientId,
+      agency_organization_id: organization.id,
+      agency_name: organization.display_name ?? null,
+      trip_id: selectedTrip.id,
+      trip_title: selectedTrip.title,
+      destination: getTripDestination(selectedTrip),
+      room_type: requestForm.room_type,
+      hotel_category: requestForm.hotel_category,
+      selected_extras: selectedExtras.map((extra) => ({
+        id: extra.id,
+        name: extra.name,
+        price_mad: extra.price_mad,
+      })),
+      base_price: tripBasePrice,
+      room_supplement: roomSupplementTotal,
+      hotel_supplement: hotelSupplementTotal,
+      extras_total: extrasTotal,
+      estimated_total: estimatedTotal,
+      estimated_commission: estimatedCommission,
+      commission_rule_id: applicableCommissionRule?.id ?? null,
+      commission_rule_label: applicableCommissionRule ? getCommissionScopeLabel(applicableCommissionRule) : null,
+      special_requests: requestForm.special_requests.trim() || null,
+    };
 
     setRequestSaving(true);
     const { error } = await db.from("agency_booking_requests").insert({
@@ -210,10 +515,11 @@ export default function AgencyBookings() {
       client_full_name: requestForm.client_full_name.trim(),
       client_email: requestForm.client_email.trim() || null,
       client_phone: requestForm.client_phone.trim() || null,
-      trip_interest: requestForm.trip_interest.trim(),
+      trip_interest: selectedTrip.title,
       travelers_count: travelersCount,
-      preferred_departure_date: requestForm.preferred_departure_date || null,
-      message: requestForm.message.trim() || null,
+      preferred_departure_date: requestForm.preferred_departure_date || selectedTrip.start_date || null,
+      message: requestForm.special_requests.trim() || null,
+      metadata,
       status: "new",
     });
 
@@ -321,13 +627,14 @@ export default function AgencyBookings() {
           <p className="p-8 text-center text-sm text-muted-foreground">Aucune demande agence.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-sm">
+            <table className="w-full min-w-[980px] text-sm">
               <thead className="bg-secondary/55">
                 <tr className="text-left">
                   <th className="p-4 font-semibold">Client</th>
-                  <th className="p-4 font-semibold">Intérêt voyage</th>
+                  <th className="p-4 font-semibold">Voyage</th>
                   <th className="p-4 font-semibold">Voyageurs</th>
-                  <th className="p-4 font-semibold">Départ souhaité</th>
+                  <th className="p-4 font-semibold">Total estimé</th>
+                  <th className="p-4 font-semibold">Commission estimée</th>
                   <th className="p-4 font-semibold">Statut</th>
                   <th className="p-4 font-semibold">Créée le</th>
                 </tr>
@@ -336,12 +643,26 @@ export default function AgencyBookings() {
                 {requests.map((request) => (
                   <tr key={request.id} className="hover:bg-secondary/30">
                     <td className="p-4">
-                      <p className="font-medium">{request.client_full_name}</p>
+                      <Link to={`/agency/bookings/${request.id}`} className="font-medium text-accent hover:underline">
+                        {request.client_full_name}
+                      </Link>
                       <p className="text-xs text-muted-foreground">{request.client_email || request.client_phone || "—"}</p>
                     </td>
-                    <td className="p-4">{request.trip_interest}</td>
+                    <td className="p-4">
+                      <p className="font-medium">{request.metadata?.trip_title || request.trip_interest}</p>
+                      <p className="text-xs text-muted-foreground">{request.metadata?.destination || request.preferred_departure_date || "—"}</p>
+                    </td>
                     <td className="p-4">{request.travelers_count}</td>
-                    <td className="p-4">{request.preferred_departure_date || "—"}</td>
+                    <td className="p-4">
+                      {request.metadata?.estimated_total === null || request.metadata?.estimated_total === undefined
+                        ? "Prix non renseigné"
+                        : fmtMAD(request.metadata.estimated_total)}
+                    </td>
+                    <td className="p-4">
+                      {request.metadata?.estimated_commission === null || request.metadata?.estimated_commission === undefined
+                        ? "Commission non renseignée"
+                        : fmtMAD(request.metadata.estimated_commission)}
+                    </td>
                     <td className="p-4">{REQUEST_STATUS_LABELS[request.status] ?? request.status}</td>
                     <td className="p-4 text-xs text-muted-foreground">{fmtDateTime(request.created_at)}</td>
                   </tr>
@@ -459,16 +780,124 @@ export default function AgencyBookings() {
               <Input type="number" min="1" value={requestForm.travelers_count} onChange={(event) => updateRequestForm("travelers_count", event.target.value)} />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>Destination / voyage souhaité *</Label>
-              <Input value={requestForm.trip_interest} onChange={(event) => updateRequestForm("trip_interest", event.target.value)} />
+              <Label>Voyage *</Label>
+              <Select value={requestForm.trip_id} onValueChange={(value) => updateRequestForm("trip_id", value)}>
+                <SelectTrigger className="min-h-11">
+                  <SelectValue placeholder={tripsLoading ? "Chargement des voyages…" : "Sélectionner un voyage"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {tripOptions.map((trip) => (
+                    <SelectItem key={trip.id} value={trip.id}>
+                      {trip.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {tripsError && <p className="text-xs text-destructive">{tripsError}</p>}
+              {selectedTrip ? (
+                <div className="rounded-xl border border-border bg-secondary/35 p-3 text-sm">
+                  <p className="font-semibold">{selectedTrip.title}</p>
+                  <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                    <span>Destination: {getTripDestination(selectedTrip) || "—"}</span>
+                    <span>Départ: {formatTripDates(selectedTrip)}</span>
+                    <span>Prix base: {selectedTrip.base_price_mad === null ? "Prix non renseigné" : fmtMAD(selectedTrip.base_price_mad)}</span>
+                    <span>Places: {selectedTrip.slots_left ?? "—"}</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {tripsLoading ? "Chargement des voyages…" : "Aucun voyage actif disponible."}
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Date de départ souhaitée</Label>
               <Input type="date" value={requestForm.preferred_departure_date} onChange={(event) => updateRequestForm("preferred_departure_date", event.target.value)} />
             </div>
+            <div className="space-y-2">
+              <Label>Type de chambre</Label>
+              <Select value={requestForm.room_type} onValueChange={(value) => updateRequestForm("room_type", value as RoomType)}>
+                <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(ROOM_TYPE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Catégorie hôtel</Label>
+              <Select value={requestForm.hotel_category} onValueChange={(value) => updateRequestForm("hotel_category", value as HotelCategory)}>
+                <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(HOTEL_CATEGORY_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>Message / notes</Label>
-              <Textarea rows={4} value={requestForm.message} onChange={(event) => updateRequestForm("message", event.target.value)} />
+              <Label>Extras</Label>
+              {extrasError && <p className="text-xs text-destructive">{extrasError}</p>}
+              {extrasLoading ? (
+                <p className="rounded-xl border border-border p-3 text-sm text-muted-foreground">Chargement des extras…</p>
+              ) : extraOptions.length === 0 ? (
+                <p className="rounded-xl border border-border p-3 text-sm text-muted-foreground">Aucun extra actif disponible.</p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {extraOptions.map((extra) => {
+                    const checked = requestForm.selected_extra_ids.includes(extra.id);
+                    return (
+                      <button
+                        key={extra.id}
+                        type="button"
+                        onClick={() => toggleExtra(extra.id)}
+                        className={`rounded-xl border p-3 text-left text-sm transition ${checked ? "border-accent bg-accent/10" : "border-border hover:bg-secondary/50"}`}
+                      >
+                        <span className="flex items-start justify-between gap-3">
+                          <span>
+                            <span className="block font-medium">{extra.name}</span>
+                            <span className="block text-xs text-muted-foreground">{extra.city || extra.category || "Extra"}</span>
+                          </span>
+                          <span className="text-xs font-semibold">
+                            {extra.price_mad === null || extra.price_mad === undefined ? "Prix non renseigné" : fmtMAD(extra.price_mad)}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {selectedExtras.length > 0 && (
+                <div className="rounded-xl bg-secondary/40 p-3 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">Extras sélectionnés</p>
+                  <p>{selectedExtras.map((extra) => `${extra.name} (${extra.price_mad === null || extra.price_mad === undefined ? "prix non renseigné" : fmtMAD(extra.price_mad)})`).join(" · ")}</p>
+                </div>
+              )}
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Demandes spéciales</Label>
+              <Textarea rows={4} value={requestForm.special_requests} onChange={(event) => updateRequestForm("special_requests", event.target.value)} />
+            </div>
+            <div className="rounded-xl border border-border bg-background p-4 md:col-span-2">
+              <h3 className="font-semibold">Aperçu prix</h3>
+              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Prix voyage</span><span>{basePriceTotal === null ? "Prix non renseigné" : fmtMAD(basePriceTotal)}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Supplément chambre</span><span>{fmtMAD(roomSupplementTotal)}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Supplément hôtel</span><span>{fmtMAD(hotelSupplementTotal)}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Extras</span><span>{fmtMAD(extrasTotal)}</span></div>
+                <div className="flex justify-between gap-3 font-semibold sm:col-span-2"><span>Total client estimé</span><span>{estimatedTotal === null ? "Prix non renseigné" : fmtMAD(estimatedTotal)}</span></div>
+                <div className="flex justify-between gap-3 sm:col-span-2">
+                  <span className="text-muted-foreground">Commission estimée</span>
+                  <span>{estimatedCommission === null ? "Commission non renseignée" : fmtMAD(estimatedCommission)}</span>
+                </div>
+              </div>
+              {applicableCommissionRule && (
+                <p className="mt-2 text-xs text-muted-foreground">Règle: {getCommissionScopeLabel(applicableCommissionRule)}</p>
+              )}
+              {commissionRulesError && (
+                <p className="mt-2 text-xs text-amber-700">{commissionRulesError}</p>
+              )}
             </div>
           </div>
           <DialogFooter>

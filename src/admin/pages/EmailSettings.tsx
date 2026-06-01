@@ -66,7 +66,7 @@ const EmailSettingsPage = () => {
       smtp_username: normalizeEmail(settings.smtp_username),
       smtp_password: settings.smtp_password,
       from_email: normalizeEmail(settings.from_email || "info@lejapon.ma"),
-      from_name: settings.from_name.trim() || "LeJapon.ma / Moroccan Express",
+      from_name: settings.from_name.trim() || "LeJapon.ma / Moroccan Express Travel & Events",
       reply_to: normalizeEmail(settings.reply_to) || null,
       is_active: settings.is_active,
     };

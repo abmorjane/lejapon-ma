@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
       <div style="font-family:Arial,sans-serif;color:#171412;max-width:640px;margin:0 auto">
         <p style="margin:0 0 6px;color:#8a8178;font-size:12px;letter-spacing:.14em;text-transform:uppercase">LeJapon.ma</p>
         <h1 style="border-bottom:3px solid #f28c28;padding-bottom:10px;font-size:22px">Nouveau message depuis LeJapon.ma</h1>
-        <p style="color:#4b4642">Moroccan Express Travel and Events</p>
+        <p style="color:#4b4642">Moroccan Express Travel & Events</p>
         <table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:14px">
           <tr><td style="padding:8px 0;color:#666;width:130px">Nom</td><td><strong>${escapeHtml(contact.name)}</strong></td></tr>
           <tr><td style="padding:8px 0;color:#666">Email</td><td><a href="mailto:${escapeHtml(contact.email)}">${escapeHtml(contact.email)}</a></td></tr>
@@ -161,7 +161,7 @@ Deno.serve(async (req) => {
       const smtp = smtpConfig();
       const client = new SMTPClient({ connection: smtp.connection });
       await client.send({
-        from: `LeJapon.ma / Moroccan Express <${smtp.from}>`,
+        from: `LeJapon.ma / Moroccan Express Travel & Events <${smtp.from}>`,
         to: recipient,
         replyTo: contact.email,
         subject: emailSubject,

@@ -123,9 +123,144 @@
     display: none;
   }
 
+  .admin-mobile-shell,
+  [data-admin-theme="classic"] {
+    --admin-bg: 220 15% 98%;
+    --admin-text: 222 30% 8%;
+    --admin-sidebar-bg: 0 0% 100%;
+    --admin-sidebar-text: 222 30% 8%;
+    --admin-sidebar-muted: 222 10% 42%;
+    --admin-sidebar-active-bg: 28 100% 55%;
+    --admin-sidebar-active-text: 0 0% 100%;
+    --admin-card-bg: 0 0% 100%;
+    --admin-card-border: 220 15% 90%;
+    --admin-card-shadow: 0 1px 2px hsl(222 30% 8% / 0.04);
+    --admin-card-radius: 1rem;
+    --admin-table-cell-y: 1rem;
+    --admin-table-cell-x: 1rem;
+    --admin-accent: 28 100% 55%;
+    --admin-font-size: 0.9375rem;
+  }
+
+  [data-admin-theme="premium-dashboard"] {
+    --admin-bg: 210 22% 97%;
+    --admin-text: 220 24% 10%;
+    --admin-sidebar-bg: 220 22% 8%;
+    --admin-sidebar-text: 210 24% 92%;
+    --admin-sidebar-muted: 215 14% 64%;
+    --admin-sidebar-active-bg: 0 0% 100%;
+    --admin-sidebar-active-text: 220 22% 8%;
+    --admin-card-bg: 0 0% 100%;
+    --admin-card-border: 214 20% 88%;
+    --admin-card-shadow: 0 1px 2px hsl(220 24% 10% / 0.04), 0 18px 36px -28px hsl(220 24% 10% / 0.28);
+    --admin-card-radius: 0.75rem;
+    --admin-table-cell-y: 0.7rem;
+    --admin-table-cell-x: 0.85rem;
+    --admin-accent: 38 84% 50%;
+    --admin-font-size: 0.875rem;
+  }
+
+  .admin-shell {
+    background: hsl(var(--admin-bg));
+    color: hsl(var(--admin-text));
+    font-size: var(--admin-font-size);
+  }
+
+  .admin-sidebar {
+    background: hsl(var(--admin-sidebar-bg));
+    border-color: hsl(var(--admin-card-border));
+    color: hsl(var(--admin-sidebar-text));
+  }
+
+  .admin-sidebar-header,
+  .admin-sidebar-footer {
+    border-color: hsl(var(--admin-card-border) / 0.7);
+  }
+
+  [data-admin-theme="premium-dashboard"] .admin-sidebar-header,
+  [data-admin-theme="premium-dashboard"] .admin-sidebar-footer {
+    border-color: hsl(215 18% 18%);
+  }
+
+  .admin-sidebar-kicker,
+  .admin-sidebar-section {
+    color: hsl(var(--admin-sidebar-muted));
+  }
+
+  .admin-sidebar-link {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .admin-sidebar-link-active {
+    background: hsl(var(--admin-sidebar-active-bg));
+    color: hsl(var(--admin-sidebar-active-text));
+  }
+
+  .admin-sidebar-link-idle {
+    color: hsl(var(--admin-sidebar-text) / 0.76);
+  }
+
+  .admin-sidebar-link-idle:hover {
+    background: hsl(var(--admin-sidebar-text) / 0.08);
+    color: hsl(var(--admin-sidebar-text));
+  }
+
+  .admin-topbar {
+    background: hsl(var(--admin-card-bg) / 0.86);
+    border-color: hsl(var(--admin-card-border));
+  }
+
+  [data-admin-theme="premium-dashboard"] .admin-content {
+    max-width: 1480px;
+  }
+
+  [data-admin-theme="premium-dashboard"] .admin-content .rounded-2xl,
+  [data-admin-theme="premium-dashboard"] .admin-content .rounded-xl {
+    border-radius: var(--admin-card-radius);
+  }
+
+  [data-admin-theme="premium-dashboard"] .admin-content .border {
+    border-color: hsl(var(--admin-card-border));
+  }
+
+  [data-admin-theme="premium-dashboard"] .admin-content .bg-card,
+  [data-admin-theme="premium-dashboard"] .admin-content .bg-background {
+    background-color: hsl(var(--admin-card-bg));
+  }
+
+  [data-admin-theme="premium-dashboard"] .admin-content [class*="shadow"] {
+    box-shadow: var(--admin-card-shadow);
+  }
+
+  .admin-mobile-shell table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .admin-mobile-shell th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: hsl(var(--admin-card-bg));
+    font-size: 0.72rem;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .admin-mobile-shell th,
+  .admin-mobile-shell td {
+    padding: var(--admin-table-cell-y) var(--admin-table-cell-x);
+    border-color: hsl(var(--admin-card-border));
+  }
+
+  [data-admin-theme="premium-dashboard"] .admin-mobile-shell table,
+  [data-admin-theme="premium-dashboard"] table {
+    font-size: 0.8125rem;
+  }
+
   @media (max-width: 767px) {
     .admin-mobile-shell {
-      background: hsl(var(--secondary) / 0.55);
+      background: hsl(var(--admin-bg));
     }
 
     .admin-mobile-shell input,

@@ -511,7 +511,7 @@ export default function VisaForm() {
             <p>
               Conformément au Règlement Général sur la Protection des Données (RGPD) et à la loi marocaine 09-08,
               les informations recueillies font l'objet d'un traitement informatique destiné exclusivement à
-              l'instruction de votre demande de visa par lejapon.ma (Tapis Volant LLC) et sa transmission à
+              l'instruction de votre demande de visa par LeJapon.ma (Moroccan Express Travel & Events) et sa transmission à
               l'ambassade ou au consulat du Japon.
             </p>
             <p>

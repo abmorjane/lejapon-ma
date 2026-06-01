@@ -72,6 +72,7 @@ const AdminVisaSettings = lazy(() => import("@/admin/pages/VisaSettings"));
 const AdminVisaChecklists = lazy(() => import("@/admin/pages/VisaChecklists"));
 const AdminFaqs = lazy(() => import("@/admin/pages/Faqs"));
 const AdminTranslations = lazy(() => import("@/admin/pages/Translations"));
+const AdminTheme = lazy(() => import("@/admin/pages/Theme"));
 const MarketingLayout = lazy(() => import("@/admin/pages/marketing/MarketingLayout"));
 const MarketingDashboard = lazy(() => import("@/admin/pages/marketing/MarketingDashboard"));
 const MarketingCampaigns = lazy(() => import("@/admin/pages/marketing/MarketingCampaigns"));
@@ -232,6 +233,7 @@ const AppRoutes = () => {
         <Route path="visa-checklists" element={<RequireRole module="visa_checklists"><AdminVisaChecklists /></RequireRole>} />
         <Route path="faqs" element={<RequireRole module="faqs"><AdminFaqs /></RequireRole>} />
         <Route path="translations" element={<RequireRole module="translations"><AdminTranslations /></RequireRole>} />
+        <Route path="theme" element={<RequireRole module="theme"><AdminTheme /></RequireRole>} />
         <Route path="marketing" element={<RequireRole module="marketing"><MarketingLayout /></RequireRole>}>
           <Route index element={<MarketingDashboard />} />
           <Route path="campaigns" element={<MarketingCampaigns />} />

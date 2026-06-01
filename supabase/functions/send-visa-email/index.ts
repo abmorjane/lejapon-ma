@@ -24,7 +24,7 @@ function bodyForStatus(status: string, app: any, extra?: string) {
   const ref = app.reference;
   const name = [app.surname, app.given_names].filter(Boolean).join(" ") || "Cher client";
   const base = `<p>Bonjour ${name},</p>`;
-  const sign = `<p style="margin-top:32px">Cordialement,<br/><strong>L'équipe Tapis Volant — Le Japon</strong></p>`;
+  const sign = `<p style="margin-top:32px">Cordialement,<br/><strong>L'équipe LeJapon.ma</strong></p>`;
   let html = "";
   switch (status) {
     case "submitted":
@@ -45,7 +45,7 @@ function bodyForStatus(status: string, app: any, extra?: string) {
       html = `${base}<p>Nous avons bien reçu votre formulaire de demande de visa pour le Japon.</p>
         <p>Nous vous prions de rassembler les autres documents nécessaires afin de compléter votre dossier de demande de visa, puis de les déposer à l'agence ou de les envoyer par courrier recommandé à l'adresse suivante&nbsp;:</p>
         <div style="background:#f8f5ef;padding:14px 18px;border-radius:6px;margin:12px 0">
-          <strong>Moroccan Express Travel and Events</strong><br/>
+          <strong>Moroccan Express Travel & Events</strong><br/>
           Rue Annour, El Wifaq, Témara
         </div>
         <p>Nous vous remercions pour votre attention et restons à votre disposition pour toute question.</p>`;

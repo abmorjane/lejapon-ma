@@ -61,7 +61,7 @@ export function RequireActiveAgencyMember({ children }: { children: ReactNode })
     return (
       <AccessState
         title="Accès partenaire indisponible"
-        message="Votre organisation n'est pas active. Contactez Moroccan Express / LeJapon.ma."
+        message="Votre organisation n'est pas active. Contactez Moroccan Express Travel & Events / LeJapon.ma."
         detail={agency.error || agency.organization?.status || null}
       />
     );

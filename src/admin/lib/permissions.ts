@@ -58,6 +58,7 @@ export const MODULE_PERMISSIONS = {
   marketing_settings: ["super_admin", "admin"],
   faqs: ["super_admin", "admin", "content_manager"],
   translations: ["super_admin", "admin", "content_manager"],
+  theme: ["super_admin", "admin"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type ModuleKey = keyof typeof MODULE_PERMISSIONS;

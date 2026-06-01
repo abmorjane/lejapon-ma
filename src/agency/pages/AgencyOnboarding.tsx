@@ -549,7 +549,7 @@ export default function AgencyOnboarding() {
         <div>
           <h1 className="font-display text-3xl">Onboarding partenaire</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Complétez votre dossier agence pour validation par Moroccan Express / LeJapon.ma.
+            Complétez votre dossier agence pour validation par Moroccan Express Travel & Events / LeJapon.ma.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -604,7 +604,7 @@ export default function AgencyOnboarding() {
         {error && <p className="mt-4 text-sm text-amber-700">Dossier onboarding indisponible: {error}</p>}
         {!loading && !caseRow && !error && (
           <p className="mt-4 text-sm text-muted-foreground">
-            Aucun dossier onboarding visible pour le moment. Contactez Moroccan Express / LeJapon.ma.
+            Aucun dossier onboarding visible pour le moment. Contactez Moroccan Express Travel & Events / LeJapon.ma.
           </p>
         )}
         {caseRow && (

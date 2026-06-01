@@ -131,7 +131,7 @@ const Index = () => {
     <>
       <Seo
         title="lejapon.ma — Voyages d'immersion au Japon depuis Casablanca"
-        description="Lejapon.ma organise deux voyages par an au Japon depuis Casablanca : programme complet de 14 jours, vols, hôtels, transports JR, guide bilingue et prix tout inclus."
+        description="LeJapon.ma organise deux voyages par an au Japon depuis Casablanca : programme complet de 14 jours, vols, hôtels, transports JR, guide bilingue et prix tout inclus."
         canonical="/"
         jsonLd={{
           "@context": "https://schema.org",

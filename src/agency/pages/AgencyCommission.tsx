@@ -144,7 +144,7 @@ export default function AgencyCommission() {
         <div className="flex gap-3">
           <Percent className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Les commissions affichées sont des règles de référence. Les montants définitifs seront validés par Moroccan Express. Aucun calcul, paiement ou payout n'est disponible dans cette phase.
+            Les commissions affichées sont des règles de référence. Les montants définitifs seront validés par Moroccan Express Travel & Events. Aucun calcul, paiement ou payout n'est disponible dans cette phase.
           </p>
         </div>
       </Card>

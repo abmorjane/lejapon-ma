@@ -6,7 +6,7 @@ CREATE TYPE public.visa_document_type AS ENUM ('passport','photo','employment','
 -- Settings (singleton)
 CREATE TABLE public.visa_settings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  guarantor_name text NOT NULL DEFAULT 'TAPIS VOLANT LLC',
+  guarantor_name text NOT NULL DEFAULT 'Moroccan Express Travel & Events',
   guarantor_tel text NOT NULL DEFAULT '080-9980-3986',
   guarantor_address text NOT NULL DEFAULT '37-4 Saiinshuneicho, Ukyo-ku, Kyoto city 615-0005',
   guarantor_dob text,

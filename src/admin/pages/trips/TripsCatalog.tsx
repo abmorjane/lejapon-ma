@@ -60,7 +60,7 @@ export default function TripsCatalog() {
     load();
     supabase
       .from("programmes")
-      .select("id,title,duration")
+      .select("id,title,duration,slug,is_published")
       .order("sort_order")
       .then(({ data }) => setProgrammes(data ?? []));
   }, []);
@@ -319,9 +319,15 @@ export default function TripsCatalog() {
                         <SelectTrigger><SelectValue placeholder="Aucun programme" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">Aucun programme</SelectItem>
-                          {programmes.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>{p.title}{p.duration ? ` · ${p.duration}` : ""}</SelectItem>
-                          ))}
+                          {programmes.map((p) => {
+                            const isPreset = p.slug === "programme-1" || p.slug === "programme-2";
+                            const label = isPreset ? "Public" : p.is_published ? "Personnalisé public" : "Personnalisé admin";
+                            return (
+                              <SelectItem key={p.id} value={p.id}>
+                                {p.title}{p.duration ? ` · ${p.duration}` : ""} · {label}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
