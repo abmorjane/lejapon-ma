@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Upload, FileText, Loader2, ExternalLink, Save, Image as ImageIcon, Copy, ChevronUp, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Upload, FileText, Loader2, ExternalLink, Save, Image as ImageIcon, Copy, ChevronUp, ChevronDown, Archive } from "lucide-react";
 import { toast } from "sonner";
 import { DayIcon } from "@/components/programmes/DayIcon";
 import { optimizeImage } from "@/lib/image-upload";
@@ -34,6 +34,8 @@ type Programme = {
   pdf_path: string | null;
   is_published: boolean;
   sort_order: number;
+  archived_at?: string | null;
+  archived_by?: string | null;
 };
 
 type TripOption = {
@@ -95,6 +97,7 @@ export default function Programmes() {
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState<string>("");
   const [highlightedProgrammeId, setHighlightedProgrammeId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const load = async (nextActive?: string) => {
     setLoading(true);
@@ -144,6 +147,9 @@ export default function Programmes() {
     );
   }
 
+  const publicProgrammes = rows.filter(isPublicProgrammePreset);
+  const customProgrammes = rows.filter((r) => !isPublicProgrammePreset(r) && (showArchived || !r.archived_at));
+
   return (
     <div>
       <PageHeader
@@ -155,26 +161,30 @@ export default function Programmes() {
       ) : (
         <Tabs value={active} onValueChange={setActive} className="space-y-6">
           <TabsList>
-            {rows.filter(isPublicProgrammePreset).map((r) => (
+            {publicProgrammes.map((r) => (
               <TabsTrigger key={r.id} value={r.id}>
                 {r.title}
               </TabsTrigger>
             ))}
             <TabsTrigger value="custom">Programmes personnalisés</TabsTrigger>
           </TabsList>
-          {rows.filter(isPublicProgrammePreset).map((r) => (
+          {publicProgrammes.map((r) => (
             <TabsContent key={r.id} value={r.id}>
               <ProgrammeEditor initial={r} onSaved={load} />
             </TabsContent>
           ))}
           <TabsContent value="custom" className="space-y-6">
             <CustomProgrammeCreator programmes={rows} trips={trips} onCreated={handleCustomProgrammeCreated} />
-            {rows.filter((r) => !isPublicProgrammePreset(r)).length === 0 ? (
+            <div className="flex items-center justify-end gap-3 rounded-xl border border-border bg-background p-3">
+              <Switch checked={showArchived} onCheckedChange={setShowArchived} />
+              <Label className="text-sm">Afficher archivés</Label>
+            </div>
+            {customProgrammes.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border bg-background p-6 text-sm text-muted-foreground">
                 Aucun programme personnalisé. Créez un programme pour un voyage spécial ou privé.
               </div>
             ) : (
-              rows.filter((r) => !isPublicProgrammePreset(r)).map((r) => (
+              customProgrammes.map((r) => (
                 <section
                   key={r.id}
                   id={`custom-programme-${r.id}`}
@@ -187,7 +197,10 @@ export default function Programmes() {
                       </p>
                       <h2 className="font-display text-xl">{r.title}</h2>
                     </div>
-                    <LinkedTrips programmeId={r.id} trips={trips} />
+                    <div className="flex flex-col items-start gap-2 sm:items-end">
+                      <LinkedTrips programmeId={r.id} trips={trips} />
+                      <ProgrammeRemovalActions programme={r} trips={trips} onChanged={() => load("custom")} />
+                    </div>
                   </div>
                   <ProgrammeEditor initial={r} onSaved={load} />
                 </section>
@@ -564,6 +577,134 @@ function LinkedTrips({ programmeId, trips }: { programmeId: string; trips: TripO
     <div className="text-xs text-muted-foreground">
       Lié à {linked.length} voyage{linked.length > 1 ? "s" : ""}: {linked.map((trip) => trip.title).join(", ")}
     </div>
+  );
+}
+
+function ProgrammeRemovalActions({
+  programme,
+  trips,
+  onChanged,
+}: {
+  programme: Programme;
+  trips: TripOption[];
+  onChanged: () => void;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const linkedTrips = trips.filter((trip) => trip.programme_id === programme.id);
+  const isDefaultProgramme = isPublicProgrammePreset(programme);
+  const canManage = !isDefaultProgramme && !programme.is_published;
+  const archiveSupported = "archived_at" in programme;
+
+  if (isDefaultProgramme) return null;
+
+  const archiveProgramme = async () => {
+    if (!canManage || !archiveSupported) return;
+    setBusy(true);
+    const { data: auth } = await supabase.auth.getUser();
+    const payload: Record<string, unknown> = {
+      archived_at: new Date().toISOString(),
+      is_published: false,
+    };
+    if ("archived_by" in programme) payload.archived_by = auth.user?.id ?? null;
+    const { error } = await supabase.from("programmes").update(payload as any).eq("id", programme.id);
+    setBusy(false);
+    if (error) return toast.error(error.message);
+    toast.success("Programme archivé");
+    onChanged();
+  };
+
+  const hardDelete = async () => {
+    if (!canManage) return;
+    if (linkedTrips.length) {
+      toast.error("Suppression bloquée: ce programme est lié à des voyages.");
+      return;
+    }
+    if (confirmText !== "DELETE") return toast.error("Tapez DELETE pour confirmer.");
+    setBusy(true);
+    const { error: daysError } = await supabase.from("programme_days").delete().eq("programme_id", programme.id);
+    if (daysError) {
+      setBusy(false);
+      return toast.error(daysError.message);
+    }
+    const { error } = await supabase.from("programmes").delete().eq("id", programme.id);
+    setBusy(false);
+    if (error) return toast.error(error.message);
+    toast.success("Programme supprimé");
+    setConfirmOpen(false);
+    setConfirmText("");
+    onChanged();
+  };
+
+  if (!canManage) {
+    return (
+      <p className="max-w-md text-xs text-muted-foreground">
+        Suppression indisponible: seuls les programmes personnalisés admin only peuvent être supprimés ou archivés.
+      </p>
+    );
+  }
+
+  if (linkedTrips.length) {
+    return (
+      <div className="max-w-md rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <p className="font-medium">Suppression bloquée: {linkedTrips.length} voyage{linkedTrips.length > 1 ? "s" : ""} lié{linkedTrips.length > 1 ? "s" : ""}.</p>
+        <p className="mt-1">{linkedTrips.map((trip) => trip.title).join(", ")}</p>
+        <div className="mt-3">
+          {archiveSupported ? (
+            <Button type="button" size="sm" variant="outline" onClick={archiveProgramme} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+              Archiver
+            </Button>
+          ) : (
+            <p className="text-amber-800">Archivage non disponible tant que la colonne archived_at n'existe pas.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex flex-wrap justify-end gap-2">
+        {archiveSupported && (
+          <Button type="button" size="sm" variant="outline" onClick={archiveProgramme} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+            Archiver
+          </Button>
+        )}
+        <Button type="button" size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmOpen(true)}>
+          <Trash2 className="h-4 w-4" />
+          Supprimer
+        </Button>
+      </div>
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-background p-5 shadow-xl">
+            <h3 className="font-display text-lg">Supprimer le programme</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Cette action supprimera définitivement le programme « {programme.title} » et ses jours associés.
+            </p>
+            <div className="mt-4">
+              <Label>Tapez DELETE pour confirmer</Label>
+              <Input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} placeholder="DELETE" />
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => {
+                setConfirmOpen(false);
+                setConfirmText("");
+              }}>
+                Annuler
+              </Button>
+              <Button type="button" variant="destructive" onClick={hardDelete} disabled={busy || confirmText !== "DELETE"}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Supprimer définitivement
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
