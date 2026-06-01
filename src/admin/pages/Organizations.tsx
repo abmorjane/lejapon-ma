@@ -2830,10 +2830,12 @@ export default function OrganizationsAdmin() {
 
             <TabsContent value="commissions" className="space-y-4">
               <Card className="p-3 text-xs text-muted-foreground">
-                <p className="font-mono font-semibold text-foreground">Debug commission_engine_rules</p>
-                <pre className="mt-2 overflow-auto rounded bg-muted p-2 font-mono">
-                  {JSON.stringify(commissionRulesDebug, null, 2)}
-                </pre>
+                <details>
+                  <summary className="cursor-pointer font-mono font-semibold text-foreground">Debug</summary>
+                  <pre className="mt-2 overflow-auto rounded bg-muted p-2 font-mono">
+                    {JSON.stringify(commissionRulesDebug, null, 2)}
+                  </pre>
+                </details>
               </Card>
 
               {commissionRulesError && (
@@ -3294,7 +3296,7 @@ export default function OrganizationsAdmin() {
           {onboardingReview?.caseRow && (
             <details className="rounded-lg border border-border p-4 text-xs">
               <summary className="cursor-pointer font-mono font-semibold text-muted-foreground hover:text-foreground">
-                🐛 Debug: onboarding raw data
+                Debug
               </summary>
               <div className="mt-3 grid gap-4 md:grid-cols-3">
                 <div>

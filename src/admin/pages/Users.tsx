@@ -690,8 +690,10 @@ export default function UsersAdmin() {
 
       {rawError && (
         <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          <p className="font-semibold">Dernière réponse/erreur brute</p>
-          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs">{rawError}</pre>
+          <details>
+            <summary className="cursor-pointer font-semibold">Debug</summary>
+            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs">{rawError}</pre>
+          </details>
         </Card>
       )}
 
@@ -1221,12 +1223,12 @@ export default function UsersAdmin() {
                 )}
               </div>
 
-              <div>
-                <Label>Réponse JSON exacte</Label>
-                <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-muted p-3 text-xs text-muted-foreground">
+              <details className="rounded-lg border border-border p-3 text-xs">
+                <summary className="cursor-pointer font-semibold text-muted-foreground hover:text-foreground">Debug</summary>
+                <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-muted p-3 text-muted-foreground">
                   {JSON.stringify(resetResult.raw, null, 2)}
                 </pre>
-              </div>
+              </details>
             </div>
           )}
           <DialogFooter>

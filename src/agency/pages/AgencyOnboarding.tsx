@@ -255,8 +255,6 @@ export default function AgencyOnboarding() {
   const [editMode, setEditMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
-  const [savedDocumentRows, setSavedDocumentRows] = useState<Record<string, any>[]>([]);
-  const [saveDebug, setSaveDebug] = useState<Record<string, any> | null>(null);
   const formStateRef = useRef(formState);
   const documentsRef = useRef(documents);
   const caseRowRef = useRef<OnboardingCase | null>(caseRow);
@@ -315,20 +313,8 @@ export default function AgencyOnboarding() {
           .order("created_at", { ascending: false, nullsFirst: false });
         if (!docsResult.error) documentRows = docsResult.data ?? [];
       }
-      console.log("[agency/onboarding diagnostic]", {
-        query: {
-          case:
-            "partner_onboarding_cases.select(*).eq(organization_id).order(created_at desc).limit(5)",
-          documents:
-            "partner_onboarding_documents.select(*).eq(onboarding_case_id).order(created_at desc)",
-        },
-        onboarding_case: row,
-        form_data: row?.form_data ?? null,
-        partner_onboarding_documents: documentRows,
-      });
       setCaseRow(row);
       setSavedCaseData(row);
-      setSavedDocumentRows(documentRows);
       const nextMetadata = normalizeMetadata(row?.form_data ?? row?.metadata);
       nextMetadata.documents = {
         ...nextMetadata.documents,
@@ -406,29 +392,6 @@ export default function AgencyOnboarding() {
       ...(nextStatus === "under_review" ? { submitted_at: new Date().toISOString() } : {}),
     };
 
-    const startedDebug = {
-      target: currentCase
-        ? `partner_onboarding_cases.update(payload).eq("id", "${currentCase.id}")`
-        : "partner_onboarding_cases.insert({ organization_id, ...payload })",
-      payload,
-      complete_form_data: completeFormData,
-      current_form_state: formStateRef.current,
-      existing_form_data: currentCase?.form_data ?? null,
-      update_response_data: null,
-      update_error: null,
-      update_status: null,
-      update_status_text: null,
-      update_count: null,
-      affected_row: null,
-      no_row_updated_message: null,
-      select_after_update_data: null,
-      select_after_update_error: null,
-      select_after_update_status: null,
-      select_after_update_status_text: null,
-    };
-    console.log("[agency/onboarding save diagnostic]", startedDebug);
-    setSaveDebug(startedDebug);
-
     const request = currentCase
       ? db
           .from("partner_onboarding_cases")
@@ -442,19 +405,7 @@ export default function AgencyOnboarding() {
           .select("*")
           .maybeSingle();
 
-    const updateResponse = await request;
-    const { data, error } = updateResponse;
-    const updateDebug = {
-      ...startedDebug,
-      update_response_data: data ?? null,
-      update_error: error ?? null,
-      update_status: updateResponse.status ?? null,
-      update_status_text: updateResponse.statusText ?? null,
-      update_count: updateResponse.count ?? null,
-      affected_row: data ?? null,
-      no_row_updated_message: !error && !data ? "No row updated. Check RLS or wrong case id." : null,
-    };
-    setSaveDebug(updateDebug);
+    const { data, error } = await request;
 
     if (error) {
       toast.error(error.message ?? "Impossible d'enregistrer le dossier.");
@@ -469,17 +420,6 @@ export default function AgencyOnboarding() {
         .eq("id", savedCaseId)
         .maybeSingle();
       const selectedCase = (selected.data ?? null) as OnboardingCase | null;
-      const selectedDebug = {
-        ...updateDebug,
-        select_after_update_query: `partner_onboarding_cases.select("*").eq("id", "${savedCaseId}").maybeSingle()`,
-        select_after_update_data: selected.data ?? null,
-        select_after_update_error: selected.error ?? null,
-        select_after_update_status: selected.status ?? null,
-        select_after_update_status_text: selected.statusText ?? null,
-        select_after_update_form_data: selectedCase?.form_data ?? null,
-      };
-      console.log("[agency/onboarding save diagnostic after select]", selectedDebug);
-      setSaveDebug(selectedDebug);
 
       if (!selected.error && selectedCase) {
         setCaseRow(selectedCase);
@@ -815,41 +755,6 @@ export default function AgencyOnboarding() {
         </>
       )}
 
-      <details className="mt-8 rounded-lg border border-border p-4 text-xs">
-        <summary className="cursor-pointer font-mono font-semibold text-muted-foreground hover:text-foreground">
-          🐛 Debug: form · saved case · documents
-        </summary>
-        <div className="mt-3 grid gap-4 md:grid-cols-3">
-          <div>
-            <p className="mb-2 font-semibold text-muted-foreground">current form state</p>
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(formState, null, 2)}</pre>
-          </div>
-          <div>
-            <p className="mb-2 font-semibold text-muted-foreground">saved case data</p>
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(savedCaseData, null, 2)}</pre>
-            <p className="mb-2 mt-4 font-semibold text-muted-foreground">saved form_data</p>
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(savedCaseData?.form_data ?? null, null, 2)}</pre>
-            <p className="mb-2 mt-4 font-semibold text-muted-foreground">last save/update debug</p>
-            {saveDebug?.update_error && (
-              <div className="mb-2 rounded border border-destructive/30 bg-destructive/10 p-2 font-semibold text-destructive">
-                Update error: {JSON.stringify(saveDebug.update_error)}
-              </div>
-            )}
-            {saveDebug?.no_row_updated_message && (
-              <div className="mb-2 rounded border border-destructive/30 bg-destructive/10 p-2 font-semibold text-destructive">
-                {saveDebug.no_row_updated_message}
-              </div>
-            )}
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(saveDebug, null, 2)}</pre>
-          </div>
-          <div>
-            <p className="mb-2 font-semibold text-muted-foreground">uploaded documents state</p>
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(documents, null, 2)}</pre>
-            <p className="mb-2 mt-4 font-semibold text-muted-foreground">partner_onboarding_documents rows</p>
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(savedDocumentRows, null, 2)}</pre>
-          </div>
-        </div>
-      </details>
     </div>
   );
 }

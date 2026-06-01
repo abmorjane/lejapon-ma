@@ -58,13 +58,10 @@ export default function AgencyProfilePage() {
   const [savingAccount, setSavingAccount] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [memberProfileRow, setMemberProfileRow] = useState<Record<string, any> | null>(null);
-  const [memberProfileDebug, setMemberProfileDebug] = useState<Record<string, any> | null>(null);
 
   const loadMemberProfile = async () => {
     if (!user || !organization || !currentMembership?.id) return null;
 
-    const query =
-      "organization_member_profiles.select(id, organization_member_id, user_id, organization_id, full_name, email, phone, secondary_phone, secondary_email, position_title, point_of_sale, notes).eq(organization_member_id)";
     const profileResult = await db
       .from("organization_member_profiles")
       .select("id,organization_member_id,user_id,organization_id,full_name,email,phone,secondary_phone,secondary_email,position_title,point_of_sale,notes")
@@ -72,16 +69,6 @@ export default function AgencyProfilePage() {
       .maybeSingle();
 
     const row = profileResult.error ? null : profileResult.data ?? null;
-    const debug = {
-      query,
-      current_user_id: user.id,
-      organization_id: organization.id,
-      organization_member_id: currentMembership.id,
-      organization_member_profile: row,
-      error: profileResult.error ?? null,
-    };
-    console.log("[agency/profile diagnostic]", debug);
-    setMemberProfileDebug(debug);
     setMemberProfileRow(row);
     return row;
   };
@@ -151,7 +138,6 @@ export default function AgencyProfilePage() {
 
     const { error: stableError } = await stableRequest;
     if (stableError) {
-      setMemberProfileDebug({ save_payload: stablePayload, error: stableError });
       toast.error(stableError.message);
       setSavingAccount(false);
       return;
@@ -330,14 +316,6 @@ export default function AgencyProfilePage() {
         </Card>
       )}
 
-      <details className="rounded-lg border border-border p-4 text-xs">
-        <summary className="cursor-pointer font-mono font-semibold text-muted-foreground hover:text-foreground">
-          Debug: organization_member_profiles
-        </summary>
-        <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
-          {JSON.stringify(memberProfileDebug, null, 2)}
-        </pre>
-      </details>
     </div>
   );
 }
