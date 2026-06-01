@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Trash2, Download, Building2 } from "lucide-react";
+import { Copy, Plus, Trash2, Download, Building2 } from "lucide-react";
 import { exportCsv } from "@/admin/lib/export-csv";
 import { toast } from "sonner";
 
@@ -26,6 +26,14 @@ export default function OpsRooms({ trip }: { trip: any }) {
   const [newHotel, setNewHotel] = useState({ name: "", city: "" });
   const [roomDialog, setRoomDialog] = useState(false);
   const [newRoom, setNewRoom] = useState<any>({ room_number: "", room_type: "Twin", capacity: 2 });
+  const [copyDialog, setCopyDialog] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyForm, setCopyForm] = useState({
+    sourceHotelId: "",
+    targetHotelId: "",
+    includeAssignments: true,
+    replaceExisting: false,
+  });
 
   const load = async () => {
     const [{ data: h }, { data: bks }] = await Promise.all([
@@ -85,7 +93,11 @@ export default function OpsRooms({ trip }: { trip: any }) {
 
   const assignParticipant = async (roomId: string, participantId: string) => {
     if (!participantId) return;
-    await supabase.from("room_assignments").delete().eq("participant_id", participantId);
+    const room = rooms.find((r) => r.id === roomId);
+    const sameHotelRoomIds = rooms.filter((r) => r.trip_hotel_id === room?.trip_hotel_id).map((r) => r.id);
+    if (sameHotelRoomIds.length) {
+      await supabase.from("room_assignments").delete().eq("participant_id", participantId).in("room_id", sameHotelRoomIds);
+    }
     await supabase.from("room_assignments").insert({ room_id: roomId, participant_id: participantId });
     load();
   };
@@ -95,6 +107,17 @@ export default function OpsRooms({ trip }: { trip: any }) {
   };
 
   const hotelRooms = rooms.filter((r) => r.trip_hotel_id === activeHotel);
+  const getHotelRooms = (hotelId: string) => rooms.filter((r) => r.trip_hotel_id === hotelId);
+  const openCopyRooms = (sourceHotelId = activeHotel) => {
+    const fallbackTarget = hotels.find((hotel) => hotel.id !== sourceHotelId)?.id ?? "";
+    setCopyForm({
+      sourceHotelId,
+      targetHotelId: fallbackTarget,
+      includeAssignments: true,
+      replaceExisting: false,
+    });
+    setCopyDialog(true);
+  };
 
   const partInfo = (id: string) => {
     const p = participants.find((x) => x.id === id);
@@ -144,7 +167,87 @@ export default function OpsRooms({ trip }: { trip: any }) {
     exportCsv(`chambres-${trip.title}-global`, out);
   };
 
-  const unassignedParticipants = participants.filter((p) => !assignments.some((a) => a.participant_id === p.id));
+  const copyRooms = async () => {
+    const { sourceHotelId, targetHotelId, includeAssignments, replaceExisting } = copyForm;
+    if (!sourceHotelId || !targetHotelId) return toast.error("Sélectionnez un hôtel source et un hôtel cible.");
+    if (sourceHotelId === targetHotelId) return toast.error("La source et la cible doivent être deux hôtels différents.");
+
+    const sourceRooms = getHotelRooms(sourceHotelId);
+    const targetRooms = getHotelRooms(targetHotelId);
+    if (sourceRooms.length === 0) return toast.error("Aucune chambre à copier dans l'hôtel source.");
+
+    if (targetRooms.length > 0 && replaceExisting) {
+      const targetHotel = hotels.find((hotel) => hotel.id === targetHotelId);
+      if (!confirm(`Remplacer les ${targetRooms.length} chambre(s) existante(s) de ${targetHotel?.name ?? "l'hôtel cible"} ?`)) return;
+    }
+
+    setCopyBusy(true);
+    try {
+      const targetRoomIds = targetRooms.map((room) => room.id);
+      if (replaceExisting && targetRoomIds.length > 0) {
+        const { error: assignmentDeleteError } = await supabase.from("room_assignments").delete().in("room_id", targetRoomIds);
+        if (assignmentDeleteError) throw assignmentDeleteError;
+        const { error: roomDeleteError } = await supabase.from("trip_rooms").delete().in("id", targetRoomIds);
+        if (roomDeleteError) throw roomDeleteError;
+      }
+
+      const roomPayloads = sourceRooms.map((room) => {
+        const payload: Record<string, unknown> = {
+          trip_hotel_id: targetHotelId,
+          room_number: room.room_number ?? null,
+          room_type: room.room_type ?? "Twin",
+          capacity: room.capacity ?? 2,
+        };
+        if ("notes" in room) payload.notes = room.notes ?? null;
+        if ("room_name" in room) payload.room_name = room.room_name ?? null;
+        return payload;
+      });
+
+      const { data: insertedRooms, error: insertRoomsError } = await supabase.from("trip_rooms").insert(roomPayloads).select("*");
+      if (insertRoomsError) throw insertRoomsError;
+
+      let skippedAssignments = 0;
+      if (includeAssignments && insertedRooms?.length) {
+        const roomMap = new Map(sourceRooms.map((room, index) => [room.id, insertedRooms[index]?.id]));
+        const existingTargetAssignments = replaceExisting
+          ? []
+          : assignments.filter((assignment) => targetRoomIds.includes(assignment.room_id));
+        const targetParticipantIds = new Set(existingTargetAssignments.map((assignment) => assignment.participant_id));
+        const assignmentPayloads: Array<{ room_id: string; participant_id: string }> = [];
+
+        for (const assignment of assignments.filter((item) => sourceRooms.some((room) => room.id === item.room_id))) {
+          const newRoomId = roomMap.get(assignment.room_id);
+          if (!newRoomId || !assignment.participant_id) continue;
+          if (targetParticipantIds.has(assignment.participant_id)) {
+            skippedAssignments += 1;
+            continue;
+          }
+          targetParticipantIds.add(assignment.participant_id);
+          assignmentPayloads.push({ room_id: newRoomId, participant_id: assignment.participant_id });
+        }
+
+        if (assignmentPayloads.length > 0) {
+          const { error: insertAssignmentsError } = await supabase.from("room_assignments").insert(assignmentPayloads);
+          if (insertAssignmentsError) throw insertAssignmentsError;
+        }
+      }
+
+      setCopyDialog(false);
+      setActiveHotel(targetHotelId);
+      toast.success("Chambres copiées avec succès.");
+      if (skippedAssignments > 0) {
+        toast.warning(`${skippedAssignments} affectation(s) ignorée(s) pour éviter des doublons dans l'hôtel cible.`);
+      }
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Impossible de copier les chambres.");
+    } finally {
+      setCopyBusy(false);
+    }
+  };
+
+  const activeHotelRoomIds = rooms.filter((r) => r.trip_hotel_id === activeHotel).map((r) => r.id);
+  const unassignedParticipants = participants.filter((p) => !assignments.some((a) => a.participant_id === p.id && activeHotelRoomIds.includes(a.room_id)));
 
   return (
     <div>
@@ -164,6 +267,92 @@ export default function OpsRooms({ trip }: { trip: any }) {
         <Button variant="outline" size="sm" onClick={doExportAll}><Download className="w-4 h-4" /> Export global</Button>
       </div>
 
+      <Dialog open={copyDialog} onOpenChange={setCopyDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Copier chambres</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Hôtel source</Label>
+                <Select
+                  value={copyForm.sourceHotelId}
+                  onValueChange={(value) => {
+                    const nextTarget = copyForm.targetHotelId && copyForm.targetHotelId !== value
+                      ? copyForm.targetHotelId
+                      : hotels.find((hotel) => hotel.id !== value)?.id ?? "";
+                    setCopyForm({ ...copyForm, sourceHotelId: value, targetHotelId: nextTarget });
+                  }}
+                >
+                  <SelectTrigger><SelectValue placeholder="Source" /></SelectTrigger>
+                  <SelectContent>
+                    {hotels.map((hotel) => (
+                      <SelectItem key={hotel.id} value={hotel.id}>{hotel.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Hôtel cible</Label>
+                <Select
+                  value={copyForm.targetHotelId}
+                  onValueChange={(value) => setCopyForm({ ...copyForm, targetHotelId: value })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Cible" /></SelectTrigger>
+                  <SelectContent>
+                    {hotels.filter((hotel) => hotel.id !== copyForm.sourceHotelId).map((hotel) => (
+                      <SelectItem key={hotel.id} value={hotel.id}>{hotel.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-secondary/30 p-3 text-sm">
+              <p className="font-medium">Options</p>
+              <label className="mt-3 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={copyForm.includeAssignments}
+                  onChange={(event) => setCopyForm({ ...copyForm, includeAssignments: event.target.checked })}
+                />
+                <span>Copier la structure des chambres + affectations participants</span>
+              </label>
+              <p className="mt-1 pl-6 text-xs text-muted-foreground">
+                Décochez pour copier uniquement les chambres, types, capacités et notes.
+              </p>
+              <label className="mt-3 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={copyForm.replaceExisting}
+                  onChange={(event) => setCopyForm({ ...copyForm, replaceExisting: event.target.checked })}
+                />
+                <span>Remplacer les chambres existantes de l'hôtel cible</span>
+              </label>
+              <p className="mt-1 pl-6 text-xs text-muted-foreground">
+                Si non coché, les chambres copiées sont ajoutées à la liste existante.
+              </p>
+            </div>
+
+            {copyForm.targetHotelId && getHotelRooms(copyForm.targetHotelId).length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                L'hôtel cible contient déjà {getHotelRooms(copyForm.targetHotelId).length} chambre(s).
+                {copyForm.replaceExisting
+                  ? " Une confirmation sera demandée avant remplacement."
+                  : " La copie sera fusionnée et les affectations en double seront ignorées."}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCopyDialog(false)} disabled={copyBusy}>Annuler</Button>
+            <Button onClick={copyRooms} disabled={copyBusy || !copyForm.sourceHotelId || !copyForm.targetHotelId}>
+              {copyBusy ? "Copie…" : "Copier"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {hotels.length === 0 ? (
         <div className="bg-background rounded-2xl border border-border p-8 text-center text-muted-foreground">Aucun hôtel.</div>
       ) : (
@@ -179,6 +368,9 @@ export default function OpsRooms({ trip }: { trip: any }) {
                   {h.city && <p className="text-xs text-muted-foreground">{h.city}</p>}
                 </div>
                 <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => openCopyRooms(h.id)} disabled={hotels.length < 2}>
+                    <Copy className="w-4 h-4" /> Copier chambres
+                  </Button>
                   <Dialog open={roomDialog} onOpenChange={setRoomDialog}>
                     <DialogTrigger asChild><Button size="sm"><Plus className="w-4 h-4" /> Ajouter chambre</Button></DialogTrigger>
                     <DialogContent>

@@ -43,10 +43,21 @@ const escapeHtml = (value: unknown) =>
 const fmtMAD = (value: unknown) =>
   `${Number(value || 0).toLocaleString("fr-FR", { maximumFractionDigits: 0 })} MAD`;
 
+const missing = "Non renseigné";
+
 const fmtDate = (value: unknown) => {
   if (!value) return "—";
   try {
     return new Date(String(value)).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return String(value);
+  }
+};
+
+const fmtDateOnly = (value: unknown) => {
+  if (!value) return missing;
+  try {
+    return new Date(String(value)).toLocaleDateString("fr-FR", { dateStyle: "medium" });
   } catch {
     return String(value);
   }
@@ -59,7 +70,71 @@ function mailto(email: unknown, subject?: string) {
 }
 
 function plain(value: unknown) {
-  return String(value ?? "—");
+  const text = String(value ?? "").trim();
+  return text || "—";
+}
+
+function plainMissing(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || missing;
+}
+
+const truthy = (value: unknown) => {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+};
+
+function sectionHtml(title: string, rows: Array<[string, unknown]>) {
+  const renderedRows = rows.map(([label, value]) => `
+    <tr>
+      <td style="padding:9px 0;color:#746960;width:190px;border-bottom:1px solid #f0ece8;vertical-align:top">${escapeHtml(label)}</td>
+      <td style="padding:9px 0;border-bottom:1px solid #f0ece8;vertical-align:top"><strong>${escapeHtml(truthy(value) ? value : missing)}</strong></td>
+    </tr>
+  `).join("");
+  return `
+    <div style="margin:18px 0 0;padding:16px;border:1px solid #eee7e1;border-radius:12px;background:#fffdfa">
+      <h2 style="margin:0 0 10px;font-size:16px;color:#171412">${escapeHtml(title)}</h2>
+      <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px">${renderedRows}</table>
+    </div>
+  `;
+}
+
+function listSectionHtml(title: string, items: string[], emptyText = missing) {
+  const content = items.length
+    ? `<ol style="margin:8px 0 0;padding-left:20px">${items.map((item) => `<li style="margin:0 0 8px;line-height:1.5">${escapeHtml(item)}</li>`).join("")}</ol>`
+    : `<p style="margin:8px 0 0;color:#746960">${escapeHtml(emptyText)}</p>`;
+  return `
+    <div style="margin:18px 0 0;padding:16px;border:1px solid #eee7e1;border-radius:12px;background:#fffdfa">
+      <h2 style="margin:0 0 10px;font-size:16px;color:#171412">${escapeHtml(title)}</h2>
+      ${content}
+    </div>
+  `;
+}
+
+function bookingNotificationShell(reference: unknown, sections: string[], adminUrl: string) {
+  return `
+    <div style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#171412">
+      <div style="max-width:760px;margin:0 auto;padding:28px 14px">
+        <div style="padding:0 0 16px;text-align:center">
+          <div style="font-size:24px;font-weight:700;color:#E21B2D;letter-spacing:.02em">LeJapon.ma</div>
+          <div style="margin-top:4px;font-size:12px;color:#766f68">Moroccan Express Travel & Events</div>
+        </div>
+        <div style="background:#ffffff;border-radius:14px;border:1px solid #e8e4e1;padding:26px;box-shadow:0 6px 24px rgba(0,0,0,.05)">
+          <div style="border-bottom:3px solid #E21B2D;padding-bottom:14px;margin-bottom:20px">
+            <p style="margin:0 0 6px;color:#746960;font-size:13px;text-transform:uppercase;letter-spacing:.08em">Nouvelle réservation</p>
+            <h1 style="margin:0;font-size:24px;line-height:1.3;color:#171412">Nouvelle réservation — LeJapon.ma</h1>
+            <p style="margin:10px 0 0;font-size:14px;color:#3a3531">Référence: <strong>${escapeHtml(plainMissing(reference))}</strong></p>
+          </div>
+          ${sections.join("")}
+          <p style="margin:26px 0 0">
+            <a href="${escapeHtml(adminUrl)}" style="display:inline-block;background:#E21B2D;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold">Ouvrir la réservation</a>
+          </p>
+        </div>
+        <p style="margin:18px 0 0;text-align:center;color:#8a8178;font-size:12px">Notification automatique — LeJapon.ma</p>
+      </div>
+    </div>
+  `;
 }
 
 function adminBaseUrl() {
@@ -282,53 +357,162 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
     ? { data: fullBookingData, error: null }
     : await admin
       .from("bookings")
-      .select("*, clients(*), trips(title, season, start_date, end_date), booking_extras(name_snapshot, qty, unit_price_mad)")
+      .select("*, clients(*), trips(*), booking_extras(*)")
       .eq("id", bookingId)
       .maybeSingle();
   const booking = fetchedBooking;
   if (error || !booking) throw new Error(error?.message ?? "Booking not found");
 
   const extras = booking.booking_extras ?? [];
-  console.log("FULL BOOKING EMAIL DATA", booking);
+  const [{ data: participants }, { data: payments }] = await Promise.all([
+    admin
+      .from("booking_participants")
+      .select("*")
+      .eq("booking_id", booking.id)
+      .order("is_lead", { ascending: false })
+      .order("created_at", { ascending: true }),
+    admin
+      .from("payments")
+      .select("*")
+      .eq("booking_id", booking.id)
+      .order("paid_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false }),
+  ]);
+
+  let agencyName: string | null = null;
+  if (booking.agency_organization_id) {
+    const { data: agency } = await admin
+      .from("organizations")
+      .select("display_name,legal_name")
+      .eq("id", booking.agency_organization_id)
+      .maybeSingle();
+    agencyName = agency?.display_name || agency?.legal_name || null;
+  }
 
   const trip = booking.trips;
-  const tripLabel = [trip?.season, trip?.title].filter(Boolean).join(" — ") || "—";
-  const dateLabel = booking.preferred_dates || [trip?.start_date, trip?.end_date].filter(Boolean).join(" → ") || "—";
-  const departureDate = trip?.start_date || booking.preferred_dates || "—";
-  const extrasLabel = (extras ?? []).length
-    ? (extras ?? []).map((e: any) => `${e.name_snapshot} × ${e.qty} (${fmtMAD(Number(e.unit_price_mad || 0) * Number(e.qty || 1))})`).join(", ")
-    : "—";
+  const tripLabel = [trip?.season, trip?.title].filter(Boolean).join(" — ") || booking.preferred_dates || missing;
+  const departureDate = trip?.start_date || booking.start_date || null;
+  const returnDate = trip?.end_date || booking.end_date || null;
+  const duration = trip?.duration_days || booking.duration_days
+    ? `${trip?.duration_days || booking.duration_days} jours`
+    : departureDate && returnDate
+      ? `${Math.max(1, Math.round((new Date(returnDate).getTime() - new Date(departureDate).getTime()) / 86400000) + 1)} jours`
+      : missing;
   const adminUrl = `${adminBaseUrl()}/admin/bookings/${booking.id}`;
   const total = Number(booking.total_amount_mad || 0);
   const paid = Number(booking.paid_amount_mad || 0);
   const balance = Math.max(0, total - paid);
-  const subject = "Nouvelle inscription voyage — LeJapon.ma";
+  const latestPayment = (payments ?? [])[0] ?? null;
+  const paymentMethod = latestPayment?.method || booking.payment_method || booking.payment_mode || null;
+  const travelerCount = Number(booking.num_adults || 0) + Number(booking.num_children || 0);
+  const kyotoHotel = booking.kyoto_hotel_option || booking.kyoto_hotel || booking.hotel_choice || booking.hotel_category || null;
+  const sourceLabel = agencyName
+    ? `Agence partenaire — ${agencyName}`
+    : String(booking.source ?? "").toLowerCase().includes("agency")
+      ? "Agence partenaire"
+      : "LeJapon.ma public website";
+
+  const participantItems = (participants ?? []).map((participant: any) => {
+    const fullName = [participant.first_name, participant.last_name].filter(Boolean).join(" ") || participant.full_name || missing;
+    const parts = [
+      fullName,
+      `Passeport: ${plainMissing(participant.passport_no || participant.passport_number)}`,
+      `Chambre: ${plainMissing(participant.room_type || participant.room || booking.room_type)}`,
+    ];
+    return parts.join(" · ");
+  });
+
+  const extrasItems = (extras ?? []).map((extra: any) => {
+    const qty = Number(extra.qty || extra.quantity || 1);
+    const unit = Number(extra.unit_price_mad || extra.price_mad || 0);
+    const lineTotal = Number(extra.total_mad || unit * qty || 0);
+    return [
+      plainMissing(extra.name_snapshot || extra.name),
+      `Qté: ${qty || 1}`,
+      `Prix unitaire: ${unit ? fmtMAD(unit) : missing}`,
+      `Total: ${lineTotal ? fmtMAD(lineTotal) : missing}`,
+    ].join(" · ");
+  });
+
+  const sections = [
+    sectionHtml("Client", [
+      ["Nom complet", booking.contact_name],
+      ["Email", booking.contact_email],
+      ["Téléphone", booking.contact_phone],
+      ["Ville", booking.contact_city],
+      ["Nombre de voyageurs", travelerCount ? `${travelerCount} (${Number(booking.num_adults || 0)} adulte(s), ${Number(booking.num_children || 0)} enfant(s))` : missing],
+    ]),
+    sectionHtml("Voyage", [
+      ["Voyage", tripLabel],
+      ["Date de départ", fmtDateOnly(departureDate)],
+      ["Date de retour", fmtDateOnly(returnDate)],
+      ["Durée", duration],
+      ["Formule / hébergement", booking.formula],
+      ["Type de chambre", booking.room_type],
+      ["Option hôtel Kyoto", kyotoHotel],
+    ]),
+    listSectionHtml("Participants", participantItems, "Aucun participant détaillé renseigné."),
+    listSectionHtml("Extras", extrasItems, "Aucun extra sélectionné."),
+    sectionHtml("Prix & paiement", [
+      ["Total", fmtMAD(total)],
+      ["Montant payé", paid ? fmtMAD(paid) : missing],
+      ["Reste à payer", fmtMAD(balance)],
+      ["Mode de paiement", paymentMethod],
+    ]),
+    sectionHtml("Source", [
+      ["Origine", sourceLabel],
+      ["Message / notes", booking.message],
+      ["Statut", booking.status],
+    ]),
+  ];
+
+  const subject = `Nouvelle réservation — LeJapon.ma (${plainMissing(booking.reference)})`;
+  const html = bookingNotificationShell(booking.reference, sections, adminUrl);
+  const participantsText = participantItems.length ? participantItems.map((item: string) => `- ${item}`).join("\n") : `- ${missing}`;
+  const extrasText = extrasItems.length ? extrasItems.map((item: string) => `- ${item}`).join("\n") : `- ${missing}`;
 
   return {
     eventType: "booking_internal",
     recipient: adminRecipient(),
     subject,
-    html: emailShell("Nouvelle inscription voyage", "Une nouvelle demande d'inscription voyage vient d'être soumise sur la plateforme.", [
-      ["Nom client", booking.contact_name],
-      ["Email", booking.contact_email],
-      ["Téléphone", booking.contact_phone],
-      ["Voyage choisi", tripLabel],
-      ["Date de départ", departureDate],
-      ["Dates", dateLabel],
-      ["Nombre de voyageurs", `${booking.num_adults || 0} adulte(s), ${booking.num_children || 0} enfant(s)`],
-      ["Formule / hôtel", booking.formula],
-      ["Chambre", booking.room_type],
-      ["Options choisies", extrasLabel],
-      ["Prix total", fmtMAD(total)],
-      ["Montant payé", fmtMAD(paid)],
-      ["Solde restant", fmtMAD(balance)],
-      ["Ville", booking.contact_city],
-      ["Message / notes", booking.message],
-      ["Référence", booking.reference],
-      ["Statut", booking.status],
-      ["Source", booking.source],
-    ], { label: "Contacter le client", href: mailto(booking.contact_email, "Votre inscription LeJapon.ma") }),
-    text: `Nouvelle inscription voyage\n\nClient: ${plain(booking.contact_name)}\nEmail: ${plain(booking.contact_email)}\nTéléphone: ${plain(booking.contact_phone)}\nVoyage: ${tripLabel}\nDate de départ: ${plain(departureDate)}\nDates: ${dateLabel}\nVoyageurs: ${booking.num_adults || 0} adulte(s), ${booking.num_children || 0} enfant(s)\nFormule/hôtel: ${plain(booking.formula)}\nChambre: ${plain(booking.room_type)}\nOptions: ${extrasLabel}\nTotal: ${fmtMAD(total)}\nPayé: ${fmtMAD(paid)}\nSolde: ${fmtMAD(balance)}\nAdmin: ${adminUrl}`,
+    html,
+    text: `Nouvelle réservation — LeJapon.ma
+Référence: ${plainMissing(booking.reference)}
+
+Client
+- Nom: ${plainMissing(booking.contact_name)}
+- Email: ${plainMissing(booking.contact_email)}
+- Téléphone: ${plainMissing(booking.contact_phone)}
+- Ville: ${plainMissing(booking.contact_city)}
+- Voyageurs: ${travelerCount ? `${travelerCount} (${Number(booking.num_adults || 0)} adulte(s), ${Number(booking.num_children || 0)} enfant(s))` : missing}
+
+Voyage
+- Voyage: ${tripLabel}
+- Départ: ${fmtDateOnly(departureDate)}
+- Retour: ${fmtDateOnly(returnDate)}
+- Durée: ${duration}
+- Formule/hébergement: ${plainMissing(booking.formula)}
+- Chambre: ${plainMissing(booking.room_type)}
+- Option hôtel Kyoto: ${plainMissing(kyotoHotel)}
+
+Participants
+${participantsText}
+
+Extras
+${extrasText}
+
+Prix & paiement
+- Total: ${fmtMAD(total)}
+- Payé: ${paid ? fmtMAD(paid) : missing}
+- Reste à payer: ${fmtMAD(balance)}
+- Mode de paiement: ${plainMissing(paymentMethod)}
+
+Source
+- Origine: ${sourceLabel}
+- Notes: ${plainMissing(booking.message)}
+- Statut: ${plainMissing(booking.status)}
+
+Ouvrir la réservation: ${adminUrl}`,
     related_booking_id: booking.id,
     metadata: { reference: booking.reference, admin_url: adminUrl },
   };

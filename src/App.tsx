@@ -219,6 +219,7 @@ const AppRoutes = () => {
         <Route path="bookings" element={<RequireRole module="bookings"><AdminBookings /></RequireRole>} />
         <Route path="bookings/:id" element={<RequireRole module="bookings"><AdminBookingDetail /></RequireRole>} />
         <Route path="clients" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
+        <Route path="clients/:id" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
         <Route path="partner-requests" element={<RequireRole module="partner_requests"><AdminPartnerRequests /></RequireRole>} />
         <Route path="extras" element={<RequireRole module="extras"><AdminExtras /></RequireRole>} />
         <Route path="suppliers" element={<RequireRole module="suppliers"><AdminSuppliers /></RequireRole>} />

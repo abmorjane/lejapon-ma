@@ -13,7 +13,13 @@ type AuthCtx = {
   can: (module: ModuleKey) => boolean;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName: string, metadata?: Record<string, unknown>) => Promise<{ error: Error | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName: string,
+    metadata?: Record<string, unknown>,
+    emailRedirectTo?: string
+  ) => Promise<{ error: Error | null; data?: unknown }>;
   signOut: () => Promise<void>;
 };
 
@@ -50,12 +56,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error };
   };
-  const signUp = async (email: string, password: string, fullName: string, metadata: Record<string, unknown> = {}) => {
-    const { error } = await supabase.auth.signUp({
+  const signUp = async (
+    email: string,
+    password: string,
+    fullName: string,
+    metadata: Record<string, unknown> = {},
+    emailRedirectTo = `${window.location.origin}/admin`
+  ) => {
+    const { data, error } = await supabase.auth.signUp({
       email, password,
-      options: { emailRedirectTo: `${window.location.origin}/admin`, data: { full_name: fullName, ...metadata } },
+      options: { emailRedirectTo, data: { full_name: fullName, ...metadata } },
     });
-    return { error };
+    return { data, error };
   };
   const signOut = async () => { await supabase.auth.signOut(); };
 

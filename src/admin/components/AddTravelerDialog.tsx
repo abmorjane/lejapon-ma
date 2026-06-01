@@ -50,6 +50,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
   const [form, setForm] = useState<any>({
     first_name: "", last_name: "", sex: "", date_of_birth: "",
     profession: "", marital_status: "", address: "",
+    city: "",
     nationality: "", passport_no: "", passport_issue_date: "", passport_expiry: "",
     passport_file_path: "", email: "", phone: "", relation: "self",
   });
@@ -69,6 +70,8 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
       passport_no: fields.passport_no || current.passport_no,
       passport_issue_date: fields.passport_issue_date || current.passport_issue_date,
       passport_expiry: fields.passport_expiry || current.passport_expiry,
+      address: fields.address || current.address,
+      city: fields.city || current.city,
     }));
   };
 
@@ -114,6 +117,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
           profession: form.profession || null,
           marital_status: form.marital_status || null,
           address: form.address || null,
+          city: form.city || null,
           passport_issue_date: form.passport_issue_date || null,
           passport_expiry: form.passport_expiry || null,
           passport_file_path: form.passport_file_path || null,
@@ -147,6 +151,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
       setForm({
         first_name: "", last_name: "", sex: "", date_of_birth: "",
         profession: "", marital_status: "", address: "",
+        city: "",
         nationality: "", passport_no: "", passport_issue_date: "", passport_expiry: "",
         passport_file_path: "", email: "", phone: "", relation: "self",
       });

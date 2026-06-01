@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertTriangle, ChevronDown, Download, FileScan, Plus, Search, User, Upload, Trash2 } from "lucide-react";
 import { fmtDate } from "@/lib/format";
 import { fmtMAD } from "@/lib/format";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { LoyaltyBadge, tierLabel } from "../components/LoyaltyBadge";
@@ -121,6 +121,7 @@ const fadeIn = {
 };
 
 export default function Clients() {
+  const { id: routeClientId } = useParams();
   const { user, isAdmin, isSuperAdmin, session } = useAuth();
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState("");
@@ -304,6 +305,22 @@ export default function Clients() {
     setHistory((h as any) ?? []);
   };
 
+  const openClientById = async (id: string) => {
+    const { data, error } = await supabase
+      .from("clients")
+      .select(CLIENT_SELECT)
+      .eq("id", id)
+      .maybeSingle();
+    if (error) return toast.error(error.message);
+    if (!data) return toast.error("Fiche client introuvable.");
+    await openClient(data);
+  };
+
+  useEffect(() => {
+    if (!routeClientId || selected?.id === routeClientId) return;
+    openClientById(routeClientId);
+  }, [routeClientId]);
+
   const save = async () => {
     const payload = normalizeClientDateFields(edit);
     console.log("CLIENT INSERT PAYLOAD", { table: "public.clients", payload });
@@ -332,6 +349,8 @@ export default function Clients() {
       birthdate: fields.date_of_birth || current.birthdate,
       nationality: fields.nationality || current.nationality,
       sex: fields.sex || current.sex,
+      address: fields.address || current.address,
+      city: fields.city || current.city,
     }));
   };
 

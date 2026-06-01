@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { StatusBadge } from "../components/StatusBadge";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck } from "lucide-react";
+import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck, Save } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { generateQuotePdf, generateReceiptPdf, downloadBytes } from "@/lib/booking-pdfs";
 import { PdfPreviewDialog } from "../components/PdfPreviewDialog";
@@ -49,7 +49,12 @@ export default function BookingDetail() {
 
   const load = async () => {
     if (!id) return;
-    const { data } = await supabase.from("bookings").select("*, trips(title, season, destination, start_date, end_date)").eq("id", id).single();
+    const { data, error } = await supabase.from("bookings").select("*, trips(title, season, destination, start_date, end_date)").eq("id", id).single();
+    if (error || !data) {
+      console.error("[booking-detail] booking load failed", error);
+      toast.error("Impossible de charger la réservation.");
+      return;
+    }
     setB(data);
     const existingDiscount = (data as any)?.quote_discount ?? {};
     setQuoteDiscount({
@@ -61,13 +66,17 @@ export default function BookingDetail() {
     setSelectedAgencyOrgId(data?.agency_organization_id ?? "");
     setSelectedAgencyUserId(data?.assigned_to ?? "");
     setAssignmentNotes(data?.agency_attribution_notes ?? "");
-    const { data: p } = await supabase.from("payments").select("*").eq("booking_id", id).order("created_at", { ascending: false });
+    const { data: p, error: paymentsError } = await supabase.from("payments").select("*").eq("booking_id", id).order("created_at", { ascending: false });
+    if (paymentsError) console.warn("[booking-detail] payments unavailable", paymentsError);
     setPayments(p ?? []);
-    const { data: e } = await supabase.from("booking_extras").select("*").eq("booking_id", id);
+    const { data: e, error: extrasError } = await supabase.from("booking_extras").select("*").eq("booking_id", id);
+    if (extrasError) console.warn("[booking-detail] extras unavailable", extrasError);
     setExtras(e ?? []);
-    const { data: d } = await supabase.from("booking_documents" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false });
+    const { data: d, error: docsError } = await supabase.from("booking_documents" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false });
+    if (docsError) console.warn("[booking-detail] documents unavailable", docsError);
     setDocs((d as any) ?? []);
-    const { data: log } = await supabase.from("booking_audit_log" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false }).limit(50);
+    const { data: log, error: logError } = await supabase.from("booking_audit_log" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false }).limit(50);
+    if (logError) console.warn("[booking-detail] audit log unavailable", logError);
     setAuditLog((log as any) ?? []);
     const { data: orgs, error: orgError } = await (supabase as any)
       .from("organizations")

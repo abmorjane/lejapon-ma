@@ -17,6 +17,8 @@ export type PassportOcrFields = {
   passport_no?: string;
   passport_issue_date?: string;
   passport_expiry?: string;
+  address?: string;
+  city?: string;
   mrz?: string;
   mrz_detected?: boolean;
   mrz_raw?: string;
@@ -95,6 +97,8 @@ function pickDetectedFields(fields: any): PassportOcrFields {
     passport_no: fields?.passport_no,
     passport_issue_date: fields?.passport_issue_date,
     passport_expiry: fields?.passport_expiry,
+    address: fields?.address,
+    city: fields?.city,
     mrz_detected: fields?.mrz_detected,
     mrz_raw: fields?.mrz_raw,
     raw_text: fields?.raw_text,
@@ -163,7 +167,7 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
       }
 
       const { data, error: invokeError } = await supabase.functions.invoke("passport-ocr", {
-        body: { path, bucket: "passports" },
+        body: { storage_path: path, path, bucket: "passports" },
       });
       if (invokeError) {
         console.error("[passport-ocr] OCR function failed", invokeError);
@@ -311,6 +315,8 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
                 <div><dt className="text-xs text-muted-foreground">N° passeport</dt><dd className="font-medium">{display(fields.passport_no)}</dd></div>
                 <div><dt className="text-xs text-muted-foreground">Date d'émission</dt><dd className="font-medium">{display(fields.passport_issue_date)}</dd></div>
                 <div><dt className="text-xs text-muted-foreground">Date d'expiration</dt><dd className="font-medium">{display(fields.passport_expiry)}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Ville</dt><dd className="font-medium">{display(fields.city)}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Adresse</dt><dd className="font-medium">{display(fields.address)}</dd></div>
               </dl>
 
               {(fields.mrz_raw || fields.raw_text) && (

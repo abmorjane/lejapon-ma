@@ -19,6 +19,8 @@ type PassportFields = {
   passport_no?: string;
   passport_issue_date?: string;
   passport_expiry?: string;
+  address?: string;
+  city?: string;
   mrz?: string;
   confidence?: number;
 };
@@ -152,6 +154,8 @@ function parseJsonFields(value: unknown): PassportFields | null {
     passport_no: read("passport_no", "passport_number", "document_number", "numero_passeport", "numéro_passeport"),
     passport_issue_date: read("passport_issue_date", "issue_date", "date_issue", "date_emission", "date_émission"),
     passport_expiry: read("passport_expiry", "expiry_date", "expiration_date", "date_expiration"),
+    address: read("address", "adresse", "residential_address", "adresse_residence", "adresse_résidence"),
+    city: read("city", "ville", "place_of_residence", "residence_city", "ville_residence", "ville_résidence"),
     mrz: read("mrz", "mrz_text"),
     confidence: Number(data.confidence || nested.confidence || 0) || undefined,
   };
@@ -250,12 +254,13 @@ Deno.serve(async (req) => {
     const allowed = (roles ?? []).some((r: any) => ["super_admin", "admin", "manager"].includes(r.role));
     if (!allowed) throw new Error("Forbidden");
 
-    const { storage_path, ocr_storage_path } = await req.json();
-    if (!storage_path || typeof storage_path !== "string") throw new Error("Missing storage_path");
+    const { storage_path, path, ocr_storage_path } = await req.json();
+    const sourcePath = typeof storage_path === "string" && storage_path ? storage_path : path;
+    if (!sourcePath || typeof sourcePath !== "string") throw new Error("Missing storage_path");
 
     let ocrText = "";
     const debug: OcrDebug = {
-      storage_path,
+      storage_path: sourcePath,
       ocr_storage_path: typeof ocr_storage_path === "string" ? ocr_storage_path : null,
       engine: "external",
       ocr_api_configured: !!Deno.env.get("OCR_API_URL"),
@@ -265,7 +270,7 @@ Deno.serve(async (req) => {
 
     const attemptPaths = [
       typeof ocr_storage_path === "string" && ocr_storage_path ? { path: ocr_storage_path, mode: "mrz" as const } : null,
-      { path: storage_path, mode: "full" as const },
+      { path: sourcePath, mode: "full" as const },
     ].filter(Boolean) as Array<{ path: string; mode: "mrz" | "full" }>;
 
     const texts: string[] = [];

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -40,10 +40,12 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
 export default function VisaList() {
   const { user, loading } = useAuth();
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
   const slugs = useRouteSlugs();
   const visaBase = pathFor(slugs, "visa");
   const [items, setItems] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
+  const autoCreateStarted = useRef(false);
 
   useEffect(() => {
     if (loading) return;
@@ -59,7 +61,7 @@ export default function VisaList() {
         if (error) toast.error(error.message);
         else setItems(data ?? []);
       });
-  }, [user, loading, nav]);
+  }, [user, loading, nav, visaBase]);
 
   const create = async () => {
     if (!user) return;
@@ -77,7 +79,11 @@ export default function VisaList() {
       });
       if (lookup.status === "matched") {
         prefillPatch = lookup.patch;
-        prefillMessage = `Formulaire prérempli depuis: ${lookup.sourceLabel}.`;
+        prefillMessage = `Passeport reconnu. Formulaire prérempli depuis: ${lookup.sourceLabel}.`;
+      } else if (lookup.status === "multiple") {
+        setBusy(false);
+        toast.error(lookup.message);
+        return;
       } else {
         prefillMessage = lookup.message;
       }
@@ -100,9 +106,18 @@ export default function VisaList() {
       .single();
     setBusy(false);
     if (error) return toast.error(error.message);
-    if (prefillMessage) toast.info(prefillMessage);
+    if (prefillMessage) {
+      if (prefillMessage.startsWith("Passeport reconnu")) toast.success(prefillMessage);
+      else toast.info(prefillMessage);
+    }
     nav(`${visaBase}/${data!.id}`);
   };
+
+  useEffect(() => {
+    if (loading || !user || autoCreateStarted.current || searchParams.get("create") !== "1") return;
+    autoCreateStarted.current = true;
+    create();
+  }, [loading, user, searchParams]);
 
   return (
     <div className="container-app py-12 max-w-4xl">

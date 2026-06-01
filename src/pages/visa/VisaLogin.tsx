@@ -8,9 +8,10 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Seo } from "@/components/Seo";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function VisaLogin() {
-  const { user, signIn, signUp, loading } = useAuth();
+  const { user, signIn, loading } = useAuth();
   const nav = useNavigate();
   const slugs = useRouteSlugs();
   const visaBase = pathFor(slugs, "visa");
@@ -21,18 +22,30 @@ export default function VisaLogin() {
   const [lastName, setLastName] = useState("");
   const [passportNo, setPassportNo] = useState("");
   const [busy, setBusy] = useState(false);
+  const [accountMessage, setAccountMessage] = useState<string | null>(null);
 
   useEffect(() => { if (!loading && user) nav(visaBase, { replace: true }); }, [user, loading, nav, visaBase]);
+
+  const friendlyAuthError = (message?: string) => {
+    if (/email not confirmed/i.test(message ?? "")) {
+      return "Votre compte n'est pas encore activé. Merci de contacter notre équipe si le problème persiste.";
+    }
+    return message ?? "Erreur";
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     try {
+      setAccountMessage(null);
       if (mode === "login") {
-        const { error } = await signIn(email, password);
+        const cleanEmail = email.trim().toLowerCase();
+        const { error } = await signIn(cleanEmail, password);
         if (error) throw error;
         toast.success("Connecté");
-        nav(visaBase, { replace: true });
+        const shouldCreateVisa = localStorage.getItem("visa:createAfterConfirmedLogin") === cleanEmail;
+        if (shouldCreateVisa) localStorage.removeItem("visa:createAfterConfirmedLogin");
+        nav(shouldCreateVisa ? `${visaBase}?create=1` : visaBase, { replace: true });
       } else {
         const cleanEmail = email.trim().toLowerCase();
         const cleanFirstName = firstName.trim();
@@ -45,23 +58,39 @@ export default function VisaLogin() {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
           throw new Error("Adresse email invalide.");
         }
-        if (password.length < 6) {
-          throw new Error("Le mot de passe doit contenir au moins 6 caractères.");
+        if (password.length < 8) {
+          throw new Error("Le mot de passe doit contenir au moins 8 caractères.");
         }
 
-        const { error } = await signUp(cleanEmail, password, `${cleanFirstName} ${cleanLastName}`, {
-          first_name: cleanFirstName,
-          last_name: cleanLastName,
-          passport_no: cleanPassportNo || null,
-          visa_prefill_requested: Boolean(cleanPassportNo),
+        const { data, error } = await supabase.functions.invoke("visa-client-signup", {
+          body: {
+            first_name: cleanFirstName,
+            last_name: cleanLastName,
+            email: cleanEmail,
+            password,
+            passport_no: cleanPassportNo || undefined,
+          },
         });
-        if (error) throw error;
-        toast.success(cleanPassportNo
-          ? "Compte créé. Si une fiche passeport sûre est trouvée, le formulaire sera prérempli."
-          : "Compte créé. Vérifiez votre email."
-        );
+        const payload = data as any;
+        if (error || !payload?.success) {
+          throw new Error(payload?.message || payload?.error || error?.message || "Création du compte impossible.");
+        }
+        if (payload.prefill_status === "found") {
+          localStorage.setItem("visa:createAfterConfirmedLogin", cleanEmail);
+          toast.success("Compte créé. Passeport reconnu: votre demande pourra être préremplie après connexion.");
+        } else {
+          localStorage.removeItem("visa:createAfterConfirmedLogin");
+        }
+        const message = payload.email_sent === false
+          ? "Compte créé, mais l’email de confirmation n’a pas pu être envoyé. Vous pouvez quand même vous connecter."
+          : "Compte créé. Vous pouvez maintenant vous connecter.";
+        setAccountMessage(message);
+        toast.success(message);
+        setEmail(cleanEmail);
+        setPassword("");
+        setMode("login");
       }
-    } catch (e: any) { toast.error(e.message ?? "Erreur"); } finally { setBusy(false); }
+    } catch (e: any) { toast.error(friendlyAuthError(e.message)); } finally { setBusy(false); }
   };
 
   return (
@@ -72,6 +101,11 @@ export default function VisaLogin() {
         <p className="text-sm text-muted-foreground text-center mb-6">
           {mode === "login" ? "Connectez-vous pour accéder à vos demandes." : "Créez votre compte pour commencer."}
         </p>
+        {accountMessage && (
+          <div className="mb-5 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
+            <p>{accountMessage}</p>
+          </div>
+        )}
         <form onSubmit={submit} className="space-y-4">
           {mode === "signup" && (
             <>
@@ -103,7 +137,7 @@ export default function VisaLogin() {
           </div>
           <div>
             <Label htmlFor="password">Mot de passe</Label>
-            <Input id="password" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Input id="password" type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
           <Button type="submit" className="w-full" disabled={busy}>
             {busy ? "…" : mode === "login" ? "Se connecter" : "Créer le compte"}
