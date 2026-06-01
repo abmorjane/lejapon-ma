@@ -1,0 +1,119 @@
+{
+  "generated_at": "2026-06-01T01:35:32.611Z",
+  "buckets": [
+    {
+      "id": "media",
+      "name": "media",
+      "public": true,
+      "purpose": "General public media assets and admin-uploaded images.",
+      "referenced_by": [
+        "src/admin/pages/Media.tsx",
+        "src/admin/pages/AgencySettings.tsx",
+        "src/admin/pages/trips/TripsCatalog.tsx",
+        "src/admin/pages/trips/ops/OpsJapanPayments.tsx"
+      ],
+      "policies_source": [
+        "20260422170952_864df6ac-c613-45be-8ff8-3464e026d861.sql",
+        "20260422171012_f32a1adc-4298-4425-a79c-a1b6cd11bc2f.sql"
+      ]
+    },
+    {
+      "id": "programme-pdfs",
+      "name": "programme-pdfs",
+      "public": true,
+      "purpose": "Public downloadable programme PDFs.",
+      "referenced_by": [
+        "src/admin/pages/Programmes.tsx"
+      ],
+      "policies_source": [
+        "20260423203933_ee47aca3-587c-4010-a82a-4aa3a2b31836.sql"
+      ]
+    },
+    {
+      "id": "programme-images",
+      "name": "programme-images",
+      "public": true,
+      "purpose": "Public programme imagery.",
+      "referenced_by": [
+        "src/admin/pages/Programmes.tsx"
+      ],
+      "policies_source": [
+        "20260424120003_e953aa0d-f5e9-4fe3-9359-0521a66b9bdc.sql"
+      ]
+    },
+    {
+      "id": "article-images",
+      "name": "article-images",
+      "public": true,
+      "purpose": "Public article cover/gallery imagery.",
+      "referenced_by": [
+        "src/admin/pages/Articles.tsx"
+      ],
+      "policies_source": [
+        "20260424210533_cc46a9ef-53af-4adf-8428-a2999e73ed15.sql"
+      ]
+    },
+    {
+      "id": "booking-docs",
+      "name": "booking-docs",
+      "public": false,
+      "purpose": "Private generated booking documents and receipts.",
+      "referenced_by": [
+        "src/admin/pages/BookingDetail.tsx"
+      ],
+      "policies_source": [
+        "20260512144338_5165bf89-afa2-4a7f-a57e-c3ea9dcb79d7.sql"
+      ]
+    },
+    {
+      "id": "visa-docs",
+      "name": "visa-docs",
+      "public": false,
+      "purpose": "Private visa applicant uploads.",
+      "referenced_by": [
+        "src/pages/visa/VisaForm.tsx",
+        "src/admin/pages/VisaApplicationDetail.tsx",
+        "src/admin/pages/VisaApplications.tsx"
+      ],
+      "policies_source": [
+        "20260422192719_1f644b22-964f-4763-97d4-bd1aa664a0f0.sql",
+        "20260422192953_ec8e278d-5916-4554-b81d-9a8707184340.sql"
+      ]
+    },
+    {
+      "id": "passports",
+      "name": "passports",
+      "public": false,
+      "purpose": "Private passport scans for OCR.",
+      "referenced_by": [
+        "src/admin/components/PassportScannerDialog.tsx",
+        "supabase/functions/passport-ocr/index.ts"
+      ],
+      "file_size_limit": 10485760,
+      "allowed_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "application/pdf"
+      ],
+      "policies_source": [
+        "20260519101500_fix_passports_bucket.sql",
+        "20260519093000_passport_ocr_admin.sql",
+        "20260526090000_v101_visa_trip_defaults_and_ocr_manager.sql"
+      ]
+    },
+    {
+      "id": "partner-onboarding",
+      "name": "partner-onboarding",
+      "public": false,
+      "purpose": "Private agency partner onboarding dossier uploads.",
+      "referenced_by": [
+        "src/agency/pages/AgencyOnboarding.tsx",
+        "src/admin/pages/Organizations.tsx"
+      ],
+      "policies_source": [
+        "docs/disaster-recovery-v1/schema.sql compatibility layer"
+      ]
+    }
+  ]
+}

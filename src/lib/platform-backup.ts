@@ -263,16 +263,37 @@ async function exportStorageManifest() {
 }
 
 async function logBackupExport(user: User, status: "started" | "success" | "failed", metadata: Record<string, unknown>) {
-  const { error } = await (supabase.from("admin_logs" as any) as any).insert({
+  const auditPayload = {
     user_id: user.id,
     user_email: user.email ?? null,
     action: "platform_backup_export",
-    entity_type: "system_backup",
     status,
-    metadata,
+    metadata: {
+      backup_entity_type: "system_backup",
+      ...metadata,
+    },
     user_agent: typeof navigator !== "undefined" ? navigator.userAgent : null,
+  };
+
+  const { error } = await (supabase.from("admin_logs" as any) as any).insert(auditPayload);
+  if (!error) return;
+
+  console.warn("[platform-backup] admin_logs audit insert failed", error);
+
+  const message = String(error.message ?? "");
+  const schemaMismatch =
+    error.code === "PGRST204" ||
+    error.code === "PGRST205" ||
+    /schema cache|column|Could not find/i.test(message);
+
+  if (!schemaMismatch) return;
+
+  const { error: fallbackError } = await (supabase.from("admin_logs" as any) as any).insert({
+    user_id: user.id,
+    action: "platform_backup_export",
+    metadata: auditPayload.metadata,
   });
-  if (error) throw error;
+  if (fallbackError) console.warn("[platform-backup] admin_logs fallback audit insert failed", fallbackError);
 }
 
 export async function generatePlatformBackup(user: User, onProgress?: (progress: BackupProgress) => void): Promise<BackupResult> {

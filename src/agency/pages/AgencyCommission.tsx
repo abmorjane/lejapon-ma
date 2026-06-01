@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Loader2, Percent } from "lucide-react";
+import { Loader2, Percent } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
@@ -79,6 +79,7 @@ export default function AgencyCommission() {
           .from("commission_engine_rules")
           .select(commissionRuleColumns)
           .eq("organization_id", organization.id)
+          .eq("status", "active")
           .order("status", { ascending: true }),
         db
           .from("bookings")
@@ -117,9 +118,8 @@ export default function AgencyCommission() {
   }, [organization?.id]);
 
   const tripById = useMemo(() => new Map(trips.map((trip) => [trip.id, trip.title])), [trips]);
-  const activeDefault = rules.find((rule) => rule.status === "active" && rule.scope === "agency_default");
-  const activeOverrides = rules.filter((rule) => rule.status === "active" && rule.scope !== "agency_default");
-  const inactiveRules = rules.filter((rule) => rule.status !== "active");
+  const activeDefault = rules.find((rule) => rule.scope === "agency_default");
+  const activeOverrides = rules.filter((rule) => rule.scope !== "agency_default");
   const estimatedEarnings = useMemo(
     () => bookings.reduce((sum, booking) => {
       const rule = getApplicableCommissionRule(rules, booking);
@@ -160,7 +160,7 @@ export default function AgencyCommission() {
         </Card>
         <Card className="p-5">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Règles actives</p>
-          <p className="mt-2 text-3xl font-semibold">{loading ? "—" : rules.filter((rule) => rule.status === "active").length}</p>
+          <p className="mt-2 text-3xl font-semibold">{loading ? "—" : rules.length}</p>
         </Card>
       </div>
 
@@ -221,22 +221,6 @@ export default function AgencyCommission() {
               <Card className="p-6 text-sm text-muted-foreground">Aucune réservation attribuée.</Card>
             )}
           </section>
-
-          <details className="group rounded-lg border border-border bg-background">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 font-semibold">
-              Règles inactives / archivées ({inactiveRules.length})
-              <ChevronDown className="h-4 w-4 transition group-open:rotate-180" />
-            </summary>
-            <div className="space-y-3 border-t border-border p-4">
-              {inactiveRules.length ? (
-                inactiveRules.map((rule) => (
-                  <RuleCard key={rule.id} rule={rule} tripTitle={tripById.get(rule.trip_id ?? "")} />
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground">Aucune règle inactive ou archivée.</p>
-              )}
-            </div>
-          </details>
         </>
       )}
     </div>

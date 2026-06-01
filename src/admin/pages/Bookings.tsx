@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "../components/PageHeader";
 import { StatusBadge } from "../components/StatusBadge";
@@ -16,8 +17,41 @@ import { QuickActions } from "../components/QuickActions";
 import { Card, CardContent } from "@/components/ui/card";
 import { motion, useReducedMotion } from "framer-motion";
 
+type DbClient = { from: (table: string) => any };
+const db = supabase as unknown as DbClient;
+
+type AgencyRequestStatus = "new" | "contacted" | "quoted" | "converted" | "rejected";
+
+type AgencyBookingRequest = {
+  id: string;
+  organization_id: string;
+  agency_name?: string | null;
+  client_full_name: string;
+  client_email: string | null;
+  client_phone: string | null;
+  trip_interest: string;
+  travelers_count: number;
+  preferred_departure_date: string | null;
+  message: string | null;
+  status: AgencyRequestStatus;
+  created_at: string;
+};
+
+const agencyRequestColumns = "id,organization_id,client_full_name,client_email,client_phone,trip_interest,travelers_count,preferred_departure_date,message,status,created_at";
+const AGENCY_REQUEST_STATUS_LABELS: Record<AgencyRequestStatus, string> = {
+  new: "Nouvelle",
+  contacted: "Contacté",
+  quoted: "Devis envoyé",
+  converted: "Convertie",
+  rejected: "Rejetée",
+};
+
 export default function Bookings() {
   const [rows, setRows] = useState<any[]>([]);
+  const [agencyRequests, setAgencyRequests] = useState<AgencyBookingRequest[]>([]);
+  const [agencyRequestsLoading, setAgencyRequestsLoading] = useState(true);
+  const [agencyRequestsError, setAgencyRequestsError] = useState<string | null>(null);
+  const [agencyRequestBusy, setAgencyRequestBusy] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -41,8 +75,74 @@ export default function Bookings() {
     );
     setRows(out);
   };
+
+  const loadAgencyRequests = async () => {
+    setAgencyRequestsLoading(true);
+    setAgencyRequestsError(null);
+
+    const { data, error } = await db
+      .from("agency_booking_requests")
+      .select(agencyRequestColumns)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error) {
+      setAgencyRequests([]);
+      setAgencyRequestsError(error.message);
+      setAgencyRequestsLoading(false);
+      return;
+    }
+
+    const requests = (data ?? []) as AgencyBookingRequest[];
+    const organizationIds = Array.from(new Set(requests.map((request) => request.organization_id).filter(Boolean)));
+    const organizationById = new Map<string, string>();
+    if (organizationIds.length) {
+      const { data: organizations } = await db
+        .from("organizations")
+        .select("id,display_name,legal_name")
+        .in("id", organizationIds);
+      ((organizations ?? []) as Array<{ id: string; display_name: string | null; legal_name: string | null }>).forEach((organization) => {
+        organizationById.set(organization.id, organization.display_name || organization.legal_name || organization.id);
+      });
+    }
+
+    setAgencyRequests(requests.map((request) => ({
+      ...request,
+      agency_name: organizationById.get(request.organization_id) ?? request.organization_id,
+    })));
+    setAgencyRequestsLoading(false);
+  };
+
+  const updateAgencyRequestStatus = async (request: AgencyBookingRequest, nextStatus: AgencyRequestStatus) => {
+    setAgencyRequestBusy(request.id);
+    const { data, error } = await db
+      .from("agency_booking_requests")
+      .update({ status: nextStatus })
+      .eq("id", request.id)
+      .select(agencyRequestColumns)
+      .maybeSingle();
+
+    if (error) {
+      toast.error(error.message ?? "Impossible de mettre à jour la demande.");
+      setAgencyRequestBusy(null);
+      return;
+    }
+
+    const updated = (data ?? { ...request, status: nextStatus }) as AgencyBookingRequest;
+    setAgencyRequests((current) =>
+      current.map((item) =>
+        item.id === request.id
+          ? { ...updated, agency_name: request.agency_name }
+          : item
+      )
+    );
+    toast.success("Statut de la demande mis à jour.");
+    setAgencyRequestBusy(null);
+  };
+
   useEffect(() => { load(); }, [status]);
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [q]);
+  useEffect(() => { loadAgencyRequests(); }, []);
 
   return (
     <motion.div
@@ -174,6 +274,84 @@ export default function Bookings() {
         </table>
         </div>
       </div>
+
+      <Card className="rounded-2xl shadow-sm">
+        <CardContent className="p-0">
+          <div className="flex flex-col gap-2 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-display text-xl">Demandes agences</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {agencyRequests.length} demande(s) reçue(s), sans conversion automatique.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={loadAgencyRequests} disabled={agencyRequestsLoading}>
+              {agencyRequestsLoading ? "Chargement…" : "Rafraîchir"}
+            </Button>
+          </div>
+          {agencyRequestsError ? (
+            <div className="border-b border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+              {agencyRequestsError}
+            </div>
+          ) : null}
+          {agencyRequestsLoading ? (
+            <p className="p-8 text-center text-sm text-muted-foreground">Chargement des demandes agences…</p>
+          ) : agencyRequests.length === 0 ? (
+            <p className="p-8 text-center text-sm text-muted-foreground">Aucune demande agence.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1100px] text-sm">
+                <thead className="bg-secondary/50">
+                  <tr className="text-left">
+                    <th className="p-4 font-semibold">Agence</th>
+                    <th className="p-4 font-semibold">Client</th>
+                    <th className="p-4 font-semibold">Contact</th>
+                    <th className="p-4 font-semibold">Intérêt voyage</th>
+                    <th className="p-4 font-semibold">Voyageurs</th>
+                    <th className="p-4 font-semibold">Départ</th>
+                    <th className="p-4 font-semibold">Message</th>
+                    <th className="p-4 font-semibold">Statut</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {agencyRequests.map((request) => (
+                    <tr key={request.id} className="align-top hover:bg-secondary/30">
+                      <td className="p-4">
+                        <p className="font-medium">{request.agency_name || "—"}</p>
+                        <p className="text-xs text-muted-foreground">{fmtDateTime(request.created_at)}</p>
+                      </td>
+                      <td className="p-4 font-medium">{request.client_full_name}</td>
+                      <td className="p-4">
+                        <p>{request.client_email || "—"}</p>
+                        <p className="text-xs text-muted-foreground">{request.client_phone || "—"}</p>
+                      </td>
+                      <td className="p-4">{request.trip_interest}</td>
+                      <td className="p-4">{request.travelers_count}</td>
+                      <td className="p-4">{request.preferred_departure_date || "—"}</td>
+                      <td className="max-w-xs p-4 text-xs text-muted-foreground">{request.message || "—"}</td>
+                      <td className="p-4">
+                        <Select
+                          value={request.status}
+                          onValueChange={(value) => updateAgencyRequestStatus(request, value as AgencyRequestStatus)}
+                          disabled={agencyRequestBusy === request.id}
+                        >
+                          <SelectTrigger className="min-h-10 w-[150px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(AGENCY_REQUEST_STATUS_LABELS).map(([value, label]) => (
+                              <SelectItem key={value} value={value}>{label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </motion.div>
   );
 }

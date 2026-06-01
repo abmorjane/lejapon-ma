@@ -1,0 +1,200 @@
+{
+  "generated_at": "2026-06-01T01:35:32.611Z",
+  "functions": [
+    {
+      "name": "admin-users",
+      "path": "supabase/functions/admin-users/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [
+        "src/admin/pages/Organizations.tsx",
+        "src/admin/pages/Users.tsx",
+        "src/lib/platform-backup.ts"
+      ],
+      "sha256": "69d98021f251031780cf7bc32f20a68bf598b0ea276c277827b5358b863a6354"
+    },
+    {
+      "name": "convert-partner-request",
+      "path": "supabase/functions/convert-partner-request/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [
+        "src/admin/pages/PartnerRequests.tsx"
+      ],
+      "sha256": "4de7d1bb3d7452ea4e4abc40836281d41a6ee2c8022789f24b8dd77f03af2e48"
+    },
+    {
+      "name": "crm-export",
+      "path": "supabase/functions/crm-export/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [
+        "src/admin/pages/Clients.tsx"
+      ],
+      "sha256": "e67ff3d14586fc0d16cdc45b6b1ac8b7d7e01da4eed5a625a1bc0107975e291f"
+    },
+    {
+      "name": "passport-ocr",
+      "path": "supabase/functions/passport-ocr/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "OCR_API_KEY",
+        "OCR_API_URL",
+        "OCR_DEBUG_RAW_TEXT",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [
+        "src/admin/components/PassportScannerDialog.tsx"
+      ],
+      "sha256": "b6027fe960de20c388212ea0253ad622ab8629fcb377d09ead00433d9a23365e"
+    },
+    {
+      "name": "process-marketing-queue",
+      "path": "supabase/functions/process-marketing-queue/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "MARKETING_BATCH_SIZE",
+        "PUBLIC_SITE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [],
+      "sha256": "4bec721d1b4f49f6d835f0c0eb9a5a4254944ace4e2a40eb4dbe2937d27fb403"
+    },
+    {
+      "name": "recaptcha",
+      "path": "supabase/functions/recaptcha/index.ts",
+      "verify_jwt": false,
+      "env_vars": [
+        "RECAPTCHA_SECRET_KEY",
+        "RECAPTCHA_SITE_KEY"
+      ],
+      "invoked_by": [
+        "src/hooks/useRecaptcha.ts"
+      ],
+      "sha256": "aa0cb10581846d2da82e0d80570d60fb5cd2d815395ae04c170b45b03f2663fc"
+    },
+    {
+      "name": "send-admin-notification",
+      "path": "supabase/functions/send-admin-notification/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "ADMIN_BASE_URL",
+        "ADMIN_NOTIFICATION_EMAIL",
+        "SITE_URL",
+        "SMTP_FROM",
+        "SMTP_HOST",
+        "SMTP_PASS",
+        "SMTP_PORT",
+        "SMTP_USER",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [
+        "src/admin/components/CreateBookingDialog.tsx",
+        "src/admin/pages/BookingDetail.tsx",
+        "src/admin/pages/EmailLogs.tsx",
+        "src/admin/pages/EmailSettings.tsx",
+        "src/admin/pages/trips/ops/OpsPayments.tsx",
+        "src/pages/Booking.tsx",
+        "src/pages/Contact.tsx"
+      ],
+      "sha256": "8113392a1c5ace6b23c29db7c6accb21cc4af7806f94ce24deed142d1ddd926e"
+    },
+    {
+      "name": "send-contact-email",
+      "path": "supabase/functions/send-contact-email/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "ADMIN_NOTIFICATION_EMAIL",
+        "RECAPTCHA_SECRET_KEY",
+        "SMTP_FROM",
+        "SMTP_HOST",
+        "SMTP_PASS",
+        "SMTP_PORT",
+        "SMTP_USER",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [],
+      "sha256": "7b8f6d660d9391d92f612b62319bffd7f5b7ff80ab998c977c3b208a8a298a51"
+    },
+    {
+      "name": "send-marketing-campaign",
+      "path": "supabase/functions/send-marketing-campaign/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "PUBLIC_SITE_URL",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [
+        "src/admin/pages/marketing/MarketingCampaignEdit.tsx"
+      ],
+      "sha256": "b9fa54335267b7a4847bc27a2b75e4d8bd20d2489b711da7b4dae48c7d156d6e"
+    },
+    {
+      "name": "send-visa-email",
+      "path": "supabase/functions/send-visa-email/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [
+        "src/admin/pages/VisaApplicationDetail.tsx",
+        "src/pages/visa/VisaForm.tsx"
+      ],
+      "sha256": "1403a67cddf44e5de09339a233b8730feef2c3abd226e25c29ce07b3238fd284"
+    },
+    {
+      "name": "send-visa-reminders",
+      "path": "supabase/functions/send-visa-reminders/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [],
+      "sha256": "4bd844b7b8fe171cb5f24d782215c6be7ca3a0aef8fdcc89db94e276b751f1f0"
+    },
+    {
+      "name": "track-email-open",
+      "path": "supabase/functions/track-email-open/index.ts",
+      "verify_jwt": true,
+      "env_vars": [
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [],
+      "sha256": "9af63bd36f567ebdbafebe0a059a6cde96642f0c932e6253aefafbec10a2d910"
+    },
+    {
+      "name": "translate-content",
+      "path": "supabase/functions/translate-content/index.ts",
+      "verify_jwt": false,
+      "env_vars": [
+        "LOVABLE_API_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "invoked_by": [
+        "src/lib/translations.ts"
+      ],
+      "sha256": "c533a8f9f0c10a341f7c4e96c0af4a188115b281c36c6b477a3d852d4089c495"
+    }
+  ]
+}

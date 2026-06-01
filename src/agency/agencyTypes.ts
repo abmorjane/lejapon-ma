@@ -79,6 +79,8 @@ export type CommissionRule = {
   product_type: string | null;
   trip_id: string | null;
   status: "active" | "inactive" | "archived";
+  starts_at: string | null;
+  ends_at: string | null;
   notes: string | null;
 };
 

@@ -243,7 +243,10 @@ type CommissionRuleRow = {
   product_type: string | null;
   trip_id: string | null;
   status: CommissionStatus;
+  starts_at: string | null;
+  ends_at: string | null;
   notes: string | null;
+  created_by: string | null;
 };
 
 type CommissionRuleForm = {
@@ -255,6 +258,8 @@ type CommissionRuleForm = {
   value: string;
   currency: string;
   status: CommissionStatus;
+  starts_at: string;
+  ends_at: string;
   notes: string;
 };
 
@@ -359,7 +364,10 @@ const COMMISSION_RULE_COLUMNS = [
   "product_type",
   "trip_id",
   "status",
+  "starts_at",
+  "ends_at",
   "notes",
+  "created_by",
 ].join(",");
 
 const TYPE_LABELS: Record<OrganizationType, string> = {
@@ -477,6 +485,8 @@ const defaultRuleForm = (): CommissionRuleForm => ({
   value: "",
   currency: "MAD",
   status: "active",
+  starts_at: "",
+  ends_at: "",
   notes: "",
 });
 
@@ -489,6 +499,8 @@ const toRuleForm = (rule: CommissionRuleRow): CommissionRuleForm => ({
   value: String(rule.value ?? ""),
   currency: rule.currency ?? "MAD",
   status: rule.status ?? "active",
+  starts_at: rule.starts_at ? rule.starts_at.slice(0, 10) : "",
+  ends_at: rule.ends_at ? rule.ends_at.slice(0, 10) : "",
   notes: rule.notes ?? "",
 });
 
@@ -1732,6 +1744,10 @@ export default function OrganizationsAdmin() {
       toast.error("Sélectionnez un voyage pour cette règle.");
       return;
     }
+    if (ruleForm.ends_at && ruleForm.starts_at && ruleForm.ends_at < ruleForm.starts_at) {
+      toast.error("La date de fin doit être postérieure à la date de début.");
+      return;
+    }
 
     const duplicateActive = ruleForm.status === "active" && commissionRules.some((rule) => {
       if (editingRule?.id === rule.id || rule.status !== "active" || rule.scope !== ruleForm.scope) return false;
@@ -1765,12 +1781,18 @@ export default function OrganizationsAdmin() {
       product_type: ruleForm.scope === "product" ? clean(ruleForm.product_type) : null,
       trip_id: ruleForm.scope === "trip_override" ? ruleForm.trip_id : null,
       status: ruleForm.status,
+      starts_at: clean(ruleForm.starts_at),
+      ends_at: clean(ruleForm.ends_at),
       notes: clean(ruleForm.notes),
     };
 
     const request = editingRule
       ? db.from("commission_engine_rules").update(payload).eq("id", editingRule.id).select(COMMISSION_RULE_COLUMNS).single()
-      : db.from("commission_engine_rules").insert(payload).select(COMMISSION_RULE_COLUMNS).single();
+      : db
+          .from("commission_engine_rules")
+          .insert({ ...payload, created_by: user?.id ?? null })
+          .select(COMMISSION_RULE_COLUMNS)
+          .single();
 
     const { data, error } = await request;
 
@@ -2907,6 +2929,13 @@ export default function OrganizationsAdmin() {
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline">{COMMISSION_STATUS_LABELS[rule.status] ?? rule.status}</Badge>
+                            {(rule.starts_at || rule.ends_at) && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {rule.starts_at ? `Début ${rule.starts_at.slice(0, 10)}` : "Début —"}
+                                {" · "}
+                                {rule.ends_at ? `Fin ${rule.ends_at.slice(0, 10)}` : "Fin —"}
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell>{rule.notes || "—"}</TableCell>
                           <TableCell>
@@ -3050,6 +3079,22 @@ export default function OrganizationsAdmin() {
                   <SelectItem value="archived">Archivée</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Début</Label>
+              <Input
+                type="date"
+                value={ruleForm.starts_at}
+                onChange={(event) => setRuleForm((current) => ({ ...current, starts_at: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Fin</Label>
+              <Input
+                type="date"
+                value={ruleForm.ends_at}
+                onChange={(event) => setRuleForm((current) => ({ ...current, ends_at: event.target.value }))}
+              />
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Notes</Label>

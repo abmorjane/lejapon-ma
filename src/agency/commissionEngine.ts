@@ -11,6 +11,8 @@ export const commissionRuleColumns = [
   "product_type",
   "trip_id",
   "status",
+  "starts_at",
+  "ends_at",
   "notes",
 ].join(",");
 
@@ -35,6 +37,9 @@ const normalize = (value: unknown) =>
     .replace(/[\u0300-\u036f]/g, "");
 
 export const isRuleEffectiveForBooking = (rule: CommissionRule, booking: AgencyBooking) => {
+  const bookingDate = String(booking.created_at || "").slice(0, 10);
+  if (rule.starts_at && bookingDate && bookingDate < rule.starts_at.slice(0, 10)) return false;
+  if (rule.ends_at && bookingDate && bookingDate > rule.ends_at.slice(0, 10)) return false;
   if (rule.scope === "agency_default") return true;
   if (rule.scope === "trip_override") return Boolean(rule.trip_id && rule.trip_id === booking.trip_id);
   if (rule.scope === "product") {

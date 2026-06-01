@@ -44,7 +44,6 @@ export default function AgencyDashboard() {
           .select(commissionRuleColumns)
           .eq("organization_id", organization.id)
           .eq("status", "active")
-          .order("priority", { ascending: true, nullsFirst: false })
           .limit(5),
       ]);
       setBookings((bookingRows ?? []) as AgencyBooking[]);
@@ -55,7 +54,7 @@ export default function AgencyDashboard() {
     load();
   }, [organization?.id]);
 
-  const defaultRule = useMemo(() => rules.find((rule) => rule.scope === "global"), [rules]);
+  const defaultRule = useMemo(() => rules.find((rule) => rule.scope === "agency_default"), [rules]);
   const estimatedEarnings = useMemo(
     () => bookings.reduce((sum, booking) => {
       const rule = getApplicableCommissionRule(rules, booking);
@@ -148,7 +147,7 @@ export default function AgencyDashboard() {
                       {formatCommissionRuleValue(rule)}
                     </p>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{rule.applies_to}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{rule.notes || "Règle active visible"}</p>
                 </div>
               ))
             )}
