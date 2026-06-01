@@ -10,6 +10,7 @@ export default function OpsActivities({ trip }: { trip: any }) {
   const [extras, setExtras] = useState<any[]>([]);
   const [participants, setParticipants] = useState<any[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
+  const [bookingExtras, setBookingExtras] = useState<any[]>([]);
   const [selections, setSelections] = useState<any[]>([]);
   const [filterExtra, setFilterExtra] = useState<string>("all");
 
@@ -19,7 +20,9 @@ export default function OpsActivities({ trip }: { trip: any }) {
     const { data: bks } = await supabase.from("bookings").select("id,reference,contact_name").eq("trip_id", trip.id);
     setBookings(bks ?? []);
     const ids = (bks ?? []).map((b) => b.id);
-    if (!ids.length) { setParticipants([]); setSelections([]); return; }
+    if (!ids.length) { setParticipants([]); setSelections([]); setBookingExtras([]); return; }
+    const { data: bookingExtraRows } = await supabase.from("booking_extras").select("*").in("booking_id", ids);
+    setBookingExtras(bookingExtraRows ?? []);
     const { data: parts } = await supabase.from("booking_participants").select("*").in("booking_id", ids);
     setParticipants(parts ?? []);
     const pids = (parts ?? []).map((p) => p.id);
@@ -34,12 +37,16 @@ export default function OpsActivities({ trip }: { trip: any }) {
     if (on) {
       await supabase.from("booking_participant_activities").upsert({ participant_id: participantId, extra_id: extraId, is_selected: true }, { onConflict: "participant_id,extra_id" });
     } else {
-      await supabase.from("booking_participant_activities").delete().eq("participant_id", participantId).eq("extra_id", extraId);
+      await supabase.from("booking_participant_activities").upsert({ participant_id: participantId, extra_id: extraId, is_selected: false }, { onConflict: "participant_id,extra_id" });
     }
     load();
   };
 
-  const isSelected = (pid: string, eid: string) => selections.some((s) => s.participant_id === pid && s.extra_id === eid && s.is_selected);
+  const isSelected = (participant: any, eid: string) => {
+    const explicit = selections.find((s) => s.participant_id === participant.id && s.extra_id === eid);
+    if (explicit) return Boolean(explicit.is_selected);
+    return bookingExtras.some((extra) => extra.booking_id === participant.booking_id && extra.extra_id === eid);
+  };
 
   const visibleExtras = filterExtra === "all" ? extras : extras.filter((e) => e.id === filterExtra);
 
@@ -47,7 +54,7 @@ export default function OpsActivities({ trip }: { trip: any }) {
     exportCsv(`activites-${trip.title}`, participants.map((p) => {
       const b = bookings.find((x) => x.id === p.booking_id);
       const row: any = { prenom: p.first_name, nom: p.last_name, reservation: b?.reference };
-      for (const e of extras) row[e.name] = isSelected(p.id, e.id) ? "X" : "";
+      for (const e of extras) row[e.name] = isSelected(p, e.id) ? "X" : "";
       return row;
     }));
   };
@@ -66,12 +73,12 @@ export default function OpsActivities({ trip }: { trip: any }) {
       </div>
 
       <div className="bg-background rounded-2xl border border-border overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[760px] table-auto text-sm">
           <thead className="bg-secondary/50 text-left">
             <tr>
-              <th className="p-3 sticky left-0 bg-secondary/50">Participant</th>
-              <th className="p-3">Réservation</th>
-              {visibleExtras.map((e) => <th key={e.id} className="p-3 text-center min-w-[100px]">{e.name}</th>)}
+              <th className="p-3 sticky left-0 z-10 min-w-[180px] whitespace-normal bg-secondary/50">Participant</th>
+              <th className="p-3 min-w-[120px] whitespace-normal">Réservation</th>
+              {visibleExtras.map((e) => <th key={e.id} className="min-w-[140px] whitespace-normal p-3 text-center align-bottom leading-snug">{e.name}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -80,11 +87,11 @@ export default function OpsActivities({ trip }: { trip: any }) {
               const b = bookings.find((x) => x.id === p.booking_id);
               return (
                 <tr key={p.id} className="hover:bg-secondary/30">
-                  <td className="p-3 sticky left-0 bg-background font-medium">{p.first_name} {p.last_name}</td>
-                  <td className="p-3 text-xs">{b?.reference}</td>
+                  <td className="p-3 sticky left-0 z-10 bg-background font-medium whitespace-normal">{p.first_name} {p.last_name}</td>
+                  <td className="p-3 text-xs whitespace-nowrap">{b?.reference}</td>
                   {visibleExtras.map((e) => (
                     <td key={e.id} className="p-3 text-center">
-                      <Checkbox checked={isSelected(p.id, e.id)} onCheckedChange={(v) => toggle(p.id, e.id, !!v)} />
+                      <Checkbox checked={isSelected(p, e.id)} onCheckedChange={(v) => toggle(p.id, e.id, !!v)} />
                     </td>
                   ))}
                 </tr>

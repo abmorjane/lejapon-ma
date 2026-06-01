@@ -20,6 +20,7 @@ import { QuickActions } from "../components/QuickActions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, useReducedMotion } from "framer-motion";
 import { fetchAgencySettings, type AgencySettings } from "@/lib/agency-settings";
+import { PAYMENT_METHOD_OPTIONS, normalisePaymentMethod, paymentMethodLabel } from "@/lib/payment-methods";
 
 export default function BookingDetail() {
   const { id } = useParams();
@@ -29,7 +30,8 @@ export default function BookingDetail() {
   const [payments, setPayments] = useState<any[]>([]);
   const [extras, setExtras] = useState<any[]>([]);
   const [docs, setDocs] = useState<any[]>([]);
-  const [newPay, setNewPay] = useState({ amount_mad: "", method: "virement", status: "received", reference: "" });
+  const [newPay, setNewPay] = useState({ amount_mad: "", method: "bank_transfer", status: "received", reference: "" });
+  const [quoteDiscount, setQuoteDiscount] = useState({ label: "", amount: "", type: "fixed_amount", reason: "" });
   const [preview, setPreview] = useState<null | { kind: "quote" | "receipt"; payment?: any }>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -49,6 +51,13 @@ export default function BookingDetail() {
     if (!id) return;
     const { data } = await supabase.from("bookings").select("*, trips(title, season, destination, start_date, end_date)").eq("id", id).single();
     setB(data);
+    const existingDiscount = (data as any)?.quote_discount ?? {};
+    setQuoteDiscount({
+      label: existingDiscount.label ?? "",
+      amount: existingDiscount.amount === undefined || existingDiscount.amount === null ? "" : String(existingDiscount.amount),
+      type: existingDiscount.type ?? "fixed_amount",
+      reason: existingDiscount.reason ?? "",
+    });
     setSelectedAgencyOrgId(data?.agency_organization_id ?? "");
     setSelectedAgencyUserId(data?.assigned_to ?? "");
     setAssignmentNotes(data?.agency_attribution_notes ?? "");
@@ -125,10 +134,16 @@ export default function BookingDetail() {
       booking: b,
       trip: b?.trips ?? null,
       extras: extras as any,
+      discount: quoteDiscount.amount ? {
+        label: quoteDiscount.label,
+        amount: Number(quoteDiscount.amount || 0),
+        type: quoteDiscount.type,
+        reason: quoteDiscount.reason,
+      } : null,
       agency,
       number: `DEV-${b?.reference ?? ""}-${String(docs.filter((x) => x.kind === "quote").length + 1).padStart(2, "0")}`,
     }),
-    [b, extras, docs, agency]
+    [b, extras, docs, agency, quoteDiscount]
   );
 
   const buildReceipt = useCallback(
@@ -240,7 +255,7 @@ export default function BookingDetail() {
         });
       }
     }
-    setNewPay({ amount_mad: "", method: "virement", status: "received", reference: "" });
+    setNewPay({ amount_mad: "", method: "bank_transfer", status: "received", reference: "" });
     toast.success("Paiement enregistré");
     load();
   };
@@ -275,7 +290,19 @@ export default function BookingDetail() {
         ? `DEV-${b.reference}-${String(docs.filter((x) => x.kind === "quote").length + 1).padStart(2, "0")}`
         : `REC-${b.reference}-${String(docs.filter((x) => x.kind === "receipt").length + 1).padStart(2, "0")}`;
       const bytes = kind === "quote"
-        ? await generateQuotePdf({ booking: b, trip: b.trips, extras: extras as any, agency, number })
+        ? await generateQuotePdf({
+            booking: b,
+            trip: b.trips,
+            extras: extras as any,
+            agency,
+            number,
+            discount: quoteDiscount.amount ? {
+              label: quoteDiscount.label,
+              amount: Number(quoteDiscount.amount || 0),
+              type: quoteDiscount.type,
+              reason: quoteDiscount.reason,
+            } : null,
+          })
         : await generateReceiptPdf({ booking: b, trip: b.trips, payment: payment ?? payments[0] ?? { amount_mad: 0 }, extras: extras as any, agency, number });
       const path = `${b.id}/${number}.pdf`;
       const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -296,6 +323,24 @@ export default function BookingDetail() {
     }
   };
 
+  const saveQuoteDiscount = async () => {
+    const amount = Number(quoteDiscount.amount || 0);
+    if (amount > 0 && !quoteDiscount.label.trim()) {
+      toast.error("Le libellé est obligatoire si un montant est renseigné.");
+      return;
+    }
+    const payload = amount > 0 ? {
+      label: quoteDiscount.label.trim(),
+      amount,
+      type: quoteDiscount.type,
+      reason: quoteDiscount.reason.trim() || null,
+    } : null;
+    const { error } = await (supabase as any).from("bookings").update({ quote_discount: payload }).eq("id", b.id);
+    if (error) return toast.error(error.message);
+    toast.success("Ligne devis enregistrée");
+    load();
+  };
+
   const openDoc = async (doc: any) => {
     const { data, error } = await supabase.storage.from("booking-docs").createSignedUrl(doc.storage_path, 60);
     if (error || !data) return toast.error("Lien indisponible");
@@ -309,6 +354,10 @@ export default function BookingDetail() {
     : 0;
   const longMessage = String(b.message || "");
   const visibleMessage = !messageExpanded && longMessage.length > 150 ? `${longMessage.slice(0, 150)}…` : longMessage;
+  const quoteDiscountAmount = quoteDiscount.type === "percentage"
+    ? Math.round(Number(b.total_amount_mad || 0) * Number(quoteDiscount.amount || 0) / 100)
+    : Number(quoteDiscount.amount || 0);
+  const displayedQuoteTotal = Math.max(0, Number(b.total_amount_mad || 0) - quoteDiscountAmount);
 
   return (
     <motion.div
@@ -454,7 +503,7 @@ export default function BookingDetail() {
               {payments.map((p) => (
                 <div key={p.id} className="flex flex-col gap-3 rounded-xl border border-border p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="font-medium">{fmtMAD(p.amount_mad)} <span className="text-muted-foreground font-normal">· {p.method}</span></p>
+                    <p className="font-medium">{fmtMAD(p.amount_mad)} <span className="text-muted-foreground font-normal">· {paymentMethodLabel(p.method)}</span></p>
                     <p className="text-xs text-muted-foreground">{p.reference || "—"} · {fmtDateTime(p.paid_at || p.created_at)}</p>
                   </div>
                   <div className="flex items-center gap-2 justify-between sm:justify-end">
@@ -473,7 +522,17 @@ export default function BookingDetail() {
             </div>
             <div className="grid grid-cols-1 gap-2 border-t border-border pt-4 sm:grid-cols-2 md:grid-cols-5">
               <div><Label className="text-xs">Montant</Label><Input type="number" inputMode="decimal" value={newPay.amount_mad} onChange={(e) => setNewPay({ ...newPay, amount_mad: e.target.value })} /></div>
-              <div><Label className="text-xs">Méthode</Label><Input value={newPay.method} onChange={(e) => setNewPay({ ...newPay, method: e.target.value })} /></div>
+              <div>
+                <Label className="text-xs">Méthode</Label>
+                <Select value={normalisePaymentMethod(newPay.method)} onValueChange={(value) => setNewPay({ ...newPay, method: value })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PAYMENT_METHOD_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div><Label className="text-xs">Référence</Label><Input value={newPay.reference} onChange={(e) => setNewPay({ ...newPay, reference: e.target.value })} /></div>
               <div><Label className="text-xs">Statut</Label>
                 <Select value={newPay.status} onValueChange={(v) => setNewPay({ ...newPay, status: v })}>
@@ -491,6 +550,59 @@ export default function BookingDetail() {
               <span className="text-muted-foreground">Encaissé</span>
               <span className="font-semibold">{fmtMAD(b.paid_amount_mad)} / {fmtMAD(b.total_amount_mad)}</span>
             </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="font-display text-lg">Réduction / ligne spéciale devis</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3 p-4 pt-0 sm:p-6 sm:pt-0 md:grid-cols-4">
+              <div className="md:col-span-2">
+                <Label className="text-xs">Libellé</Label>
+                <Input
+                  value={quoteDiscount.label}
+                  onChange={(event) => setQuoteDiscount({ ...quoteDiscount, label: event.target.value })}
+                  placeholder="Réduction famille, Offre spéciale…"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Montant</Label>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  value={quoteDiscount.amount}
+                  onChange={(event) => setQuoteDiscount({ ...quoteDiscount, amount: event.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Type</Label>
+                <Select value={quoteDiscount.type} onValueChange={(value) => setQuoteDiscount({ ...quoteDiscount, type: value })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fixed_amount">Montant fixe</SelectItem>
+                    <SelectItem value="percentage">Pourcentage</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="md:col-span-4">
+                <Label className="text-xs">Raison / notes</Label>
+                <Textarea
+                  rows={2}
+                  value={quoteDiscount.reason}
+                  onChange={(event) => setQuoteDiscount({ ...quoteDiscount, reason: event.target.value })}
+                  placeholder="Note interne ou justification commerciale"
+                />
+              </div>
+              <div className="md:col-span-4 flex flex-col gap-3 rounded-xl bg-secondary/40 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-muted-foreground">
+                  Total devis après réduction: <strong className="text-foreground">{fmtMAD(displayedQuoteTotal)}</strong>
+                </span>
+                <Button type="button" onClick={saveQuoteDiscount} className="min-h-11">
+                  <Save className="h-4 w-4" />
+                  Enregistrer la ligne devis
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>

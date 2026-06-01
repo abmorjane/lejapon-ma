@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Plane, CalendarCheck, Sparkles, Users, FileText, Wallet,
-  Image as ImageIcon, Building2, BookOpen, LogOut, ShieldCheck, Mail, Stamp, ListChecks, Menu, Map, Type, Send, HelpCircle, Languages, Settings, Archive, Palette,
+  Image as ImageIcon, Building2, BookOpen, LogOut, ShieldCheck, Mail, Stamp, ListChecks, Menu, Map, Type, Send, HelpCircle, Languages, Settings, Archive, Palette, Hotel,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ const nav: AdminNavItem[] = [
   { to: "/admin/frontend", icon: Type, label: "Frontend (textes)", module: "frontend", section: "Content" },
   { to: "/admin/translations", icon: Languages, label: "Traductions", module: "translations", section: "Content" },
   { to: "/admin/programmes", icon: Map, label: "Programmes", module: "programmes", section: "Content" },
+  { to: "/admin/hotels", icon: Hotel, label: "Hôtels", module: "hotels", section: "Content" },
   { to: "/admin/media", icon: ImageIcon, label: "Médias", module: "media", section: "Content" },
   { to: "/admin/partner-requests", icon: Building2, label: "Demandes partenaires", module: "partner_requests", section: "Partners" },
   { to: "/admin/organizations", icon: Building2, label: "Organizations", module: "organizations", section: "Partners" },

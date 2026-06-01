@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ArrowLeft, Download, Eye, FileText, Mail, Save } from "lucide-react";
+import { ArrowLeft, Download, Eye, FileText, Mail, Pencil, Save } from "lucide-react";
 import { toast } from "sonner";
 import { generateVisaPdf, downloadBlob } from "@/lib/visa-pdf";
 import { generateInvitationLetter, generateGuaranteeLetter } from "@/lib/visa-letters";
@@ -20,6 +20,9 @@ import { AlertTriangle, MailQuestion, Package } from "lucide-react";
 import JSZip from "jszip";
 import { QuickActions } from "@/admin/components/QuickActions";
 import { fetchAgencySettings, type AgencySettings } from "@/lib/agency-settings";
+import { lookupVisaPrefillByPassport, normalizePassportNo } from "@/lib/visa-prefill";
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Brouillon",
@@ -106,6 +109,8 @@ export default function VisaApplicationDetail() {
   const [bookingTripId, setBookingTripId] = useState<string | null>(null);
   const [selectedTravelTripId, setSelectedTravelTripId] = useState<string | null>(null);
   const [travelCtx, setTravelCtx] = useState<TravelContext>({});
+  const [editingVisaInfo, setEditingVisaInfo] = useState(false);
+  const [visaDraft, setVisaDraft] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<null | "visa" | "invitation" | "guarantee" | "programme" | "confirmation">(null);
 
@@ -185,6 +190,123 @@ export default function VisaApplicationDetail() {
     const { error } = await supabase.from("visa_applications").update({ admin_notes: app.admin_notes ?? "" }).eq("id", app.id);
     if (error) return toast.error(error.message);
     toast.success("Notes enregistrées");
+  };
+
+  const openVisaEdit = () => {
+    setVisaDraft({
+      ...app,
+      category: app.category ?? "tourism",
+      passport_type: app.passport_type ?? "ordinary",
+      purpose_of_visit: app.purpose_of_visit || "Tourisme",
+      date_of_application: app.date_of_application || todayISO(),
+    });
+    setEditingVisaInfo(true);
+  };
+
+  const updateVisaDraft = (key: string, value: unknown) => {
+    setVisaDraft((current: any) => ({ ...current, [key]: value }));
+  };
+
+  const saveVisaInfo = async () => {
+    if (!app?.id || !visaDraft) return;
+    const editableFields = [
+      "category",
+      "surname",
+      "given_names",
+      "other_names",
+      "date_of_birth",
+      "place_of_birth_city",
+      "place_of_birth_state",
+      "place_of_birth_country",
+      "sex",
+      "marital_status",
+      "nationality",
+      "former_nationality",
+      "national_id_no",
+      "passport_type",
+      "passport_no",
+      "passport_place_of_issue",
+      "passport_date_of_issue",
+      "passport_issuing_authority",
+      "passport_date_of_expiry",
+      "certificate_of_eligibility_no",
+      "purpose_of_visit",
+      "intended_length_of_stay",
+      "date_of_arrival",
+      "port_of_entry",
+      "airline_or_ship",
+      "hotel_name",
+      "hotel_tel",
+      "hotel_address",
+      "previous_stays",
+      "residential_address",
+      "residential_tel",
+      "residential_mobile",
+      "residential_email",
+      "profession",
+      "partner_profession",
+      "employer_name",
+      "employer_tel",
+      "employer_address",
+      "q_convicted_crime",
+      "q_imprisoned_1y",
+      "q_deported",
+      "q_drug_offence",
+      "q_prostitution",
+      "q_trafficking",
+      "declarations_details",
+      "remarks",
+      "date_of_application",
+    ];
+    const patch = editableFields.reduce<Record<string, unknown>>((acc, key) => {
+      const value = visaDraft[key];
+      acc[key] = value === "" ? null : value;
+      return acc;
+    }, {});
+    setBusy(true);
+    const { data, error } = await supabase
+      .from("visa_applications")
+      .update(patch as any)
+      .eq("id", app.id)
+      .select("*")
+      .maybeSingle();
+    setBusy(false);
+    if (error) return toast.error(error.message);
+    if (data) setApp(data);
+    setEditingVisaInfo(false);
+    toast.success("Informations visa mises à jour");
+  };
+
+  const refreshFromTravelerFile = async () => {
+    const passportNo = normalizePassportNo(app?.passport_no);
+    if (!passportNo) return toast.error("Aucun numéro de passeport à rechercher.");
+    setBusy(true);
+    const lookup = await lookupVisaPrefillByPassport({
+      passportNo,
+      lastName: app?.surname ?? "",
+      email: app?.residential_email ?? "",
+    });
+    setBusy(false);
+    if (lookup.status !== "matched") {
+      toast.info(lookup.message);
+      return;
+    }
+    const patch = {
+      ...lookup.patch,
+      purpose_of_visit: app.purpose_of_visit || "Tourisme",
+      date_of_application: app.date_of_application || todayISO(),
+    };
+    setBusy(true);
+    const { data, error } = await supabase
+      .from("visa_applications")
+      .update(patch as any)
+      .eq("id", app.id)
+      .select("*")
+      .maybeSingle();
+    setBusy(false);
+    if (error) return toast.error(error.message);
+    if (data) setApp(data);
+    toast.success(`Dossier reprérempli depuis: ${lookup.sourceLabel}`);
   };
 
   const saveTravelFields = async () => {
@@ -380,6 +502,46 @@ export default function VisaApplicationDetail() {
     </div>
   );
 
+  const DraftInput = ({ field, label, type = "text", className = "" }: { field: string; label: string; type?: string; className?: string }) => (
+    <div className={className}>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <Input
+        type={type}
+        value={visaDraft?.[field] ?? ""}
+        onChange={(e) => updateVisaDraft(field, e.target.value)}
+      />
+    </div>
+  );
+
+  const DraftSelect = ({ field, label, options }: { field: string; label: string; options: Array<{ value: string; label: string }> }) => (
+    <div>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <Select value={visaDraft?.[field] ?? ""} onValueChange={(value) => updateVisaDraft(field, value)}>
+        <SelectTrigger className="min-h-10">
+          <SelectValue placeholder={label} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
+  const DraftBoolean = ({ field, label }: { field: string; label: string }) => (
+    <div>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <Select value={visaDraft?.[field] ? "yes" : "no"} onValueChange={(value) => updateVisaDraft(field, value === "yes")}>
+        <SelectTrigger className="min-h-10"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="no">Non</SelectItem>
+          <SelectItem value="yes">Oui</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
   return (
     <div>
       <button onClick={() => nav("/admin/visa")} className="text-sm text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1">
@@ -397,6 +559,14 @@ export default function VisaApplicationDetail() {
             onPdf={() => setPreview("visa")}
             className="mt-4 sm:hidden"
           />
+          <Button variant="outline" size="sm" className="mt-3" onClick={openVisaEdit}>
+            <Pencil className="h-4 w-4" />
+            Modifier les informations visa
+          </Button>
+          <Button variant="outline" size="sm" className="ml-2 mt-3" onClick={refreshFromTravelerFile} disabled={busy || !app.passport_no}>
+            <Save className="h-4 w-4" />
+            Repréremplir depuis le dossier voyageur
+          </Button>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3">
           <Badge>{STATUS_LABEL[app.status]}</Badge>
@@ -409,6 +579,118 @@ export default function VisaApplicationDetail() {
         </div>
       </div>
 
+      {editingVisaInfo && visaDraft && (
+        <Card className="mb-6 p-4 sm:p-5">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-display text-xl">Modifier les informations visa</h2>
+              <p className="text-sm text-muted-foreground">Les modifications sont enregistrées dans la demande visa et seront reprises par les PDF.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setEditingVisaInfo(false)} disabled={busy}>Annuler</Button>
+              <Button onClick={saveVisaInfo} disabled={busy}>
+                <Save className="h-4 w-4" />
+                Enregistrer
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <section>
+              <h3 className="mb-3 font-semibold">Identité</h3>
+              <div className="grid gap-3 md:grid-cols-2">
+                <DraftInput field="surname" label="Nom" />
+                <DraftInput field="given_names" label="Prénom(s)" />
+                <DraftInput field="other_names" label="Autres noms / alias" />
+                <DraftInput field="date_of_birth" label="Date de naissance" type="date" />
+                <DraftInput field="place_of_birth_city" label="Ville de naissance" />
+                <DraftInput field="place_of_birth_state" label="Région / Province" />
+                <DraftInput field="place_of_birth_country" label="Pays de naissance" />
+                <DraftInput field="nationality" label="Nationalité" />
+                <DraftInput field="former_nationality" label="Nationalité antérieure" />
+                <DraftInput field="national_id_no" label="N° pièce d'identité" />
+                <DraftSelect field="sex" label="Sexe" options={[{ value: "male", label: "Homme" }, { value: "female", label: "Femme" }]} />
+                <DraftSelect field="marital_status" label="État civil" options={[
+                  { value: "single", label: "Célibataire" },
+                  { value: "married", label: "Marié(e)" },
+                  { value: "widowed", label: "Veuf(ve)" },
+                  { value: "divorced", label: "Divorcé(e)" },
+                ]} />
+              </div>
+            </section>
+
+            <section>
+              <h3 className="mb-3 font-semibold">Passeport</h3>
+              <div className="grid gap-3 md:grid-cols-2">
+                <DraftSelect field="passport_type" label="Type de passeport" options={[
+                  { value: "ordinary", label: "Ordinaire" },
+                  { value: "diplomatic", label: "Diplomatique" },
+                  { value: "official", label: "Officiel" },
+                  { value: "other", label: "Autre" },
+                ]} />
+                <DraftInput field="passport_no" label="Numéro de passeport" />
+                <DraftInput field="passport_place_of_issue" label="Lieu de délivrance" />
+                <DraftInput field="passport_date_of_issue" label="Date de délivrance" type="date" />
+                <DraftInput field="passport_issuing_authority" label="Autorité de délivrance" />
+                <DraftInput field="passport_date_of_expiry" label="Date d'expiration" type="date" />
+                <DraftInput field="certificate_of_eligibility_no" label="N° Certificat d'éligibilité" />
+              </div>
+            </section>
+
+            <section>
+              <h3 className="mb-3 font-semibold">Voyage</h3>
+              <div className="grid gap-3 md:grid-cols-2">
+                <DraftInput field="purpose_of_visit" label="Motif de voyage" />
+                <DraftInput field="intended_length_of_stay" label="Durée prévue du séjour" />
+                <DraftInput field="date_of_arrival" label="Arrivée Japon" type="date" />
+                <DraftInput field="port_of_entry" label="Port / aéroport d'entrée" />
+                <DraftInput field="airline_or_ship" label="Compagnie / vol" />
+                <DraftInput field="hotel_name" label="Hôtel" />
+                <DraftInput field="hotel_tel" label="Téléphone hôtel" />
+                <DraftInput field="hotel_address" label="Adresse hôtel" />
+                <DraftInput field="previous_stays" label="Séjours précédents au Japon" className="md:col-span-2" />
+              </div>
+            </section>
+
+            <section>
+              <h3 className="mb-3 font-semibold">Résidence, profession et école</h3>
+              <div className="grid gap-3 md:grid-cols-2">
+                <DraftInput field="residential_address" label="Adresse de résidence" className="md:col-span-2" />
+                <DraftInput field="residential_tel" label="Téléphone fixe" />
+                <DraftInput field="residential_mobile" label="Mobile" />
+                <DraftInput field="residential_email" label="Email" type="email" />
+                <DraftInput field="profession" label="Profession actuelle" />
+                <DraftInput field="partner_profession" label="Profession du conjoint / parents, si mineur" />
+                <DraftInput field="employer_name" label="Nom de l'employeur ou de l'école si étudiant" />
+                <DraftInput field="employer_tel" label="Téléphone de l'employeur ou de l'école si étudiant" />
+                <DraftInput field="employer_address" label="Adresse de l'employeur ou de l'école si étudiant" className="md:col-span-2" />
+              </div>
+            </section>
+
+            <section>
+              <h3 className="mb-3 font-semibold">Déclarations et date</h3>
+              <div className="grid gap-3 md:grid-cols-2">
+                <DraftBoolean field="q_convicted_crime" label="Crime / délit" />
+                <DraftBoolean field="q_imprisoned_1y" label="Emprisonnement 1 an+" />
+                <DraftBoolean field="q_deported" label="Déportation" />
+                <DraftBoolean field="q_drug_offence" label="Drogue" />
+                <DraftBoolean field="q_prostitution" label="Prostitution" />
+                <DraftBoolean field="q_trafficking" label="Traite" />
+                <div className="md:col-span-2">
+                  <label className="text-xs text-muted-foreground">Précisions déclarations</label>
+                  <Textarea rows={3} value={visaDraft.declarations_details ?? ""} onChange={(e) => updateVisaDraft("declarations_details", e.target.value)} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-muted-foreground">Remarques</label>
+                  <Textarea rows={3} value={visaDraft.remarks ?? ""} onChange={(e) => updateVisaDraft("remarks", e.target.value)} />
+                </div>
+                <DraftInput field="date_of_application" label="Date de la demande" type="date" />
+              </div>
+            </section>
+          </div>
+        </Card>
+      )}
+
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
           <Card className="p-4 sm:p-5">
@@ -420,6 +702,15 @@ export default function VisaApplicationDetail() {
             <Row label="Sexe / État civil" value={[app.sex, app.marital_status].filter(Boolean).join(" / ")} />
             <Row label="Nationalité" value={app.nationality} />
             <Row label="N° pièce d'identité" value={app.national_id_no} />
+            <Row label="Date de la demande" value={app.date_of_application || todayISO()} />
+            <Row
+              label="Source voyageur liée"
+              value={app.booking_id
+                ? `Réservation ${app.booking_id}`
+                : app.document_trip_id
+                  ? `Voyage ${app.document_trip_id}`
+                  : "Aucune source liée"}
+            />
           </Card>
 
           <Card className="p-4 sm:p-5">
@@ -500,15 +791,15 @@ export default function VisaApplicationDetail() {
           </Card>
 
           <Card className="p-4 sm:p-5">
-            <h2 className="font-display text-lg mb-3">Résidence & profession</h2>
+            <h2 className="font-display text-lg mb-3">Résidence, profession et école</h2>
             <QuickActions phone={app.residential_mobile || app.residential_tel} email={app.residential_email} compact className="mb-3" />
             <Row label="Adresse" value={app.residential_address} />
             <Row label="Tel / Mobile" value={[app.residential_tel, app.residential_mobile].filter(Boolean).join(" · ")} />
             <Row label="Email" value={app.residential_email} />
             <Row label="Profession" value={app.profession} />
-            <Row label="Employeur" value={app.employer_name} />
-            <Row label="Tel employeur" value={app.employer_tel} />
-            <Row label="Adresse employeur" value={app.employer_address} />
+            <Row label="Employeur / école" value={app.employer_name} />
+            <Row label="Tel employeur / école" value={app.employer_tel} />
+            <Row label="Adresse employeur / école" value={app.employer_address} />
           </Card>
 
           <Card className="p-4 sm:p-5">

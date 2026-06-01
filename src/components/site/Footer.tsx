@@ -2,8 +2,6 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { Instagram, Facebook, Twitter, Mail, MapPin, Phone } from "lucide-react";
 import logo from "@/assets/logo-lejapon.png";
-import { SITE_VERSION, SITE_BUILD_DATE } from "@/config/version";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAgencySettings } from "@/hooks/useAgencySettings";
 import { agencyAddressLine } from "@/lib/agency-settings";
 
@@ -63,30 +61,6 @@ export const Footer = () => {
         <div className="container-app py-6 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-background/50">
           <p>© {new Date().getFullYear()} LeJapon.ma — {t("footer.rights")}</p>
           <p>Voyages premium au Japon depuis le Maroc</p>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                className="tabular-nums tracking-wide cursor-default select-none"
-                style={{ color: "#9ca3af", fontSize: "13px", opacity: 1 }}
-              >
-                Version {SITE_VERSION || "V2.001"}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              Current deployed version — {SITE_VERSION || "V2.001"} · {SITE_BUILD_DATE}
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
-      {/* Always-visible version banner — guaranteed to render in production */}
-      <div
-        className="w-full text-center py-2 border-t border-background/10"
-        style={{ color: "#9ca3af", fontSize: "12px", opacity: 1 }}
-      >
-        V2 recovery build active · Version {SITE_VERSION || "V2.001"} · {SITE_BUILD_DATE}
-      </div>
-      <div className="hidden">
-        <div>
         </div>
       </div>
     </footer>

@@ -53,6 +53,7 @@ export const MODULE_PERMISSIONS = {
   visa_settings: ["super_admin"],
   visa_checklists: ["super_admin", "admin"],
   programmes: ["super_admin", "admin", "content_manager"],
+  hotels: ["super_admin", "admin", "content_manager"],
   frontend: ["super_admin", "admin", "content_manager"],
   marketing: ["super_admin", "admin", "marketing_manager"],
   marketing_settings: ["super_admin", "admin"],

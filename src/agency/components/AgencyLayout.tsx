@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { BarChart3, BookOpen, Building2, LogOut, Menu, Percent, UserCircle } from "lucide-react";
+import { BarChart3, BookOpen, Building2, Hotel, LogOut, Map, Menu, Percent, Plane, UserCircle } from "lucide-react";
 import { useState } from "react";
 import logo from "@/assets/logo-lejapon.png";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,9 @@ import { useAgencyContext } from "../useAgencyContext";
 const navItems = [
   { to: "/agency", label: "Tableau de bord", icon: BarChart3, end: true, activeOnly: true },
   { to: "/agency/bookings", label: "Réservations", icon: BookOpen, activeOnly: true },
+  { to: "/agency/trips", label: "Voyages", icon: Plane, activeOnly: true },
+  { to: "/agency/programmes", label: "Programmes", icon: Map, activeOnly: true },
+  { to: "/agency/hotels", label: "Hôtels", icon: Hotel, activeOnly: true },
   { to: "/agency/commission", label: "Commissions", icon: Percent, activeOnly: true },
   { to: "/agency/profile", label: "Profil agence", icon: UserCircle, activeOnly: true },
   { to: "/agency/onboarding", label: "Onboarding", icon: Building2, activeOnly: false },

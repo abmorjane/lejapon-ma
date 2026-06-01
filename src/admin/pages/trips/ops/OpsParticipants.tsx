@@ -177,17 +177,17 @@ export default function OpsParticipants({ trip }: { trip: any }) {
       </div>
 
       <div className="bg-background rounded-2xl border border-border overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[1500px] table-auto text-sm">
           <thead className="bg-secondary/50 text-left">
             <tr>
-              <th className="p-3">Prénom</th><th className="p-3">Nom</th><th className="p-3">Sexe</th>
-              <th className="p-3">Naissance</th><th className="p-3">Profession</th><th className="p-3">État civil</th><th className="p-3">Passeport</th>
-              <th className="p-3">Émission</th><th className="p-3">Expiration</th>
-              <th className="p-3">Email</th><th className="p-3">Téléphone</th>
-              <th className="p-3">Ville</th><th className="p-3">Type</th>
-              <th className="p-3">Réservé par</th><th className="p-3">N° rés.</th>
-              <th className="p-3">Statut</th><th className="p-3">Payé</th><th className="p-3">Reste</th>
-              <th className="p-3"></th>
+              <th className="sticky left-0 z-10 min-w-[130px] whitespace-normal bg-secondary/50 p-3">Prénom</th><th className="min-w-[130px] whitespace-normal p-3">Nom</th><th className="p-3 whitespace-nowrap">Sexe</th>
+              <th className="p-3 whitespace-nowrap">Naissance</th><th className="min-w-[140px] whitespace-normal p-3">Profession</th><th className="min-w-[120px] whitespace-normal p-3">État civil</th><th className="min-w-[130px] whitespace-nowrap p-3">Passeport</th>
+              <th className="p-3 whitespace-nowrap">Émission</th><th className="p-3 whitespace-nowrap">Expiration</th>
+              <th className="min-w-[190px] whitespace-normal p-3">Email</th><th className="min-w-[120px] whitespace-nowrap p-3">Téléphone</th>
+              <th className="min-w-[110px] whitespace-normal p-3">Ville</th><th className="p-3 whitespace-nowrap">Type</th>
+              <th className="min-w-[150px] whitespace-normal p-3">Réservé par</th><th className="p-3 whitespace-nowrap">N° rés.</th>
+              <th className="p-3 whitespace-nowrap">Statut</th><th className="p-3 whitespace-nowrap">Payé</th><th className="p-3 whitespace-nowrap">Reste</th>
+              <th className="p-3 whitespace-nowrap"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -196,8 +196,8 @@ export default function OpsParticipants({ trip }: { trip: any }) {
               const reste = Number(b.total_amount_mad || 0) - Number(b.paid_amount_mad || 0);
               return (
                 <tr key={p.id} className="hover:bg-secondary/30">
-                  <td className="p-3">{p.first_name}</td>
-                  <td className="p-3">{p.last_name}</td>
+                  <td className="sticky left-0 z-10 bg-background p-3 font-medium whitespace-normal">{p.first_name}</td>
+                  <td className="p-3 whitespace-normal">{p.last_name}</td>
                   <td className="p-3">{p.sex ?? "—"}</td>
                   <td className="p-3">{p.date_of_birth ?? "—"}</td>
                   <td className="p-3">{p.profession ?? "—"}</td>

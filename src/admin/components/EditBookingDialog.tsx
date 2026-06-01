@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
+import { PAYMENT_METHOD_OPTIONS } from "@/lib/payment-methods";
 
 type Props = {
   open: boolean;
@@ -43,7 +44,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
   const [trips, setTrips] = useState<any[]>([]);
   const [form, setForm] = useState<any>({});
   const [items, setItems] = useState<{ extra_id: string | null; name_snapshot: string; qty: number; unit_price_mad: number; id?: string }[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<string>("virement");
+  const [paymentMethod, setPaymentMethod] = useState<string>("bank_transfer");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -242,10 +243,9 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
                 <Select value={paymentMethod} onValueChange={setPaymentMethod}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="virement">Virement</SelectItem>
-                    <SelectItem value="especes">Espèces</SelectItem>
-                    <SelectItem value="carte">Carte bancaire</SelectItem>
-                    <SelectItem value="cheque">Chèque</SelectItem>
+                    {PAYMENT_METHOD_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

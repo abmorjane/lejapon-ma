@@ -26,12 +26,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { PUBLIC_HOTEL_OPTIONS, PUBLIC_ROOM_LABELS } from "@/lib/booking-options";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
 
 type AgencyRequestStatus = "new" | "contacted" | "quoted" | "converted" | "rejected";
-type VisualAgencyStatus = "lead" | "confirmed" | "rejected";
+type VisualAgencyStatus = "lead" | "confirmed" | "paid" | "rejected";
 type ReservationOrigin = "all" | "lejapon" | "agency";
 type UnifiedStatus = "all" | "lead" | "confirmed" | "paid" | "cancelled" | "completed" | "rejected";
 
@@ -44,7 +45,7 @@ type AgencyRequestMetadata = {
   destination?: string | null;
   room_type?: string | null;
   hotel_category?: string | null;
-  selected_extras?: Array<{ id?: string; name?: string; price_mad?: number | null }>;
+  selected_extras?: Array<{ extra_id?: string; id?: string; name?: string; unit_price?: number | null; price_mad?: number | null; quantity?: number; total?: number | null }>;
   base_price?: number | null;
   room_supplement?: number | null;
   hotel_supplement?: number | null;
@@ -55,6 +56,12 @@ type AgencyRequestMetadata = {
   commission_rule_label?: string | null;
   special_requests?: string | null;
   internal_notes?: string | null;
+  payment_status?: "unpaid" | "paid" | null;
+  payment_type?: "cash" | "bank_transfer" | "card" | "cheque" | "other" | null;
+  payment_date?: string | null;
+  paid_amount?: number | null;
+  payment_notes?: string | null;
+  admin_notes?: string | null;
 };
 
 type OrganizationSummary = {
@@ -117,33 +124,49 @@ const AGENCY_REQUEST_STATUS_LABELS: Record<AgencyRequestStatus, string> = {
 const VISUAL_AGENCY_STATUS_LABELS: Record<VisualAgencyStatus, string> = {
   lead: "Lead",
   confirmed: "Confirmé",
+  paid: "Payé",
   rejected: "Rejeté",
 };
 
 const ROOM_TYPE_LABELS: Record<string, string> = {
-  single: "Single",
-  double: "Double",
+  ...PUBLIC_ROOM_LABELS,
   twin: "Twin",
-  triple: "Triple",
 };
 
 const HOTEL_CATEGORY_LABELS: Record<string, string> = {
+  modern: PUBLIC_HOTEL_OPTIONS.modern.name,
+  ryokan: PUBLIC_HOTEL_OPTIONS.ryokan.name,
   standard: "Standard",
   superior: "Supérieur",
   premium: "Premium",
+};
+
+const PAYMENT_TYPE_LABELS: Record<string, string> = {
+  cash: "Espèces",
+  bank_transfer: "Virement",
+  card: "Carte",
+  cheque: "Chèque",
+  other: "Autre",
 };
 
 const formatMaybeMoney = (value: number | null | undefined, fallback = "Prix non renseigné") =>
   value === null || value === undefined ? fallback : fmtMAD(value);
 
 const getAgencyVisualStatus = (status: AgencyRequestStatus): VisualAgencyStatus => {
-  if (status === "converted") return "confirmed";
   if (status === "rejected") return "rejected";
+  if (status === "converted") return "confirmed";
   return "lead";
+};
+
+const getAgencyRequestVisualStatus = (request: AgencyBookingRequest): VisualAgencyStatus => {
+  if (request.status === "rejected") return "rejected";
+  if (request.metadata?.payment_status === "paid") return "paid";
+  return getAgencyVisualStatus(request.status);
 };
 
 const agencyVisualBadgeClass = (status: VisualAgencyStatus) => {
   if (status === "confirmed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "paid") return "border-blue-200 bg-blue-50 text-blue-700";
   if (status === "rejected") return "border-red-200 bg-red-50 text-red-700";
   return "border-amber-200 bg-amber-50 text-amber-800";
 };
@@ -179,6 +202,7 @@ export default function Bookings() {
   const [selectedAgencyRequest, setSelectedAgencyRequest] = useState<AgencyBookingRequest | null>(null);
   const [selectedAgencyOrg, setSelectedAgencyOrg] = useState<OrganizationSummary | null>(null);
   const [internalNotesDraft, setInternalNotesDraft] = useState("");
+  const [adminStatusDraft, setAdminStatusDraft] = useState<"lead" | "confirmed" | "paid" | "rejected">("lead");
   const [notesSaving, setNotesSaving] = useState(false);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<UnifiedStatus>("all");
@@ -265,13 +289,17 @@ export default function Bookings() {
   const saveInternalNotes = async () => {
     if (!selectedAgencyRequest) return;
     setNotesSaving(true);
+    const nextStatus: AgencyRequestStatus =
+      adminStatusDraft === "rejected" ? "rejected" : adminStatusDraft === "lead" ? "new" : "converted";
     const nextMetadata = {
       ...(selectedAgencyRequest.metadata ?? {}),
       internal_notes: internalNotesDraft.trim() || null,
+      admin_notes: internalNotesDraft.trim() || null,
+      payment_status: adminStatusDraft === "paid" ? "paid" : selectedAgencyRequest.metadata?.payment_status === "paid" && adminStatusDraft !== "paid" ? "unpaid" : selectedAgencyRequest.metadata?.payment_status ?? null,
     };
     const { data, error } = await db
       .from("agency_booking_requests")
-      .update({ metadata: nextMetadata })
+      .update({ metadata: nextMetadata, status: nextStatus })
       .eq("id", selectedAgencyRequest.id)
       .select(agencyRequestColumns)
       .maybeSingle();
@@ -298,6 +326,7 @@ export default function Bookings() {
 
   useEffect(() => {
     setInternalNotesDraft(selectedAgencyRequest?.metadata?.internal_notes ?? "");
+    setAdminStatusDraft(selectedAgencyRequest ? getAgencyRequestVisualStatus(selectedAgencyRequest) as "lead" | "confirmed" | "paid" | "rejected" : "lead");
   }, [selectedAgencyRequest?.id]);
 
   const agencyOptions = useMemo(() => {
@@ -321,7 +350,7 @@ export default function Bookings() {
       kind: "agency_request",
       id: request.id,
       created_at: request.created_at,
-      status: getAgencyVisualStatus(request.status),
+      status: getAgencyRequestVisualStatus(request),
       request,
     }));
 
@@ -457,8 +486,8 @@ export default function Bookings() {
                       </button>
                     </div>
                     <div className="shrink-0 text-right">
-                      <Badge variant="outline" className={agencyVisualBadgeClass(getAgencyVisualStatus(request.status))}>
-                        {VISUAL_AGENCY_STATUS_LABELS[getAgencyVisualStatus(request.status)]}
+                      <Badge variant="outline" className={agencyVisualBadgeClass(getAgencyRequestVisualStatus(request))}>
+                        {VISUAL_AGENCY_STATUS_LABELS[getAgencyRequestVisualStatus(request)]}
                       </Badge>
                       <ChevronDown className="w-4 h-4 ml-auto mt-2 text-muted-foreground transition-transform group-open:rotate-180" />
                     </div>
@@ -556,15 +585,18 @@ export default function Bookings() {
                   const request = item.request;
                   const requestMetadata = request.metadata ?? {};
                   const extras = requestMetadata.selected_extras ?? [];
-                  const visualStatus = getAgencyVisualStatus(request.status);
+                  const visualStatus = getAgencyRequestVisualStatus(request);
                   return (
-                    <tr key={`agency-${request.id}`} className="align-top hover:bg-secondary/30">
+                    <tr key={`agency-${request.id}`} className="cursor-pointer align-top hover:bg-secondary/30" onClick={() => openAgencyRequest(request)}>
                       <td className="p-4"><Badge variant="outline">Agence partenaire</Badge></td>
                       <td className="p-4">
                         <button
                           type="button"
                           className="text-left font-medium text-accent underline-offset-2 hover:underline"
-                          onClick={() => setSelectedAgencyOrg(request.agency ?? null)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedAgencyOrg(request.agency ?? null);
+                          }}
                         >
                           {request.agency_name || "Agence"}
                         </button>
@@ -588,7 +620,7 @@ export default function Bookings() {
                         <p>Chambre: {requestMetadata.room_type ? ROOM_TYPE_LABELS[requestMetadata.room_type] ?? requestMetadata.room_type : "—"}</p>
                         <p className="text-muted-foreground">Hôtel: {requestMetadata.hotel_category ? HOTEL_CATEGORY_LABELS[requestMetadata.hotel_category] ?? requestMetadata.hotel_category : "—"}</p>
                         <p className="mt-1 max-w-[220px] text-muted-foreground">
-                          {extras.length ? extras.map((extra) => extra.name ?? "Extra").join(" · ") : "Aucun extra"}
+                          {extras.length ? extras.map((extra) => `${extra.name ?? "Extra"} x${extra.quantity ?? 1}`).join(" · ") : "Aucun extra"}
                         </p>
                       </td>
                       <td className="p-4">
@@ -684,9 +716,9 @@ export default function Bookings() {
                   <div className="mt-3 space-y-3 text-sm">
                     <div><p className="text-xs text-muted-foreground">Voyage</p><p className="font-medium">{metadata.trip_title || selectedAgencyRequest.trip_interest}</p></div>
                     <div><p className="text-xs text-muted-foreground">Destination</p><p className="font-medium">{metadata.destination || "—"}</p></div>
-                    <div><p className="text-xs text-muted-foreground">Départ souhaité</p><p className="font-medium">{selectedAgencyRequest.preferred_departure_date || "—"}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Départ</p><p className="font-medium">{selectedAgencyRequest.preferred_departure_date || "—"}</p></div>
                     <div><p className="text-xs text-muted-foreground">Chambre / hôtel</p><p className="font-medium">{metadata.room_type ? ROOM_TYPE_LABELS[metadata.room_type] ?? metadata.room_type : "—"} · {metadata.hotel_category ? HOTEL_CATEGORY_LABELS[metadata.hotel_category] ?? metadata.hotel_category : "—"}</p></div>
-                    <div><p className="text-xs text-muted-foreground">Extras</p><p className="font-medium">{selectedExtras.length ? selectedExtras.map((extra) => `${extra.name ?? "Extra"} (${formatMaybeMoney(extra.price_mad, "prix non renseigné")})`).join(" · ") : "—"}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Extras</p><p className="font-medium">{selectedExtras.length ? selectedExtras.map((extra) => `${extra.name ?? "Extra"} x${extra.quantity ?? 1} (${formatMaybeMoney(extra.total ?? Number(extra.price_mad ?? extra.unit_price ?? 0) * Number(extra.quantity ?? 1), "prix non renseigné")})`).join(" · ") : "—"}</p></div>
                   </div>
                 </Card>
                 <Card className="p-4">
@@ -697,6 +729,8 @@ export default function Bookings() {
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Suppl. hôtel</span><span className="font-medium">{formatMaybeMoney(metadata.hotel_supplement)}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Extras</span><span className="font-medium">{formatMaybeMoney(metadata.extras_total)}</span></div>
                     <div className="flex justify-between gap-3 border-t border-border pt-3"><span className="text-muted-foreground">Total estimé</span><span className="font-semibold">{formatMaybeMoney(metadata.estimated_total)}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Payé</span><span className="font-semibold">{formatMaybeMoney(metadata.paid_amount, "0 MAD")}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-muted-foreground">Reste</span><span className="font-semibold">{formatMaybeMoney(Math.max(0, Number(metadata.estimated_total || 0) - Number(metadata.paid_amount || 0)))}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-muted-foreground">Commission</span><span className="font-semibold">{formatMaybeMoney(metadata.estimated_commission, "Commission non renseignée")}</span></div>
                     <p className="text-xs text-muted-foreground">{metadata.commission_rule_label || "Aucune règle commission renseignée"}</p>
                   </div>
@@ -704,27 +738,37 @@ export default function Bookings() {
               </div>
 
               <Card className="p-4">
+                <h3 className="font-display text-lg">Paiement agence</h3>
+                <div className="mt-3 grid gap-3 sm:grid-cols-4 text-sm">
+                  <div><p className="text-xs text-muted-foreground">Statut paiement</p><p className="font-medium">{metadata.payment_status === "paid" ? "Payé" : "Non payé"}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Type</p><p className="font-medium">{metadata.payment_type ? PAYMENT_TYPE_LABELS[metadata.payment_type] ?? metadata.payment_type : "—"}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Date</p><p className="font-medium">{metadata.payment_date || "—"}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Montant</p><p className="font-medium">{formatMaybeMoney(metadata.paid_amount, "0 MAD")}</p></div>
+                  <div className="sm:col-span-4"><p className="text-xs text-muted-foreground">Notes paiement</p><p className="font-medium whitespace-pre-wrap">{metadata.payment_notes || "—"}</p></div>
+                </div>
+              </Card>
+
+              <Card className="p-4">
                 <h3 className="font-display text-lg">Suivi admin</h3>
                 <div className="mt-3 grid gap-4 lg:grid-cols-[220px_1fr]">
                   <div className="space-y-2">
                     <Label>Statut</Label>
                     <Select
-                      value={selectedAgencyRequest.status}
-                      onValueChange={(value) => updateAgencyRequestStatus(selectedAgencyRequest, value as AgencyRequestStatus)}
+                      value={adminStatusDraft}
+                      onValueChange={(value) => setAdminStatusDraft(value as "lead" | "confirmed" | "paid" | "rejected")}
                       disabled={agencyRequestBusy === selectedAgencyRequest.id}
                     >
                       <SelectTrigger className="min-h-10">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="new">Lead · nouveau</SelectItem>
-                        <SelectItem value="contacted">Lead · contacté</SelectItem>
-                        <SelectItem value="quoted">Lead · devis envoyé</SelectItem>
-                        <SelectItem value="converted">Confirmé</SelectItem>
+                        <SelectItem value="lead">Lead</SelectItem>
+                        <SelectItem value="confirmed">Confirmé</SelectItem>
+                        <SelectItem value="paid">Payé</SelectItem>
                         <SelectItem value="rejected">Rejeté</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground">Le statut SQL existant est conservé.</p>
+                    <p className="text-xs text-muted-foreground">Lead/confirmé/payé sont mappés sur le statut SQL existant + metadata.</p>
                   </div>
                   <div className="space-y-2">
                     <Label>Notes internes</Label>

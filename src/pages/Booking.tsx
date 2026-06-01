@@ -10,9 +10,18 @@ import { Seo } from "@/components/Seo";
 import { fmtDate } from "@/lib/format";
 import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
 import { useRecaptcha } from "@/hooks/useRecaptcha";
+import {
+  CHILD_DISCOUNT_MAD,
+  HOTEL_SUPPLEMENT,
+  PUBLIC_HOTEL_OPTIONS,
+  SINGLE_SUPPLEMENT_MAD,
+  TRIPLE_DISCOUNT_PER_PERSON_MAD,
+  type PublicHotelKey,
+  type PublicRoomKey,
+} from "@/lib/booking-options";
 
-type HotelKey = "modern" | "ryokan";
-type RoomKey = "single" | "double" | "triple";
+type HotelKey = PublicHotelKey;
+type RoomKey = PublicRoomKey;
 
 type TripRow = {
   id: string;
@@ -25,11 +34,6 @@ type TripRow = {
   short_description: string | null;
   base_price_mad: number;
 };
-
-const HOTEL_SUPPLEMENT: Record<HotelKey, number> = { modern: 0, ryokan: 2500 };
-const SINGLE_SUPPLEMENT_MAD = 15000;
-const TRIPLE_DISCOUNT_PER_PERSON_MAD = 1000;
-const CHILD_DISCOUNT_MAD = 3000;
 
 const fmt = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n)) + " MAD";
 
@@ -115,10 +119,7 @@ const Booking = () => {
     if (s && e) return `${fmtDate(s)} → ${fmtDate(e)}`;
     return fmtDate(s ?? e);
   };
-  const hotels: Record<HotelKey, { name: string; desc: string; supplement: number }> = {
-    modern: { name: "Hôtel moderne (avec le groupe)", desc: "Confort international, sans supplément.", supplement: 0 },
-    ryokan: { name: "Ryokan traditionnel", desc: "Auberge japonaise, futon & onsen. Supplément 2 500 MAD/pers.", supplement: 2500 },
-  };
+  const hotels = PUBLIC_HOTEL_OPTIONS;
   const pricing = useMemo(() => {
     const base = selectedTrip?.base_price_mad ?? 0;
     const hotelSupp = HOTEL_SUPPLEMENT[hotel];

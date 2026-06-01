@@ -18,10 +18,9 @@ import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
 
 const queryClient = new QueryClient();
 
-console.log("V2 recovery routes loaded");
-
 const Index = lazy(() => import("./pages/Index.tsx"));
 const Trips = lazy(() => import("./pages/Trips.tsx"));
+const Hotels = lazy(() => import("./pages/Hotels.tsx"));
 const Experiences = lazy(() => import("./pages/Experiences.tsx"));
 const About = lazy(() => import("./pages/About.tsx"));
 const Blog = lazy(() => import("./pages/Blog.tsx"));
@@ -41,6 +40,9 @@ const AgencyLayout = lazy(() => import("@/agency/components/AgencyLayout"));
 const AgencyDashboard = lazy(() => import("@/agency/pages/AgencyDashboard"));
 const AgencyBookings = lazy(() => import("@/agency/pages/AgencyBookings"));
 const AgencyBookingDetail = lazy(() => import("@/agency/pages/AgencyBookingDetail"));
+const AgencyTripsLibrary = lazy(() => import("@/agency/pages/AgencyTripsLibrary"));
+const AgencyProgrammesLibrary = lazy(() => import("@/agency/pages/AgencyProgrammesLibrary"));
+const AgencyHotels = lazy(() => import("@/agency/pages/AgencyHotels"));
 const AgencyCommission = lazy(() => import("@/agency/pages/AgencyCommission"));
 const AgencyProfilePage = lazy(() => import("@/agency/pages/AgencyProfilePage"));
 const AgencyOnboarding = lazy(() => import("@/agency/pages/AgencyOnboarding"));
@@ -58,6 +60,7 @@ const AdminArticles = lazy(() => import("@/admin/pages/Articles"));
 const AdminPages = lazy(() => import("@/admin/pages/Pages"));
 const AdminFrontend = lazy(() => import("@/admin/pages/Frontend"));
 const AdminProgrammes = lazy(() => import("@/admin/pages/Programmes"));
+const AdminHotels = lazy(() => import("@/admin/pages/Hotels"));
 const AdminMedia = lazy(() => import("@/admin/pages/Media"));
 const AdminUsers = lazy(() => import("@/admin/pages/Users"));
 const AdminOrganizations = lazy(() => import("@/admin/pages/Organizations"));
@@ -130,6 +133,9 @@ const AppRoutes = () => {
         <Route index element={<RequireActiveAgencyMember><AgencyDashboard /></RequireActiveAgencyMember>} />
         <Route path="bookings" element={<RequireActiveAgencyMember><AgencyBookings /></RequireActiveAgencyMember>} />
         <Route path="bookings/:id" element={<RequireActiveAgencyMember><AgencyBookingDetail /></RequireActiveAgencyMember>} />
+        <Route path="trips" element={<RequireActiveAgencyMember><AgencyTripsLibrary /></RequireActiveAgencyMember>} />
+        <Route path="programmes" element={<RequireActiveAgencyMember><AgencyProgrammesLibrary /></RequireActiveAgencyMember>} />
+        <Route path="hotels" element={<RequireActiveAgencyMember><AgencyHotels /></RequireActiveAgencyMember>} />
         <Route path="commission" element={<RequireActiveAgencyMember><AgencyCommission /></RequireActiveAgencyMember>} />
         <Route path="profile" element={<RequireActiveAgencyMember><AgencyProfilePage /></RequireActiveAgencyMember>} />
         <Route path="onboarding" element={<RequireAgencyOnboarding><AgencyOnboarding /></RequireAgencyOnboarding>} />
@@ -137,6 +143,8 @@ const AppRoutes = () => {
       <Route element={<SiteLayout />}>
         <Route path="/" element={<Index />} />
         <Route path={`/${get("trips")}`} element={<Trips />} />
+        <Route path="/hotels" element={<Hotels />} />
+        <Route path="/hotels/:slug" element={<Hotels />} />
         <Route path={`/${get("experiences")}`} element={<Experiences />} />
         <Route path={`/${get("about")}`} element={<About />} />
         <Route path={`/${get("blog")}`} element={<Blog />} />
@@ -165,7 +173,6 @@ const AppRoutes = () => {
         <Route path="/inscription" element={<LegacyStaticRedirect />} />
         <Route path="/extra-plans" element={<LegacyStaticRedirect />} />
         <Route path="/extra-plans/:slug" element={<LegacyExtraRedirect />} />
-        <Route path="/hotels" element={<LegacyStaticRedirect />} />
         <Route path="/hotels-avril" element={<LegacyStaticRedirect />} />
         <Route path="/accueil-2" element={<LegacyStaticRedirect />} />
         <Route path="/a2" element={<LegacyStaticRedirect />} />
@@ -220,6 +227,7 @@ const AppRoutes = () => {
         <Route path="pages" element={<RequireRole module="pages"><AdminPages /></RequireRole>} />
         <Route path="frontend" element={<RequireRole module="frontend"><AdminFrontend /></RequireRole>} />
         <Route path="programmes" element={<RequireRole module="programmes"><AdminProgrammes /></RequireRole>} />
+        <Route path="hotels" element={<RequireRole module="hotels"><AdminHotels /></RequireRole>} />
         <Route path="media" element={<RequireRole module="media"><AdminMedia /></RequireRole>} />
         <Route path="users" element={<RequireRole module="users"><AdminUsers /></RequireRole>} />
         <Route path="organizations" element={<RequireRole module="organizations"><AdminOrganizations /></RequireRole>} />

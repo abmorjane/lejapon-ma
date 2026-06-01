@@ -9,6 +9,9 @@ import { Plus, FileText, ArrowRight } from "lucide-react";
 import { Seo } from "@/components/Seo";
 import { toast } from "sonner";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
+import { lookupVisaPrefillByPassport, normalizePassportNo } from "@/lib/visa-prefill";
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Brouillon",
@@ -61,13 +64,43 @@ export default function VisaList() {
   const create = async () => {
     if (!user) return;
     setBusy(true);
+    const metadata = user.user_metadata ?? {};
+    const passportNo = normalizePassportNo(metadata.passport_no);
+    let prefillPatch: Record<string, unknown> = {};
+    let prefillMessage: string | null = null;
+
+    if (passportNo) {
+      const lookup = await lookupVisaPrefillByPassport({
+        passportNo,
+        lastName: String(metadata.last_name ?? ""),
+        email: user.email ?? "",
+      });
+      if (lookup.status === "matched") {
+        prefillPatch = lookup.patch;
+        prefillMessage = `Formulaire prérempli depuis: ${lookup.sourceLabel}.`;
+      } else {
+        prefillMessage = lookup.message;
+      }
+    }
+
     const { data, error } = await supabase
       .from("visa_applications")
-      .insert({ user_id: user.id })
+      .insert({
+        user_id: user.id,
+        category: "tourism",
+        passport_type: "ordinary",
+        purpose_of_visit: "Tourisme",
+        date_of_application: todayISO(),
+        surname: metadata.last_name || null,
+        given_names: metadata.first_name || null,
+        passport_no: passportNo || null,
+        ...prefillPatch,
+      })
       .select("id")
       .single();
     setBusy(false);
     if (error) return toast.error(error.message);
+    if (prefillMessage) toast.info(prefillMessage);
     nav(`${visaBase}/${data!.id}`);
   };
 

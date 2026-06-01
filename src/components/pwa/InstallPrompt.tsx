@@ -4,7 +4,6 @@ import { Download, Info, Smartphone, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 type BeforeInstallPromptEvent = Event & {
@@ -14,7 +13,6 @@ type BeforeInstallPromptEvent = Event & {
 
 const ADMIN_DISMISS_KEY = "lejapon:pwa-install-dismissed-until:admin:v2";
 const PUBLIC_DISMISS_KEY = "lejapon:pwa-install-dismissed-until:public:v2";
-const DEBUG_KEY = "lejapon:pwa-install-debug";
 const DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
 const MOBILE_MAX_WIDTH = 1024;
 
@@ -34,14 +32,12 @@ function readDismissedUntil(key: string) {
 export function PWAInstallPrompt() {
   const location = useLocation();
   const { isStaff } = useAuth();
-  const isMobileViewport = useIsMobile();
   const isAdminArea = location.pathname.startsWith("/admin");
   const dismissKey = isAdminArea ? ADMIN_DISMISS_KEY : PUBLIC_DISMISS_KEY;
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [dismissedUntil, setDismissedUntil] = useState(0);
   const [installed, setInstalled] = useState(false);
   const [ready, setReady] = useState(false);
-  const [promptSeen, setPromptSeen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(0);
 
   useEffect(() => {
@@ -65,7 +61,6 @@ export function PWAInstallPrompt() {
     const onBeforeInstallPrompt = (event: Event) => {
       event.preventDefault();
       setDeferredPrompt(event as BeforeInstallPromptEvent);
-      setPromptSeen(true);
     };
     const onInstalled = () => {
       setInstalled(true);
@@ -110,45 +105,14 @@ export function PWAInstallPrompt() {
     };
   }, [deferredPrompt, dismissedUntil, location.pathname, viewportWidth]);
 
-  const forceDebug = useMemo(() => {
-    if (!import.meta.env.DEV || typeof window === "undefined" || !env?.isMobileDevice) return false;
-    const params = new URLSearchParams(window.location.search);
-    return params.get("pwaInstallDebug") === "1" || window.localStorage.getItem(DEBUG_KEY) === "1";
-  }, [env?.isMobileDevice, location.search]);
-
-  useEffect(() => {
-    if (!import.meta.env.DEV || !env) return;
-    console.info("[PWA install debug]", {
-      isMobile: env.isMobileDevice,
-      isMobileViewport,
-      isDesktop: env.isDesktop,
-      isIOS: env.isIOS,
-      isAndroid: env.isAndroid,
-      isSafari: env.isSafari,
-      hasTouch: env.hasTouch,
-      hasMobileViewport: env.hasMobileViewport,
-      viewportWidth: env.viewportWidth,
-      isStandalone: env.isStandalone,
-      isSecureContext: env.isSecureContext,
-      beforeinstallpromptAvailable: env.beforeinstallpromptAvailable,
-      beforeinstallpromptSeenThisSession: promptSeen,
-      dismissedUntil: env.dismissedUntil ? new Date(env.dismissedUntil).toISOString() : null,
-      currentPath: env.currentPath,
-      forceDebug,
-      manifest: "/manifest.webmanifest",
-      serviceWorker: "/sw.js",
-      startUrl: "/admin",
-    });
-  }, [env, forceDebug, isMobileViewport, promptSeen]);
-
-  const dismissed = !forceDebug && dismissedUntil > Date.now();
+  const dismissed = dismissedUntil > Date.now();
   const canShowFallback = Boolean(env && (env.isIOS || env.isAndroid));
   const shouldShow = Boolean(
     env?.isMobileDevice &&
     ready &&
     !installed &&
     !dismissed &&
-    (Boolean(deferredPrompt) || canShowFallback || forceDebug)
+    (Boolean(deferredPrompt) || canShowFallback)
   );
   const aggressiveAdmin = isAdminArea && isStaff;
 
@@ -192,8 +156,7 @@ export function PWAInstallPrompt() {
   if (aggressiveAdmin) {
     return (
       <aside className={cn(
-        "fixed inset-x-4 bottom-[5.25rem] z-50 rounded-xl border border-stone-200/80 bg-white/95 p-3 text-stone-950 shadow-lg shadow-black/10 backdrop-blur lg:hidden",
-        forceDebug && "ring-2 ring-[#E21B2D]/20"
+        "fixed inset-x-4 bottom-[5.25rem] z-50 rounded-xl border border-stone-200/80 bg-white/95 p-3 text-stone-950 shadow-lg shadow-black/10 backdrop-blur lg:hidden"
       )}>
         <div className="flex items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E21B2D] text-white">
@@ -201,11 +164,6 @@ export function PWAInstallPrompt() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold leading-5">Installer LeJapon Admin</p>
-            {forceDebug && (
-              <p className="mt-0.5 text-[10px] font-semibold uppercase text-[#E21B2D]">
-                Debug mobile
-              </p>
-            )}
             <p className="mt-0.5 text-xs leading-4 text-stone-600">
               {instruction || "Accès rapide aux réservations, clients, visas et PDF."}
             </p>

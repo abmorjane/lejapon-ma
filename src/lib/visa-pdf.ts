@@ -59,6 +59,14 @@ export type VisaApplicationData = {
   date_of_application?: string | null;
 };
 
+export const VISA_OPTIONAL_FIELD_LABELS = [
+  "Nationalité antérieure",
+  "Autres noms / alias",
+  "N° Certificat d'éligibilité",
+  "Séjours précédents au Japon",
+  "Profession du conjoint / parents",
+] as const;
+
 export type VisaSettingsData = {
   guarantor_name?: string | null;
   guarantor_tel?: string | null;
@@ -103,20 +111,34 @@ export function validateVisaApplication(app: VisaApplicationData): string[] {
   const need = (v: unknown, label: string) => {
     if (v === undefined || v === null || (typeof v === "string" && !v.trim())) missing.push(label);
   };
+  need((app as any).category, "Type de visa");
   need(app.surname, "Nom (Surname)");
   need(app.given_names, "Prénoms (Given names)");
+  need(app.date_of_application, "Date de la demande");
   need(app.date_of_birth, "Date de naissance");
+  need(app.place_of_birth_city, "Ville de naissance");
+  need(app.place_of_birth_state, "Région / Province de naissance");
   need(app.place_of_birth_country, "Pays de naissance");
   need(app.sex, "Sexe");
+  need(app.marital_status, "État civil");
   need(app.nationality, "Nationalité");
+  need(app.national_id_no, "N° pièce d'identité");
+  need(app.passport_type, "Type de passeport");
   need(app.passport_no, "Numéro de passeport");
   need(app.passport_date_of_issue, "Date d'émission du passeport");
   need(app.passport_date_of_expiry, "Date d'expiration du passeport");
   need(app.passport_place_of_issue, "Lieu d'émission du passeport");
+  need(app.passport_issuing_authority, "Autorité de délivrance du passeport");
   need(app.purpose_of_visit, "Objet du voyage");
   need(app.intended_length_of_stay, "Durée du séjour");
   need(app.residential_address, "Adresse de résidence");
+  need(app.residential_tel, "Téléphone fixe");
+  need(app.residential_mobile, "Mobile");
+  need(app.residential_email, "Email");
   need(app.profession, "Profession");
+  need(app.employer_name, "Nom de l'employeur ou de l'école");
+  need(app.employer_tel, "Téléphone de l'employeur ou de l'école");
+  need(app.employer_address, "Adresse de l'employeur ou de l'école");
   return missing;
 }
 

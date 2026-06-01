@@ -10,11 +10,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { ArrowLeft, Save, Send, Upload, Trash2, Download, FileText, Camera, CheckCircle2, Info } from "lucide-react";
 import { Seo } from "@/components/Seo";
 import { PassportPhotoDialog } from "./PassportPhotoDialog";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
+import { applyEmptyFieldPatch, lookupVisaPrefillByPassport, normalizePassportNo } from "@/lib/visa-prefill";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Brouillon",
@@ -32,6 +35,38 @@ const F = ({ label, children }: { label: React.ReactNode; children: React.ReactN
   <div><Label className="text-xs">{label}</Label>{children}</div>
 );
 
+type VisaTripOption = {
+  id: string;
+  title: string;
+  season: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  duration_days: number | null;
+  visa_japan_arrival_date?: string | null;
+  visa_japan_departure_date?: string | null;
+};
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+const requiredLabel = (label: string) => (
+  <span>
+    {label} <span className="text-destructive">*</span>
+  </span>
+);
+
+const durationFromTrip = (trip: VisaTripOption | null) => {
+  if (!trip) return null;
+  if (Number(trip.duration_days) > 0) return Number(trip.duration_days);
+  if (trip.start_date && trip.end_date) {
+    const start = new Date(trip.start_date);
+    const end = new Date(trip.end_date);
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+      return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+    }
+  }
+  return null;
+};
+
 export default function VisaForm() {
   const { id } = useParams();
   const { user, loading } = useAuth();
@@ -42,6 +77,10 @@ export default function VisaForm() {
   const [docs, setDocs] = useState<any[]>([]);
   const [settings, setSettings] = useState<any | null>(null);
   const [checklists, setChecklists] = useState<any[]>([]);
+  const [tripOptions, setTripOptions] = useState<VisaTripOption[]>([]);
+  const [durationSource, setDurationSource] = useState("other");
+  const [manualDurationDays, setManualDurationDays] = useState("");
+  const [missingFields, setMissingFields] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [photoDialogOpen, setPhotoDialogOpen] = useState(false);
@@ -67,17 +106,85 @@ export default function VisaForm() {
         supabase.from("visa_document_checklists").select("*").eq("is_active", true).order("sort_order"),
       ]);
       if (appRes.error || !appRes.data) { toast.error("Demande introuvable"); nav(visaBase); return; }
-      setApp(appRes.data);
+      let hydratedApp = {
+        ...appRes.data,
+        category: appRes.data.category ?? "tourism",
+        passport_type: appRes.data.passport_type ?? "ordinary",
+        purpose_of_visit: appRes.data.purpose_of_visit || "Tourisme",
+        date_of_application: appRes.data.date_of_application || todayISO(),
+      };
+      const metadata = user.user_metadata ?? {};
+      const metadataPatch = applyEmptyFieldPatch(hydratedApp, {
+        surname: metadata.last_name,
+        given_names: metadata.first_name,
+        passport_no: normalizePassportNo(metadata.passport_no),
+      });
+      hydratedApp = { ...hydratedApp, ...metadataPatch };
+      if (hydratedApp.status === "draft" && normalizePassportNo(metadata.passport_no) && !appRes.data.submitted_at) {
+        const lookup = await lookupVisaPrefillByPassport({
+          passportNo: normalizePassportNo(metadata.passport_no),
+          lastName: String(metadata.last_name ?? hydratedApp.surname ?? ""),
+          email: user.email ?? "",
+        });
+        if (lookup.status === "matched") {
+          const safePatch = applyEmptyFieldPatch(hydratedApp, lookup.patch);
+          hydratedApp = { ...hydratedApp, ...safePatch };
+          if (Object.keys(safePatch).length) {
+            await supabase.from("visa_applications").update(safePatch as any).eq("id", hydratedApp.id);
+            toast.info(`Formulaire prérempli depuis: ${lookup.sourceLabel}.`);
+          }
+        } else if (lookup.status === "none" || lookup.status === "multiple") {
+          toast.info(lookup.message);
+        }
+      }
+      setApp(hydratedApp);
       setDocs(docsRes.data ?? []);
       setSettings(sRes.data);
       setChecklists(clRes.data ?? []);
+      setDurationSource((hydratedApp as any).document_trip_id || "other");
+      const durationMatch = String(hydratedApp.intended_length_of_stay ?? "").match(/\d+/);
+      setManualDurationDays(durationMatch?.[0] ?? "");
       // Allow auto-save on subsequent edits, but skip the very first hydration.
       skipAutoSaveRef.current = true;
       window.setTimeout(() => { skipAutoSaveRef.current = false; }, 400);
     })();
   }, [id, user, loading, nav]);
 
+  useEffect(() => {
+    supabase
+      .from("trips")
+      .select("id,title,season,start_date,end_date,duration_days,visa_japan_arrival_date,visa_japan_departure_date")
+      .in("status", ["open", "completed"])
+      .order("start_date", { ascending: true, nullsFirst: false })
+      .then(({ data }) => setTripOptions((data ?? []) as VisaTripOption[]));
+  }, []);
+
   const upd = (patch: any) => setApp((a: any) => ({ ...a, ...patch }));
+
+  const selectDurationSource = (value: string) => {
+    setDurationSource(value);
+    if (value === "other") {
+      upd({
+        document_trip_id: null,
+        intended_length_of_stay: manualDurationDays ? `${manualDurationDays} jours` : "",
+      });
+      return;
+    }
+    const trip = tripOptions.find((item) => item.id === value) ?? null;
+    const days = durationFromTrip(trip);
+    upd({
+      document_trip_id: value,
+      intended_length_of_stay: days ? `${days} jours` : "",
+      date_of_arrival: trip?.visa_japan_arrival_date || trip?.start_date || app?.date_of_arrival || null,
+    });
+  };
+
+  const updateManualDuration = (value: string) => {
+    setManualDurationDays(value);
+    if (durationSource === "other") {
+      upd({ intended_length_of_stay: value ? `${value} jours` : "" });
+    }
+  };
 
   // Debounced auto-save (drafts only)
   useEffect(() => {
@@ -172,8 +279,12 @@ export default function VisaForm() {
     }
     const { validateVisaApplication } = await import("@/lib/visa-pdf");
     const missing = validateVisaApplication(app);
+    if (durationSource === "other" && !manualDurationDays.trim()) {
+      missing.push("Nombre de jours");
+    }
+    setMissingFields(missing);
     if (missing.length) {
-      return toast.error(`Champs obligatoires manquants : ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}`);
+      return toast.error("Veuillez compléter les champs obligatoires indiqués.");
     }
     await save(true);
     setBusy(true);
@@ -236,6 +347,9 @@ export default function VisaForm() {
       <Input type={type} disabled={isReadOnly} value={app[k] ?? ""} onChange={(e) => upd({ [k]: e.target.value })} />
     </F>
   );
+
+  const selectedDurationTrip = durationSource === "other" ? null : tripOptions.find((trip) => trip.id === durationSource) ?? null;
+  const selectedDurationDays = durationFromTrip(selectedDurationTrip);
 
   return (
     <div className="container-app py-10 max-w-5xl">
@@ -323,6 +437,19 @@ export default function VisaForm() {
         </Card>
       )}
 
+      {!isReadOnly && missingFields.length > 0 && (
+        <Alert className="mb-6 border-destructive/40 bg-destructive/5">
+          <AlertTitle>Champs obligatoires à compléter</AlertTitle>
+          <AlertDescription>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+              {missingFields.map((field) => (
+                <li key={field}>{field}</li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Identity */}
       <Card className="p-6 mb-6">
         <h2 className="font-display text-xl mb-4">Identité</h2>
@@ -333,21 +460,21 @@ export default function VisaForm() {
         <div className="grid md:grid-cols-2 gap-4">
           {T("surname", "Nom (comme sur le passeport) *")}
           {T("given_names", "Prénom(s) *")}
-          {T("other_names", "Autres noms (le cas échéant)")}
+          {T("other_names", "Autres noms / alias (le cas échéant)")}
           {T("date_of_birth", "Date de naissance *", "date")}
-          {T("place_of_birth_city", "Ville de naissance")}
-          {T("place_of_birth_state", "Région / Province")}
-          {T("place_of_birth_country", "Pays de naissance")}
-          {T("nationality", "Nationalité")}
-          {T("former_nationality", "Nationalité antérieure")}
-          {T("national_id_no", "N° pièce d'identité")}
-          <F label="Sexe">
+          {T("place_of_birth_city", "Ville de naissance *")}
+          {T("place_of_birth_state", "Région / Province *")}
+          {T("place_of_birth_country", "Pays de naissance *")}
+          {T("nationality", "Nationalité *")}
+          {T("former_nationality", "Nationalité antérieure (Optionnel)")}
+          {T("national_id_no", "N° pièce d'identité *")}
+          <F label={requiredLabel("Sexe")}>
             <RadioGroup disabled={isReadOnly} value={app.sex ?? ""} onValueChange={(v) => upd({ sex: v })} className="flex gap-4 mt-2">
               <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="male" /> Homme</label>
               <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="female" /> Femme</label>
             </RadioGroup>
           </F>
-          <F label="État civil">
+          <F label={requiredLabel("État civil")}>
             <RadioGroup disabled={isReadOnly} value={app.marital_status ?? ""} onValueChange={(v) => upd({ marital_status: v })} className="flex flex-wrap gap-3 mt-2">
               {[["single","Célibataire"],["married","Marié(e)"],["widowed","Veuf(ve)"],["divorced","Divorcé(e)"]].map(([v,l]) => (
                 <label key={v} className="flex items-center gap-2 text-sm"><RadioGroupItem value={v} /> {l}</label>
@@ -365,7 +492,7 @@ export default function VisaForm() {
           Le passeport doit être <strong className="text-foreground mx-1">valide au moins 6 mois</strong> après la date de retour prévue.
         </p>
         <div className="grid md:grid-cols-2 gap-4">
-          <F label="Type de passeport">
+          <F label={requiredLabel("Type de passeport")}>
             <RadioGroup disabled={isReadOnly} value={app.passport_type ?? "ordinary"} onValueChange={(v) => upd({ passport_type: v })} className="flex flex-wrap gap-3 mt-2">
               {[["diplomatic","Diplomatique"],["official","Officiel"],["ordinary","Ordinaire"],["other","Autre"]].map(([v,l]) => (
                 <label key={v} className="flex items-center gap-2 text-sm"><RadioGroupItem value={v} /> {l}</label>
@@ -373,10 +500,10 @@ export default function VisaForm() {
             </RadioGroup>
           </F>
           {T("passport_no", "Numéro de passeport *")}
-          {T("passport_place_of_issue", "Lieu de délivrance")}
-          {T("passport_date_of_issue", "Date de délivrance", "date")}
-          {T("passport_issuing_authority", "Autorité de délivrance")}
-          {T("passport_date_of_expiry", "Date d'expiration", "date")}
+          {T("passport_place_of_issue", "Lieu de délivrance *")}
+          {T("passport_date_of_issue", "Date de délivrance *", "date")}
+          {T("passport_issuing_authority", "Autorité de délivrance *")}
+          {T("passport_date_of_expiry", "Date d'expiration *", "date")}
           {T("certificate_of_eligibility_no", "N° Certificat d'éligibilité (le cas échéant)")}
         </div>
       </Card>
@@ -389,25 +516,55 @@ export default function VisaForm() {
           Les informations de vol, d'arrivée et d'hôtel sont préparées par notre équipe à partir de votre voyage.
         </p>
         <div className="grid md:grid-cols-2 gap-4">
-          {T("purpose_of_visit", "Motif du séjour")}
-          {T("intended_length_of_stay", "Durée prévue du séjour")}
-          {T("previous_stays", "Séjours précédents au Japon")}
+          {T("purpose_of_visit", "Motif du séjour *")}
+          <F label={requiredLabel("Durée prévue du séjour")}>
+            <Select disabled={isReadOnly} value={durationSource} onValueChange={selectDurationSource}>
+              <SelectTrigger className="min-h-11">
+                <SelectValue placeholder="Sélectionner une durée" />
+              </SelectTrigger>
+              <SelectContent>
+                {tripOptions.map((trip) => (
+                  <SelectItem key={trip.id} value={trip.id}>
+                    {[trip.title, trip.start_date, durationFromTrip(trip) ? `${durationFromTrip(trip)} jours` : null].filter(Boolean).join(" · ")}
+                  </SelectItem>
+                ))}
+                <SelectItem value="other">Autre</SelectItem>
+              </SelectContent>
+            </Select>
+            {selectedDurationTrip && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Durée reprise du voyage: {selectedDurationDays ? `${selectedDurationDays} jours` : "à compléter"}.
+              </p>
+            )}
+          </F>
+          {durationSource === "other" && (
+            <F label={requiredLabel("Nombre de jours")}>
+              <Input
+                type="number"
+                min="1"
+                disabled={isReadOnly}
+                value={manualDurationDays}
+                onChange={(e) => updateManualDuration(e.target.value)}
+              />
+            </F>
+          )}
+          {T("previous_stays", "Séjours précédents au Japon (Optionnel)")}
         </div>
       </Card>
 
       {/* Residence + Profession */}
       <Card className="p-6 mb-6">
-        <h2 className="font-display text-xl mb-4">Résidence & profession</h2>
+        <h2 className="font-display text-xl mb-4">Résidence, profession et école</h2>
         <div className="grid md:grid-cols-2 gap-4">
-          <div className="md:col-span-2">{T("residential_address", "Adresse de résidence")}</div>
-          {T("residential_tel", "Téléphone fixe")}
-          {T("residential_mobile", "Mobile")}
-          {T("residential_email", "Email", "email")}
-          {T("profession", "Profession actuelle")}
-          {T("partner_profession", "Profession du conjoint / parents (mineur)")}
-          {T("employer_name", "Nom de l'employeur")}
-          {T("employer_tel", "Téléphone employeur")}
-          <div className="md:col-span-2">{T("employer_address", "Adresse employeur")}</div>
+          <div className="md:col-span-2">{T("residential_address", "Adresse de résidence *")}</div>
+          {T("residential_tel", "Téléphone fixe *")}
+          {T("residential_mobile", "Mobile *")}
+          {T("residential_email", "Email *", "email")}
+          {T("profession", "Profession actuelle *")}
+          {T("partner_profession", "Profession du conjoint / parents, si mineur (Optionnel)")}
+          {T("employer_name", "Nom de l'employeur ou de l'école si étudiant *")}
+          {T("employer_tel", "Téléphone de l'employeur ou de l'école si étudiant *")}
+          <div className="md:col-span-2">{T("employer_address", "Adresse de l'employeur ou de l'école si étudiant *")}</div>
         </div>
       </Card>
 
@@ -536,7 +693,7 @@ export default function VisaForm() {
             <span>Je reconnais avoir lu et compris que <strong>l'agence assiste à la préparation de ma demande de visa mais ne garantit pas son approbation</strong> par les autorités consulaires japonaises.</span>
           </label>
           <div className="mt-4">
-            {T("date_of_application", "Date de la demande", "date")}
+            {T("date_of_application", "Date de la demande *", "date")}
           </div>
         </Card>
       )}

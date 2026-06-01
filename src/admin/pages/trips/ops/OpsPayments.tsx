@@ -9,6 +9,7 @@ import { Plus, Trash2, Download, Pencil } from "lucide-react";
 import { fmtMAD, fmtDate } from "@/lib/format";
 import { exportCsv } from "@/admin/lib/export-csv";
 import { toast } from "sonner";
+import { PAYMENT_METHOD_OPTIONS, normalisePaymentMethod, paymentMethodLabel } from "@/lib/payment-methods";
 
 export default function OpsPayments({ trip }: { trip: any }) {
   const [bookings, setBookings] = useState<any[]>([]);
@@ -82,7 +83,7 @@ export default function OpsPayments({ trip }: { trip: any }) {
       const b = bookings.find((x) => x.id === p.booking_id);
       return {
         date: p.paid_at, client: b?.contact_name, reservation: b?.reference,
-        montant: p.amount_mad, mode: p.method, commentaire: p.notes,
+        montant: p.amount_mad, mode: paymentMethodLabel(p.method), commentaire: p.notes,
         total: b?.total_amount_mad, reste: Number(b?.total_amount_mad || 0) - Number(b?.paid_amount_mad || 0),
       };
     }));
@@ -100,7 +101,7 @@ export default function OpsPayments({ trip }: { trip: any }) {
         <Button variant="outline" onClick={doExport}><Download className="w-4 h-4" /> Export CSV</Button>
         <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setEdit(null); }}>
           <DialogTrigger asChild>
-            <Button onClick={() => setEdit({ booking_id: bookings[0]?.id, amount_mad: 0, paid_at: new Date().toISOString().slice(0, 10), method: "virement", status: "paid" })}>
+            <Button onClick={() => setEdit({ booking_id: bookings[0]?.id, amount_mad: 0, paid_at: new Date().toISOString().slice(0, 10), method: "bank_transfer", status: "paid" })}>
               <Plus className="w-4 h-4" /> Ajouter paiement
             </Button>
           </DialogTrigger>
@@ -122,13 +123,12 @@ export default function OpsPayments({ trip }: { trip: any }) {
                   <div><Label>Montant (MAD)</Label><Input type="number" value={edit.amount_mad} onChange={(e) => setEdit({ ...edit, amount_mad: +e.target.value })} /></div>
                   <div>
                     <Label>Mode</Label>
-                    <Select value={edit.method || ""} onValueChange={(v) => setEdit({ ...edit, method: v })}>
+                    <Select value={normalisePaymentMethod(edit.method)} onValueChange={(v) => setEdit({ ...edit, method: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="virement">Virement</SelectItem>
-                        <SelectItem value="cheque">Chèque</SelectItem>
-                        <SelectItem value="especes">Espèces</SelectItem>
-                        <SelectItem value="carte">Carte</SelectItem>
+                        {PAYMENT_METHOD_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -153,12 +153,12 @@ export default function OpsPayments({ trip }: { trip: any }) {
       </div>
 
       <div className="bg-background rounded-2xl border border-border overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[920px] table-auto text-sm">
           <thead className="bg-secondary/50 text-left">
             <tr>
-              <th className="p-3">Date</th><th className="p-3">Client</th><th className="p-3">Réservation</th>
-              <th className="p-3">Montant</th><th className="p-3">Mode</th><th className="p-3">Commentaire</th>
-              <th className="p-3">Total</th><th className="p-3">Reste</th><th className="p-3"></th>
+              <th className="p-3 whitespace-nowrap">Date</th><th className="min-w-[170px] whitespace-normal p-3">Client</th><th className="p-3 whitespace-nowrap">Réservation</th>
+              <th className="p-3 whitespace-nowrap">Montant</th><th className="min-w-[150px] whitespace-normal p-3">Mode</th><th className="min-w-[180px] whitespace-normal p-3">Commentaire</th>
+              <th className="p-3 whitespace-nowrap">Total</th><th className="p-3 whitespace-nowrap">Reste</th><th className="p-3 whitespace-nowrap"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -171,7 +171,7 @@ export default function OpsPayments({ trip }: { trip: any }) {
                   <td className="p-3">{b?.contact_name}</td>
                   <td className="p-3 font-mono text-xs">{b?.reference}</td>
                   <td className="p-3">{fmtMAD(p.amount_mad)}</td>
-                  <td className="p-3">{p.method}</td>
+                  <td className="p-3">{paymentMethodLabel(p.method)}</td>
                   <td className="p-3">{p.notes ?? "—"}</td>
                   <td className="p-3">{fmtMAD(b?.total_amount_mad)}</td>
                   <td className="p-3">{fmtMAD(Number(b?.total_amount_mad || 0) - Number(b?.paid_amount_mad || 0))}</td>

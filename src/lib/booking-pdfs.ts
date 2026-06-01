@@ -3,6 +3,7 @@ import logoUrl from "@/assets/logo-moroccan-express.png";
 import logoJaponUrl from "@/assets/logo-lejapon.png";
 import stampUrl from "@/assets/stamp-moroccan-express.png";
 import { agencyAddressLine, agencyIceLine, normalizeAgencySettings, type AgencySettings } from "@/lib/agency-settings";
+import { paymentMethodLabel } from "@/lib/payment-methods";
 
 const RED = rgb(0.78, 0.07, 0.10);
 const BLACK = rgb(0.07, 0.07, 0.07);
@@ -225,6 +226,7 @@ export type QuoteData = {
   booking: any;
   trip?: { title?: string; season?: string | null; start_date?: string | null; end_date?: string | null } | null;
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
+  discount?: { label?: string | null; amount?: number | null; type?: "fixed_amount" | "percentage" | string | null; reason?: string | null } | null;
   number: string;
   validUntil?: Date;
   agency?: Partial<AgencySettings> | null;
@@ -271,7 +273,11 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
   y -= Math.max(clientLines.length, tripLines.length) * 13 + 50;
   const pax = (b.num_adults || 0) + (b.num_children || 0);
   const extrasTotal = (d.extras ?? []).reduce((s, e) => s + e.qty * Number(e.unit_price_mad || 0), 0);
-  const peopleTotal = Math.max(0, Number(b.total_amount_mad || 0) - extrasTotal);
+  const rawDiscount = d.discount ?? b.quote_discount ?? null;
+  const discountAmount = rawDiscount?.type === "percentage"
+    ? Math.round(Number(b.total_amount_mad || 0) * Number(rawDiscount.amount || 0) / 100)
+    : Number(rawDiscount?.amount || 0);
+  const peopleTotal = Math.max(0, Number(b.total_amount_mad || 0) - extrasTotal + discountAmount);
   const perPax = pax > 0 ? peopleTotal / pax : peopleTotal;
   const rows = [
     {
@@ -286,16 +292,23 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
       unit: fmtMad(Number(e.unit_price_mad)),
       total: fmtMad(e.qty * Number(e.unit_price_mad)),
     })),
+    ...(discountAmount > 0 ? [{
+      label: rawDiscount?.label || "Réduction",
+      qty: rawDiscount?.type === "percentage" ? `${Number(rawDiscount.amount || 0)}%` : "1",
+      unit: `-${fmtMad(discountAmount)}`,
+      total: `-${fmtMad(discountAmount)}`,
+    }] : []),
   ];
   y = table(page, font, fontB, 40, y, 515, rows);
 
   // Totals
-  const total = Number(b.total_amount_mad || 0);
+  const total = Math.max(0, Number(b.total_amount_mad || 0) - discountAmount);
   const paid = Number(b.paid_amount_mad || 0);
   const remaining = Math.max(0, total - paid);
   const paxCount = (b.num_adults || 0) + (b.num_children || 0);
   const deposit = paxCount * 25000;
   y = totalsBlock(page, font, fontB, 40, y, 515, [
+    ...(discountAmount > 0 ? [{ label: "Réduction", value: `-${fmtMad(discountAmount)}` }] : []),
     { label: "Total HT", value: fmtMad(total) },
     { label: "Total TTC", value: fmtMad(total), bold: true },
     { label: `Acompte demandé (25 000 MAD × ${paxCount} pers.)`, value: fmtMad(deposit), accent: true },
@@ -387,7 +400,7 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   drawText(page, "Détail du paiement", 40, y, fontB, 10, RED); y -= 6;
   y = table(page, font, fontB, 40, y, 515, [
     {
-      label: `Paiement reçu — ${d.payment.method || "virement"}${d.payment.reference ? " (réf. " + d.payment.reference + ")" : ""}`,
+      label: `Paiement reçu — ${paymentMethodLabel(d.payment.method)}${d.payment.reference ? " (réf. " + d.payment.reference + ")" : ""}`,
       qty: "1",
       unit: fmtMad(Number(d.payment.amount_mad)),
       total: fmtMad(Number(d.payment.amount_mad)),

@@ -16,6 +16,14 @@ import { useAgencyContext } from "../useAgencyContext";
 import type { AgencyBooking, CommissionRule } from "../agencyTypes";
 import { AgencyStatusBadge } from "../components/AgencyStatusBadge";
 import { commissionRuleColumns, getCommissionScopeLabel } from "../commissionEngine";
+import {
+  HOTEL_SUPPLEMENT,
+  PUBLIC_HOTEL_OPTIONS,
+  PUBLIC_ROOM_LABELS,
+  getRoomAdjustmentPerPerson,
+  type PublicHotelKey,
+  type PublicRoomKey,
+} from "@/lib/booking-options";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
@@ -23,29 +31,13 @@ const db = supabase as unknown as DbClient;
 const PAGE_SIZE = 20;
 const bookingColumns = "id,reference,contact_name,contact_email,contact_phone,status,total_amount_mad,paid_amount_mad,created_at,preferred_dates,trip_id,agency_organization_id,assigned_to,agency_attributed_at,trips:trip_id(id,title,start_date,end_date,destination)";
 const requestColumns = "id,organization_id,requested_by,client_full_name,client_email,client_phone,trip_interest,travelers_count,preferred_departure_date,message,status,metadata,created_at";
-const tripColumns = "id,title,season,start_date,end_date,destination,destinations,base_price_mad,slots_left,status,label";
+const tripColumns = "id,title,slug,season,start_date,end_date,destination,destinations,base_price_mad,slots_left,status,label,program_link,programme_id";
 const extraColumns = "id,name,description,price_mad,category,city,sort_order";
 
-const SINGLE_SUPPLEMENT_MAD = 15000;
-const TRIPLE_DISCOUNT_PER_PERSON_MAD = 1000;
-const HOTEL_CATEGORY_SUPPLEMENTS: Record<HotelCategory, number> = {
-  standard: 0,
-  superior: 2500,
-  premium: 5000,
-};
-
-const ROOM_TYPE_LABELS: Record<RoomType, string> = {
-  single: "Single",
-  double: "Double",
-  twin: "Twin",
-  triple: "Triple",
-};
-
-const HOTEL_CATEGORY_LABELS: Record<HotelCategory, string> = {
-  standard: "Standard",
-  superior: "Supérieur",
-  premium: "Premium",
-};
+const ROOM_TYPE_LABELS = PUBLIC_ROOM_LABELS;
+const HOTEL_CATEGORY_LABELS = Object.fromEntries(
+  Object.entries(PUBLIC_HOTEL_OPTIONS).map(([key, value]) => [key, value.name])
+) as Record<HotelCategory, string>;
 
 type AgencyBookingRequestStatus = "new" | "contacted" | "quoted" | "converted" | "rejected";
 
@@ -65,12 +57,13 @@ type AgencyBookingRequest = {
   created_at: string;
 };
 
-type RoomType = "single" | "double" | "twin" | "triple";
-type HotelCategory = "standard" | "superior" | "premium";
+type RoomType = PublicRoomKey;
+type HotelCategory = PublicHotelKey;
 
 type TripOption = {
   id: string;
   title: string;
+  slug: string | null;
   season: string | null;
   start_date: string | null;
   end_date: string | null;
@@ -80,6 +73,8 @@ type TripOption = {
   slots_left: number | null;
   status: string | null;
   label: string | null;
+  program_link: string | null;
+  programme_id: string | null;
 };
 
 type ExtraOption = {
@@ -93,9 +88,13 @@ type ExtraOption = {
 };
 
 type SelectedExtraMetadata = {
-  id: string;
+  extra_id?: string;
+  id?: string;
   name: string;
+  unit_price?: number | null;
   price_mad: number | null;
+  quantity?: number;
+  total?: number | null;
 };
 
 type RequestMetadata = {
@@ -117,6 +116,11 @@ type RequestMetadata = {
   commission_rule_id?: string | null;
   commission_rule_label?: string | null;
   special_requests?: string | null;
+  payment_status?: "unpaid" | "paid" | null;
+  payment_type?: "cash" | "bank_transfer" | "card" | "cheque" | "other" | null;
+  payment_date?: string | null;
+  paid_amount?: number | null;
+  payment_notes?: string | null;
 };
 
 type RequestForm = {
@@ -125,10 +129,9 @@ type RequestForm = {
   client_phone: string;
   trip_id: string;
   travelers_count: string;
-  preferred_departure_date: string;
   room_type: RoomType;
   hotel_category: HotelCategory;
-  selected_extra_ids: string[];
+  selected_extras: Record<string, number>;
   special_requests: string;
 };
 
@@ -138,10 +141,9 @@ const emptyRequestForm = (): RequestForm => ({
   client_phone: "",
   trip_id: "",
   travelers_count: "1",
-  preferred_departure_date: "",
   room_type: "double",
-  hotel_category: "standard",
-  selected_extra_ids: [],
+  hotel_category: "modern",
+  selected_extras: {},
   special_requests: "",
 });
 
@@ -151,6 +153,18 @@ const REQUEST_STATUS_LABELS: Record<AgencyBookingRequestStatus, string> = {
   quoted: "Devis envoyé",
   converted: "Convertie",
   rejected: "Rejetée",
+};
+
+const getVisualAgencyRequestStatus = (request: AgencyBookingRequest) => {
+  if (request.metadata?.payment_status === "paid") return "paid";
+  if (request.status === "converted") return "confirmed";
+  return "lead";
+};
+
+const VISUAL_REQUEST_STATUS_LABELS: Record<"lead" | "confirmed" | "paid", string> = {
+  lead: "Lead",
+  confirmed: "Confirmé",
+  paid: "Payé",
 };
 
 const normalize = (value: unknown) =>
@@ -169,12 +183,6 @@ const formatTripDates = (trip: Pick<TripOption, "start_date" | "end_date" | "sea
 
 const getTripDestination = (trip: TripOption | null) =>
   trip?.destination || trip?.destinations?.filter(Boolean).join(", ") || null;
-
-const getRoomSupplement = (roomType: RoomType) => {
-  if (roomType === "single") return SINGLE_SUPPLEMENT_MAD;
-  if (roomType === "triple") return -TRIPLE_DISCOUNT_PER_PERSON_MAD;
-  return 0;
-};
 
 const isRuleEffective = (rule: CommissionRule) => {
   const today = new Date().toISOString().slice(0, 10);
@@ -428,31 +436,50 @@ export default function AgencyBookings() {
     setRequestForm((current) => ({ ...current, [key]: value }));
   };
 
-  const toggleExtra = (extraId: string) => {
+  const setExtraQuantity = (extraId: string, quantity: number) => {
+    const safeQuantity = Math.max(0, Math.floor(Number.isFinite(quantity) ? quantity : 0));
     setRequestForm((current) => ({
       ...current,
-      selected_extra_ids: current.selected_extra_ids.includes(extraId)
-        ? current.selected_extra_ids.filter((id) => id !== extraId)
-        : [...current.selected_extra_ids, extraId],
+      selected_extras: {
+        ...current.selected_extras,
+        [extraId]: safeQuantity,
+      },
     }));
   };
 
   const selectedTrip = tripOptions.find((trip) => trip.id === requestForm.trip_id) ?? null;
-  const selectedExtras = extraOptions.filter((extra) => requestForm.selected_extra_ids.includes(extra.id));
+  const selectedExtras = extraOptions
+    .map((extra) => ({ extra, quantity: Number(requestForm.selected_extras[extra.id] ?? 0) }))
+    .filter((item) => item.quantity > 0);
   const travelersCount = Number(requestForm.travelers_count);
   const safeTravelersCount = Number.isFinite(travelersCount) && travelersCount > 0 ? travelersCount : 1;
   const tripBasePrice = selectedTrip?.base_price_mad ?? null;
   const basePriceTotal = tripBasePrice === null ? null : tripBasePrice * safeTravelersCount;
-  const roomSupplementPerTraveler = getRoomSupplement(requestForm.room_type);
-  const hotelSupplementPerTraveler = HOTEL_CATEGORY_SUPPLEMENTS[requestForm.hotel_category] ?? 0;
+  const roomSupplementPerTraveler = getRoomAdjustmentPerPerson(requestForm.room_type);
+  const hotelSupplementPerTraveler = HOTEL_SUPPLEMENT[requestForm.hotel_category] ?? 0;
   const roomSupplementTotal = roomSupplementPerTraveler * safeTravelersCount;
   const hotelSupplementTotal = hotelSupplementPerTraveler * safeTravelersCount;
-  const extrasTotal = selectedExtras.reduce((sum, extra) => sum + Number(extra.price_mad ?? 0), 0);
+  const extrasTotal = selectedExtras.reduce((sum, item) => sum + Number(item.extra.price_mad ?? 0) * item.quantity, 0);
   const estimatedTotal = basePriceTotal === null
     ? null
     : basePriceTotal + roomSupplementTotal + hotelSupplementTotal + extrasTotal;
   const applicableCommissionRule = getApplicableRuleForRequest(commissionRules, selectedTrip);
   const estimatedCommission = calculateCommission(estimatedTotal, applicableCommissionRule);
+  const derivedDepartureDate = selectedTrip?.start_date ?? null;
+  const roomWarnings = [
+    safeTravelersCount === 1 && requestForm.room_type !== "single"
+      ? "Attention: chambre prévue pour plusieurs personnes."
+      : null,
+    safeTravelersCount >= 2 && requestForm.room_type === "single"
+      ? "Attention: chambre single pour un seul voyageur."
+      : null,
+    requestForm.room_type === "triple" && safeTravelersCount < 3
+      ? "Attention: chambre triple avec moins de 3 voyageurs."
+      : null,
+  ].filter(Boolean);
+  const extraWarnings = selectedExtras
+    .filter((item) => item.quantity > safeTravelersCount)
+    .map((item) => `Attention: quantité ${item.quantity} pour ${item.extra.name}, supérieure au nombre de voyageurs.`);
 
   const submitRequest = async () => {
     if (!organization || !user || !isActiveAgency) return;
@@ -492,10 +519,14 @@ export default function AgencyBookings() {
       destination: getTripDestination(selectedTrip),
       room_type: requestForm.room_type,
       hotel_category: requestForm.hotel_category,
-      selected_extras: selectedExtras.map((extra) => ({
+      selected_extras: selectedExtras.map(({ extra, quantity }) => ({
+        extra_id: extra.id,
         id: extra.id,
         name: extra.name,
+        unit_price: extra.price_mad,
         price_mad: extra.price_mad,
+        quantity,
+        total: extra.price_mad === null || extra.price_mad === undefined ? null : Number(extra.price_mad) * quantity,
       })),
       base_price: tripBasePrice,
       room_supplement: roomSupplementTotal,
@@ -506,6 +537,7 @@ export default function AgencyBookings() {
       commission_rule_id: applicableCommissionRule?.id ?? null,
       commission_rule_label: applicableCommissionRule ? getCommissionScopeLabel(applicableCommissionRule) : null,
       special_requests: requestForm.special_requests.trim() || null,
+      payment_status: "unpaid",
     };
 
     setRequestSaving(true);
@@ -517,7 +549,7 @@ export default function AgencyBookings() {
       client_phone: requestForm.client_phone.trim() || null,
       trip_interest: selectedTrip.title,
       travelers_count: travelersCount,
-      preferred_departure_date: requestForm.preferred_departure_date || selectedTrip.start_date || null,
+      preferred_departure_date: derivedDepartureDate,
       message: requestForm.special_requests.trim() || null,
       metadata,
       status: "new",
@@ -663,7 +695,7 @@ export default function AgencyBookings() {
                         ? "Commission non renseignée"
                         : fmtMAD(request.metadata.estimated_commission)}
                     </td>
-                    <td className="p-4">{REQUEST_STATUS_LABELS[request.status] ?? request.status}</td>
+                    <td className="p-4">{VISUAL_REQUEST_STATUS_LABELS[getVisualAgencyRequestStatus(request)]}</td>
                     <td className="p-4 text-xs text-muted-foreground">{fmtDateTime(request.created_at)}</td>
                   </tr>
                 ))}
@@ -796,7 +828,23 @@ export default function AgencyBookings() {
               {tripsError && <p className="text-xs text-destructive">{tripsError}</p>}
               {selectedTrip ? (
                 <div className="rounded-xl border border-border bg-secondary/35 p-3 text-sm">
-                  <p className="font-semibold">{selectedTrip.title}</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <p className="font-semibold">{selectedTrip.title}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button asChild type="button" variant="outline" size="sm">
+                        <Link to={`/agency/trips?trip=${selectedTrip.id}`} target="_blank">
+                          Voir le voyage
+                        </Link>
+                      </Button>
+                      {selectedTrip.programme_id && (
+                        <Button asChild type="button" variant="outline" size="sm">
+                          <Link to={`/agency/programmes?programme=${selectedTrip.programme_id}`} target="_blank">
+                            Voir le programme
+                          </Link>
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                   <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                     <span>Destination: {getTripDestination(selectedTrip) || "—"}</span>
                     <span>Départ: {formatTripDates(selectedTrip)}</span>
@@ -811,8 +859,9 @@ export default function AgencyBookings() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>Date de départ souhaitée</Label>
-              <Input type="date" value={requestForm.preferred_departure_date} onChange={(event) => updateRequestForm("preferred_departure_date", event.target.value)} />
+              <Label>Date de départ</Label>
+              <Input type="date" value={derivedDepartureDate ?? ""} readOnly className="bg-secondary/40" />
+              <p className="text-xs text-muted-foreground">Date automatiquement reprise depuis le voyage sélectionné.</p>
             </div>
             <div className="space-y-2">
               <Label>Type de chambre</Label>
@@ -826,16 +875,26 @@ export default function AgencyBookings() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Catégorie hôtel</Label>
+              <Label>Hébergement Kyoto</Label>
               <Select value={requestForm.hotel_category} onValueChange={(value) => updateRequestForm("hotel_category", value as HotelCategory)}>
                 <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(HOTEL_CATEGORY_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  {Object.entries(PUBLIC_HOTEL_OPTIONS).map(([value, option]) => (
+                    <SelectItem key={value} value={value}>{option.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                {PUBLIC_HOTEL_OPTIONS[requestForm.hotel_category].desc}
+              </p>
             </div>
+            {[...roomWarnings, ...extraWarnings].length > 0 && (
+              <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                {[...roomWarnings, ...extraWarnings].map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </div>
+            )}
             <div className="space-y-2 md:col-span-2">
               <Label>Extras</Label>
               {extrasError && <p className="text-xs text-destructive">{extrasError}</p>}
@@ -846,13 +905,11 @@ export default function AgencyBookings() {
               ) : (
                 <div className="grid gap-2 sm:grid-cols-2">
                   {extraOptions.map((extra) => {
-                    const checked = requestForm.selected_extra_ids.includes(extra.id);
+                    const quantity = Number(requestForm.selected_extras[extra.id] ?? 0);
                     return (
-                      <button
+                      <div
                         key={extra.id}
-                        type="button"
-                        onClick={() => toggleExtra(extra.id)}
-                        className={`rounded-xl border p-3 text-left text-sm transition ${checked ? "border-accent bg-accent/10" : "border-border hover:bg-secondary/50"}`}
+                        className={`rounded-xl border p-3 text-left text-sm transition ${quantity > 0 ? "border-accent bg-accent/10" : "border-border"}`}
                       >
                         <span className="flex items-start justify-between gap-3">
                           <span>
@@ -863,7 +920,22 @@ export default function AgencyBookings() {
                             {extra.price_mad === null || extra.price_mad === undefined ? "Prix non renseigné" : fmtMAD(extra.price_mad)}
                           </span>
                         </span>
-                      </button>
+                        <div className="mt-3 flex items-center gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setExtraQuantity(extra.id, quantity - 1)} disabled={quantity <= 0}>-</Button>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={quantity}
+                            onChange={(event) => setExtraQuantity(extra.id, Number(event.target.value))}
+                            className="h-9 w-20 text-center"
+                            aria-label={`Quantité ${extra.name}`}
+                          />
+                          <Button type="button" variant="outline" size="sm" onClick={() => setExtraQuantity(extra.id, quantity + 1)}>+</Button>
+                          <span className="text-xs text-muted-foreground">
+                            Total: {extra.price_mad === null || extra.price_mad === undefined ? "prix non renseigné" : fmtMAD(Number(extra.price_mad) * quantity)}
+                          </span>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -871,7 +943,7 @@ export default function AgencyBookings() {
               {selectedExtras.length > 0 && (
                 <div className="rounded-xl bg-secondary/40 p-3 text-xs text-muted-foreground">
                   <p className="font-medium text-foreground">Extras sélectionnés</p>
-                  <p>{selectedExtras.map((extra) => `${extra.name} (${extra.price_mad === null || extra.price_mad === undefined ? "prix non renseigné" : fmtMAD(extra.price_mad)})`).join(" · ")}</p>
+                  <p>{selectedExtras.map(({ extra, quantity }) => `${extra.name} x${quantity} (${extra.price_mad === null || extra.price_mad === undefined ? "prix non renseigné" : fmtMAD(Number(extra.price_mad) * quantity)})`).join(" · ")}</p>
                 </div>
               )}
             </div>
