@@ -3,6 +3,7 @@ import {
   Archive,
   Building2,
   CheckCircle2,
+  Download,
   Edit,
   Loader2,
   PauseCircle,
@@ -66,9 +67,8 @@ type OrganizationType = "internal" | "agency" | "japan_partner" | "supplier";
 type OrganizationStatus = "pending" | "active" | "suspended" | "archived";
 type OrganizationRole = "owner" | "admin" | "agent" | "finance" | "operations" | "viewer";
 type MemberStatus = "active" | "suspended";
-type CommissionScopeType = "global" | "destination" | "product";
+type CommissionScopeType = "agency_default" | "destination" | "product" | "trip_override";
 type CommissionType = "percentage" | "fixed_amount";
-type CommissionAppliesTo = "booking_total" | "base_trip_price";
 type CommissionStatus = "active" | "inactive" | "archived";
 
 type OrganizationRow = {
@@ -152,6 +152,26 @@ type OnboardingReview = {
   error: string | null;
 };
 
+type OnboardingEditForm = {
+  agency_information: {
+    legal_name: string;
+    commercial_name: string;
+    registration_number: string;
+    tax_number: string;
+    website: string;
+    address: string;
+    city: string;
+    country: string;
+  };
+  contact_person: {
+    full_name: string;
+    position: string;
+    email: string;
+    phone: string;
+  };
+  review_notes: string;
+};
+
 type ExistingUserRow = {
   id: string;
   email: string | null;
@@ -216,37 +236,25 @@ type CommissionRuleRow = {
   id: string;
   organization_id: string;
   scope: CommissionScopeType;
-  destination: string | null;
-  product_trip_id: string | null;
-  rule_name: string | null;
-  commission_type: CommissionType;
-  commission_value: number;
+  rule_type: CommissionType;
+  value: number;
   currency: string;
-  applies_to: CommissionAppliesTo;
-  effective_from: string;
-  effective_to: string | null;
+  destination: string | null;
+  product_type: string | null;
+  trip_id: string | null;
   status: CommissionStatus;
-  priority: number | null;
   notes: string | null;
-  metadata: Record<string, unknown> | null;
-  created_by: string | null;
-  created_at: string | null;
-  updated_at: string | null;
 };
 
 type CommissionRuleForm = {
   scope: CommissionScopeType;
   destination: string;
-  product_trip_id: string;
-  rule_name: string;
-  commission_type: CommissionType;
-  commission_value: string;
+  product_type: string;
+  trip_id: string;
+  rule_type: CommissionType;
+  value: string;
   currency: string;
-  applies_to: CommissionAppliesTo;
-  effective_from: string;
-  effective_to: string;
   status: CommissionStatus;
-  priority: string;
   notes: string;
 };
 
@@ -344,22 +352,14 @@ const COMMISSION_RULE_COLUMNS = [
   "id",
   "organization_id",
   "scope",
-  "destination",
-  "product_trip_id",
-  "rule_name",
-  "commission_type",
-  "commission_value",
+  "rule_type",
+  "value",
   "currency",
-  "applies_to",
-  "effective_from",
-  "effective_to",
+  "destination",
+  "product_type",
+  "trip_id",
   "status",
-  "priority",
   "notes",
-  "metadata",
-  "created_by",
-  "created_at",
-  "updated_at",
 ].join(",");
 
 const TYPE_LABELS: Record<OrganizationType, string> = {
@@ -469,36 +469,36 @@ const toAgencyProfileForm = (profile: AgencyProfileRow | null): AgencyProfileFor
 };
 
 const defaultRuleForm = (): CommissionRuleForm => ({
-  scope: "global",
+  scope: "agency_default",
   destination: "",
-  product_trip_id: "",
-  rule_name: "",
-  commission_type: "percentage",
-  commission_value: "",
+  product_type: "",
+  trip_id: "",
+  rule_type: "percentage",
+  value: "",
   currency: "MAD",
-  applies_to: "booking_total",
-  effective_from: new Date().toISOString().slice(0, 10),
-  effective_to: "",
   status: "active",
-  priority: "100",
   notes: "",
 });
 
 const toRuleForm = (rule: CommissionRuleRow): CommissionRuleForm => ({
   scope: rule.scope,
   destination: rule.destination ?? "",
-  product_trip_id: rule.product_trip_id ?? "",
-  rule_name: rule.rule_name ?? "",
-  commission_type: rule.commission_type,
-  commission_value: String(rule.commission_value ?? ""),
+  product_type: rule.product_type ?? "",
+  trip_id: rule.trip_id ?? "",
+  rule_type: rule.rule_type,
+  value: String(rule.value ?? ""),
   currency: rule.currency ?? "MAD",
-  applies_to: rule.applies_to ?? "booking_total",
-  effective_from: rule.effective_from ?? new Date().toISOString().slice(0, 10),
-  effective_to: rule.effective_to ?? "",
   status: rule.status ?? "active",
-  priority: rule.priority == null ? "100" : String(rule.priority),
   notes: rule.notes ?? "",
 });
+
+const getCommissionRuleLabel = (rule: Pick<CommissionRuleRow, "scope" | "destination" | "product_type">) => {
+  if (rule.scope === "agency_default") return "Commission globale";
+  if (rule.scope === "destination") return `Destination: ${rule.destination || "—"}`;
+  if (rule.scope === "product") return `Produit: ${rule.product_type || "—"}`;
+  if (rule.scope === "trip_override") return "Voyage spécifique";
+  return rule.scope;
+};
 
 const defaultForm = (): OrganizationForm => ({
   display_name: "",
@@ -574,6 +574,29 @@ const normalizeOnboardingMetadata = (metadata: Record<string, any> | null | unde
   };
 };
 
+const onboardingEditFormFromCase = (caseRow: Record<string, any> | null): OnboardingEditForm => {
+  const metadata = normalizeOnboardingMetadata(caseRow?.form_data);
+  return {
+    agency_information: {
+      legal_name: metadata.agency_information.legal_name ?? "",
+      commercial_name: metadata.agency_information.commercial_name ?? "",
+      registration_number: metadata.agency_information.registration_number ?? "",
+      tax_number: metadata.agency_information.tax_number ?? "",
+      website: metadata.agency_information.website ?? "",
+      address: metadata.agency_information.address ?? "",
+      city: metadata.agency_information.city ?? "",
+      country: metadata.agency_information.country ?? "",
+    },
+    contact_person: {
+      full_name: metadata.contact_person.full_name ?? "",
+      position: metadata.contact_person.position ?? "",
+      email: metadata.contact_person.email ?? "",
+      phone: metadata.contact_person.phone ?? "",
+    },
+    review_notes: cleanUnknown(caseRow?.review_notes) ?? "",
+  };
+};
+
 const buildOnboardingDisplayData = (
   metadata: ReturnType<typeof normalizeOnboardingMetadata> | null,
   agencyProfile: AgencyProfileRow | null,
@@ -640,8 +663,9 @@ const memberDisplay = (member: OrganizationMemberRow, fallbackUser?: ExistingUse
 const isMissingAgencyProfileTableError = (message: string) =>
   /agency_profiles|schema cache|relation .* does not exist|could not find/i.test(message);
 
-const isMissingCommissionRulesTableError = (message: string) =>
-  /commission_engine_rules|commission_rules|schema cache|relation .* does not exist|could not find/i.test(message);
+const isMissingCommissionRulesTableError = (error: { code?: string | null; message?: string | null }) =>
+  ["42P01", "PGRST205", "PGRST204"].includes(String(error.code ?? "")) ||
+  /could not find the table/i.test(error.message ?? "");
 
 const isMissingOptionalRelationError = (message: string) =>
   /schema cache|relation .* does not exist|does not exist|could not find|column .* does not exist/i.test(message);
@@ -670,6 +694,10 @@ export default function OrganizationsAdmin() {
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [onboardingReview, setOnboardingReview] = useState<OnboardingReview | null>(null);
   const [onboardingBusy, setOnboardingBusy] = useState(false);
+  const [onboardingEditMode, setOnboardingEditMode] = useState(false);
+  const [onboardingEditForm, setOnboardingEditForm] = useState<OnboardingEditForm>(() => onboardingEditFormFromCase(null));
+  const [documentDownloadBusy, setDocumentDownloadBusy] = useState<string | null>(null);
+  const [documentDownloadError, setDocumentDownloadError] = useState<string | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
   const [memberOrganization, setMemberOrganization] = useState<OrganizationRow | null>(null);
   const [members, setMembers] = useState<OrganizationMemberRow[]>([]);
@@ -697,6 +725,11 @@ export default function OrganizationsAdmin() {
   const [commissionRules, setCommissionRules] = useState<CommissionRuleRow[]>([]);
   const [commissionRulesLoading, setCommissionRulesLoading] = useState(false);
   const [commissionRulesError, setCommissionRulesError] = useState<string | null>(null);
+  const [commissionRulesDebug, setCommissionRulesDebug] = useState<{
+    code: string | null;
+    message: string | null;
+    rowsLength: number;
+  }>({ code: null, message: null, rowsLength: 0 });
   const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<CommissionRuleRow | null>(null);
   const [ruleForm, setRuleForm] = useState<CommissionRuleForm>(defaultRuleForm);
@@ -1026,6 +1059,8 @@ export default function OrganizationsAdmin() {
 
   const openOnboardingReview = async (organization: OrganizationRow) => {
     setOnboardingReview({ organization, caseRow: null, agencyProfile: null, documents: [], loading: true, error: null });
+    setOnboardingEditMode(false);
+    setDocumentDownloadError(null);
 
     const [{ data, error }, profileResult] = await Promise.all([
       db
@@ -1054,14 +1089,31 @@ export default function OrganizationsAdmin() {
       }
     }
 
-    setOnboardingReview({
+    console.log("[admin/onboarding validation diagnostic]", {
+      query: {
+        case:
+          "partner_onboarding_cases.select(*).eq(organization_id).order(created_at desc).limit(1).maybeSingle()",
+        form_data: "partner_onboarding_cases.form_data",
+        documents: "partner_onboarding_documents.select(*).eq(onboarding_case_id).order(created_at desc)",
+      },
+      onboarding_case: data ?? null,
+      form_data: data?.form_data ?? null,
+      partner_onboarding_documents: documents,
+      agency_profile: profileResult.error ? null : profileResult.data ?? null,
+      organization,
+      error: error ?? null,
+    });
+
+    const nextReview = {
       organization,
       caseRow: (data ?? null) as Record<string, any> | null,
       agencyProfile: profileResult.error ? null : ((profileResult.data ?? null) as AgencyProfileRow | null),
       documents,
       loading: false,
       error: error?.message ?? null,
-    });
+    };
+    setOnboardingEditForm(onboardingEditFormFromCase(nextReview.caseRow));
+    setOnboardingReview(nextReview);
   };
 
   const reviewOnboarding = async (status: "approved" | "rejected") => {
@@ -1118,6 +1170,100 @@ export default function OrganizationsAdmin() {
     setOnboardingBusy(false);
   };
 
+  const downloadOnboardingDocument = async (document: Record<string, any>) => {
+    const filePath = cleanUnknown(document.file_path) ?? cleanUnknown(document.storage_path);
+    const documentId = cleanUnknown(document.id) ?? filePath ?? String(document.document_type ?? "document");
+    if (!filePath) {
+      setDocumentDownloadError("Chemin de fichier introuvable pour ce document.");
+      toast.error("Chemin de fichier introuvable pour ce document.");
+      return;
+    }
+
+    setDocumentDownloadBusy(documentId);
+    setDocumentDownloadError(null);
+    const { data, error } = await supabase.storage.from("partner-onboarding").createSignedUrl(filePath, 120);
+    setDocumentDownloadBusy(null);
+
+    if (error || !data?.signedUrl) {
+      const message = error?.message ?? "Impossible de créer un lien de téléchargement sécurisé.";
+      setDocumentDownloadError(message);
+      toast.error(message);
+      return;
+    }
+
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const updateOnboardingAgencyField = (
+    key: keyof OnboardingEditForm["agency_information"],
+    value: string
+  ) => {
+    setOnboardingEditForm((current) => ({
+      ...current,
+      agency_information: { ...current.agency_information, [key]: value },
+    }));
+  };
+
+  const updateOnboardingContactField = (
+    key: keyof OnboardingEditForm["contact_person"],
+    value: string
+  ) => {
+    setOnboardingEditForm((current) => ({
+      ...current,
+      contact_person: { ...current.contact_person, [key]: value },
+    }));
+  };
+
+  const saveOnboardingDossier = async () => {
+    if (!onboardingReview?.caseRow?.id) return;
+    setOnboardingBusy(true);
+    const existingFormData =
+      onboardingReview.caseRow.form_data && typeof onboardingReview.caseRow.form_data === "object"
+        ? onboardingReview.caseRow.form_data
+        : {};
+    const nextFormData = {
+      ...existingFormData,
+      agency_information: onboardingEditForm.agency_information,
+      contact_person: onboardingEditForm.contact_person,
+    };
+    const payload = {
+      form_data: nextFormData,
+      review_notes: clean(onboardingEditForm.review_notes),
+    };
+
+    let { data, error } = await db
+      .from("partner_onboarding_cases")
+      .update(payload)
+      .eq("id", onboardingReview.caseRow.id)
+      .select("*")
+      .single();
+
+    if (error && isMissingOptionalRelationError(error.message ?? "")) {
+      const fallback = await db
+        .from("partner_onboarding_cases")
+        .update({ form_data: nextFormData })
+        .eq("id", onboardingReview.caseRow.id)
+        .select("*")
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+      if (!fallback.error) toast.warning("Notes de revue non enregistrées: colonne review_notes indisponible.");
+    }
+
+    if (error) {
+      toast.error(error.message ?? "Impossible d'enregistrer le dossier onboarding.");
+      setOnboardingBusy(false);
+      return;
+    }
+
+    const updatedCase = data as Record<string, any>;
+    setOnboardingReview((current) => current ? { ...current, caseRow: updatedCase } : current);
+    setOnboardingEditForm(onboardingEditFormFromCase(updatedCase));
+    setOnboardingEditMode(false);
+    toast.success("Dossier onboarding mis à jour.");
+    setOnboardingBusy(false);
+  };
+
   const loadExistingUsers = async () => {
     setUsersLoading(true);
     setUsersError(null);
@@ -1171,6 +1317,39 @@ export default function OrganizationsAdmin() {
           .in("organization_member_id", memberRows.map((member) => member.id));
         if (!profilesError) profileRows = (profilesData ?? []) as OrganizationMemberProfileRow[];
       }
+
+      const existingProfileMemberIds = new Set(profileRows.map((profile) => profile.organization_member_id));
+      const missingProfileRows = memberRows.filter((member) => !existingProfileMemberIds.has(member.id));
+      if (missingProfileRows.length > 0) {
+        const { data: createdProfiles, error: createProfilesError } = await db
+          .from("organization_member_profiles")
+          .upsert(
+            missingProfileRows.map((member) => ({
+              organization_member_id: member.id,
+              user_id: member.user_id,
+              organization_id: member.organization_id,
+            })),
+            { onConflict: "organization_member_id" }
+          )
+          .select(ORGANIZATION_MEMBER_PROFILE_COLUMNS);
+        if (!createProfilesError) {
+          profileRows = [...profileRows, ...((createdProfiles ?? []) as OrganizationMemberProfileRow[])];
+        } else {
+          console.warn("[admin/organizations members diagnostic] missing profile rows were not created", createProfilesError);
+        }
+      }
+
+      console.log("[admin/organizations members diagnostic]", {
+        query: {
+          organization_members: "organization_members.select(id, organization_id, user_id, role, status, created_at).eq(organization_id)",
+          organization_member_profiles:
+            "organization_member_profiles.select(id, organization_member_id, user_id, organization_id, full_name, email, phone, secondary_phone, secondary_email, position_title, point_of_sale, notes).in(organization_member_id)",
+        },
+        organization_members: memberRows,
+        organization_member_profiles: profileRows,
+        missing_profile_rows_created: missingProfileRows.map((member) => member.id),
+      });
+
       const profileByMemberId = new Map(profileRows.map((profile) => [profile.organization_member_id, profile]));
       setMembers(memberRows.map((member) => ({ ...member, profile: profileByMemberId.get(member.id) ?? null })));
     }
@@ -1393,25 +1572,36 @@ export default function OrganizationsAdmin() {
   const loadCommissionRules = async (organization: OrganizationRow) => {
     setCommissionRulesLoading(true);
     setCommissionRulesError(null);
+    setCommissionRulesDebug({ code: null, message: null, rowsLength: 0 });
 
     const { data, error } = await db
       .from("commission_engine_rules")
       .select(COMMISSION_RULE_COLUMNS)
       .eq("organization_id", organization.id)
-      .order("status", { ascending: true })
-      .order("priority", { ascending: true, nullsFirst: false })
-      .order("created_at", { ascending: false, nullsFirst: false });
+      .order("status", { ascending: true });
 
     if (error) {
       const message = error.message ?? "Impossible de charger les règles de commission.";
+      setCommissionRulesDebug({
+        code: error.code ?? null,
+        message,
+        rowsLength: 0,
+      });
       setCommissionRulesError(
-        isMissingCommissionRulesTableError(message)
+        isMissingCommissionRulesTableError(error)
           ? "La table public.commission_engine_rules est introuvable ou non accessible. Vérifiez que la migration V2 Commission Engine V1 est appliquée dans Lovable/Supabase."
           : message
       );
       setCommissionRules([]);
     } else {
-      setCommissionRules((data ?? []) as CommissionRuleRow[]);
+      const rows = (data ?? []) as CommissionRuleRow[];
+      setCommissionRulesDebug({
+        code: null,
+        message: null,
+        rowsLength: rows.length,
+      });
+      setCommissionRulesError(null);
+      setCommissionRules(rows);
     }
 
     setCommissionRulesLoading(false);
@@ -1425,6 +1615,7 @@ export default function OrganizationsAdmin() {
     setAgencyProfileError(null);
     setCommissionRules([]);
     setCommissionRulesError(null);
+    setCommissionRulesDebug({ code: null, message: null, rowsLength: 0 });
     loadAgencyProfile(organization);
     loadCommissionRules(organization);
     loadTrips();
@@ -1510,7 +1701,7 @@ export default function OrganizationsAdmin() {
     setAgencyProfileSaving(false);
   };
 
-  const openCreateRule = (scope: CommissionScopeType = "global") => {
+  const openCreateRule = (scope: CommissionScopeType = "agency_default") => {
     setEditingRule(null);
     setRuleForm({ ...defaultRuleForm(), scope });
     setRuleDialogOpen(true);
@@ -1524,7 +1715,7 @@ export default function OrganizationsAdmin() {
 
   const saveCommissionRule = async () => {
     if (!agencyOrganization) return;
-    const value = Number(ruleForm.commission_value);
+    const value = Number(ruleForm.value);
     if (!Number.isFinite(value) || value < 0) {
       toast.error("La valeur de commission est obligatoire.");
       return;
@@ -1533,29 +1724,32 @@ export default function OrganizationsAdmin() {
       toast.error("Renseignez une destination pour cette règle.");
       return;
     }
-    if (ruleForm.scope === "product" && !ruleForm.product_trip_id) {
-      toast.error("Sélectionnez un voyage/produit pour cette règle.");
+    if (ruleForm.scope === "product" && !ruleForm.product_type.trim()) {
+      toast.error("Renseignez un type de produit pour cette règle.");
       return;
     }
-    if (ruleForm.effective_to && ruleForm.effective_from && ruleForm.effective_to < ruleForm.effective_from) {
-      toast.error("La date de fin doit être postérieure à la date de début.");
+    if (ruleForm.scope === "trip_override" && !ruleForm.trip_id) {
+      toast.error("Sélectionnez un voyage pour cette règle.");
       return;
     }
 
     const duplicateActive = ruleForm.status === "active" && commissionRules.some((rule) => {
       if (editingRule?.id === rule.id || rule.status !== "active" || rule.scope !== ruleForm.scope) return false;
-      if (ruleForm.scope === "global") return true;
+      if (ruleForm.scope === "agency_default") return true;
       if (ruleForm.scope === "destination") return rule.destination?.toLowerCase() === ruleForm.destination.trim().toLowerCase();
-      return rule.product_trip_id === ruleForm.product_trip_id;
+      if (ruleForm.scope === "product") return rule.product_type?.toLowerCase() === ruleForm.product_type.trim().toLowerCase();
+      return rule.trip_id === ruleForm.trip_id;
     });
 
     if (duplicateActive) {
       toast.error(
-        ruleForm.scope === "global"
+        ruleForm.scope === "agency_default"
           ? "Une règle globale active existe déjà pour cette agence."
           : ruleForm.scope === "destination"
             ? "Une règle active existe déjà pour cette destination."
-            : "Une règle active existe déjà pour ce produit."
+            : ruleForm.scope === "product"
+              ? "Une règle active existe déjà pour ce produit."
+              : "Une règle active existe déjà pour ce voyage."
       );
       return;
     }
@@ -1564,19 +1758,14 @@ export default function OrganizationsAdmin() {
     const payload = {
       organization_id: agencyOrganization.id,
       scope: ruleForm.scope,
-      destination: ruleForm.scope === "destination" ? clean(ruleForm.destination) : null,
-      product_trip_id: ruleForm.scope === "product" ? ruleForm.product_trip_id : null,
-      rule_name: clean(ruleForm.rule_name),
-      commission_type: ruleForm.commission_type,
-      commission_value: value,
+      rule_type: ruleForm.rule_type,
+      value,
       currency: clean(ruleForm.currency) ?? "MAD",
-      applies_to: ruleForm.applies_to,
-      effective_from: ruleForm.effective_from || new Date().toISOString().slice(0, 10),
-      effective_to: clean(ruleForm.effective_to),
+      destination: ruleForm.scope === "destination" ? clean(ruleForm.destination) : null,
+      product_type: ruleForm.scope === "product" ? clean(ruleForm.product_type) : null,
+      trip_id: ruleForm.scope === "trip_override" ? ruleForm.trip_id : null,
       status: ruleForm.status,
-      priority: ruleForm.priority ? Number(ruleForm.priority) : 100,
       notes: clean(ruleForm.notes),
-      created_by: user?.id ?? null,
     };
 
     const request = editingRule
@@ -2539,6 +2728,349 @@ export default function OrganizationsAdmin() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={agencyProfileOpen} onOpenChange={setAgencyProfileOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Profil agence / commissions · {agencyOrganization?.display_name ?? "Agence"}</DialogTitle>
+          </DialogHeader>
+
+          <Tabs defaultValue="profile" className="space-y-4">
+            <TabsList className="grid h-auto w-full grid-cols-2">
+              <TabsTrigger value="profile">Profil agence</TabsTrigger>
+              <TabsTrigger value="commissions">Commissions</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="profile" className="space-y-4">
+              {agencyProfileLoading ? (
+                <Card className="flex items-center gap-2 p-5 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Chargement du profil agence…
+                </Card>
+              ) : agencyProfileError ? (
+                <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                  {agencyProfileError}
+                </Card>
+              ) : (
+                <>
+                  <Card className="p-4">
+                    <div className="grid gap-4 md:grid-cols-3">
+                      {profileInput("agency_code", "Code agence")}
+                      {profileInput("commercial_name", "Nom commercial")}
+                      {profileInput("website", "Site web")}
+                      {profileInput("contact_name", "Contact principal")}
+                      {profileInput("contact_email", "Email contact", "email")}
+                      {profileInput("contact_phone", "Téléphone contact")}
+                      {profileInput("market_country", "Marché")}
+                      {profileInput("preferred_language", "Langue préférée")}
+                      {profileInput("tax_identifier", "Identifiant fiscal")}
+                    </div>
+                  </Card>
+
+                  <Card className="p-4">
+                    <p className="font-semibold">Facturation</p>
+                    <div className="mt-4 grid gap-4 md:grid-cols-3">
+                      {profileInput("billing_legal_name", "Raison sociale facturation")}
+                      {profileInput("billing_email", "Email facturation", "email")}
+                      {profileInput("billing_phone", "Téléphone facturation")}
+                      {profileInput("billing_address_line_1", "Adresse ligne 1")}
+                      {profileInput("billing_address_line_2", "Adresse ligne 2")}
+                      {profileInput("billing_city", "Ville")}
+                      {profileInput("billing_postal_code", "Code postal")}
+                      {profileInput("billing_country", "Pays")}
+                      {profileInput("payment_terms", "Conditions de paiement")}
+                    </div>
+                  </Card>
+
+                  <Card className="p-4">
+                    <p className="font-semibold">Commission par défaut</p>
+                    <div className="mt-4 grid gap-4 md:grid-cols-3">
+                      <div className="space-y-2">
+                        <Label>Type</Label>
+                        <Select
+                          value={agencyProfileForm.default_commission_type ?? "percentage"}
+                          onValueChange={(value) =>
+                            setAgencyProfileForm((current) => ({
+                              ...current,
+                              default_commission_type: value as CommissionType,
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="min-h-11">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="percentage">Pourcentage</SelectItem>
+                            <SelectItem value="fixed_amount">Montant fixe</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {profileInput("default_commission_value", "Valeur commission", "number")}
+                      {profileInput("commission_currency", "Devise")}
+                    </div>
+                    <div className="mt-4">
+                      {profileTextarea("commission_notes", "Notes commission")}
+                    </div>
+                  </Card>
+
+                  <Card className="p-4">
+                    <p className="font-semibold">Banque et notes</p>
+                    <div className="mt-4 grid gap-4 md:grid-cols-3">
+                      {profileInput("bank_name", "Banque")}
+                      {profileInput("bank_account_name", "Nom du compte")}
+                      {profileInput("bank_account_number", "Numéro de compte")}
+                    </div>
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                      {profileTextarea("commercial_notes", "Notes commerciales")}
+                      {profileTextarea("notes", "Notes internes")}
+                    </div>
+                  </Card>
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent value="commissions" className="space-y-4">
+              <Card className="p-3 text-xs text-muted-foreground">
+                <p className="font-mono font-semibold text-foreground">Debug commission_engine_rules</p>
+                <pre className="mt-2 overflow-auto rounded bg-muted p-2 font-mono">
+                  {JSON.stringify(commissionRulesDebug, null, 2)}
+                </pre>
+              </Card>
+
+              {commissionRulesError && (
+                <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                  {commissionRulesError}
+                </Card>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="outline" onClick={() => openCreateRule("agency_default")} disabled={Boolean(commissionRulesError)}>
+                  <Plus className="h-4 w-4" />
+                  Globale
+                </Button>
+                <Button variant="outline" onClick={() => openCreateRule("destination")} disabled={Boolean(commissionRulesError)}>
+                  <Plus className="h-4 w-4" />
+                  Destination
+                </Button>
+                <Button variant="outline" onClick={() => openCreateRule("product")} disabled={Boolean(commissionRulesError)}>
+                  <Plus className="h-4 w-4" />
+                  Produit
+                </Button>
+                <Button variant="outline" onClick={() => openCreateRule("trip_override")} disabled={Boolean(commissionRulesError)}>
+                  <Plus className="h-4 w-4" />
+                  Voyage
+                </Button>
+              </div>
+
+              <Card className="overflow-hidden">
+                {commissionRulesLoading ? (
+                  <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Chargement des règles…
+                  </div>
+                ) : commissionRules.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-muted-foreground">
+                    Aucune règle de commission.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Portée</TableHead>
+                        <TableHead>Commission</TableHead>
+                        <TableHead>Statut</TableHead>
+                        <TableHead>Notes</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {commissionRules.map((rule) => (
+                        <TableRow key={rule.id}>
+                          <TableCell>
+                            <div className="font-medium">{getCommissionRuleLabel(rule)}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {rule.scope === "destination"
+                                ? rule.destination || "Destination —"
+                                : rule.scope === "product"
+                                  ? rule.product_type || "Produit —"
+                                  : rule.scope === "trip_override"
+                                    ? tripById.get(rule.trip_id ?? "")?.title || "Voyage —"
+                                    : "Toutes ventes"}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {rule.rule_type === "percentage"
+                              ? `${rule.value}%`
+                              : `${rule.value} ${rule.currency}`}
+                            <div className="text-xs text-muted-foreground">{rule.rule_type}</div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{COMMISSION_STATUS_LABELS[rule.status] ?? rule.status}</Badge>
+                          </TableCell>
+                          <TableCell>{rule.notes || "—"}</TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-2">
+                              <Button size="sm" variant="outline" onClick={() => openEditRule(rule)}>
+                                <Edit className="h-3.5 w-3.5" />
+                                Modifier
+                              </Button>
+                              {rule.status !== "archived" && (
+                                <Button size="sm" variant="outline" onClick={() => setRuleAction(rule)}>
+                                  <Archive className="h-3.5 w-3.5" />
+                                  Archiver
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </Card>
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAgencyProfileOpen(false)} disabled={agencyProfileSaving}>
+              Fermer
+            </Button>
+            <Button onClick={saveAgencyProfile} disabled={agencyProfileSaving || agencyProfileLoading || Boolean(agencyProfileError)}>
+              {agencyProfileSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+              Enregistrer le profil
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={ruleDialogOpen} onOpenChange={setRuleDialogOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingRule ? "Modifier la règle de commission" : "Créer une règle de commission"}</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Portée</Label>
+              <Select
+                value={ruleForm.scope}
+                onValueChange={(value) => setRuleForm((current) => ({ ...current, scope: value as CommissionScopeType }))}
+              >
+                <SelectTrigger className="min-h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="agency_default">Globale</SelectItem>
+                  <SelectItem value="destination">Destination</SelectItem>
+                  <SelectItem value="product">Produit</SelectItem>
+                  <SelectItem value="trip_override">Voyage spécifique</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {ruleForm.scope === "destination" && (
+              <div className="space-y-2">
+                <Label>Destination</Label>
+                <Input
+                  value={ruleForm.destination}
+                  onChange={(event) => setRuleForm((current) => ({ ...current, destination: event.target.value }))}
+                />
+              </div>
+            )}
+            {ruleForm.scope === "product" && (
+              <div className="space-y-2">
+                <Label>Type de produit</Label>
+                <Input
+                  value={ruleForm.product_type}
+                  onChange={(event) => setRuleForm((current) => ({ ...current, product_type: event.target.value }))}
+                />
+              </div>
+            )}
+            {ruleForm.scope === "trip_override" && (
+              <div className="space-y-2">
+                <Label>Voyage</Label>
+                <Select
+                  value={ruleForm.trip_id}
+                  onValueChange={(value) => setRuleForm((current) => ({ ...current, trip_id: value }))}
+                >
+                  <SelectTrigger className="min-h-11">
+                    <SelectValue placeholder="Sélectionner" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {trips.map((trip) => (
+                      <SelectItem key={trip.id} value={trip.id}>{trip.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Type</Label>
+              <Select
+                value={ruleForm.rule_type}
+                onValueChange={(value) => setRuleForm((current) => ({ ...current, rule_type: value as CommissionType }))}
+              >
+                <SelectTrigger className="min-h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="percentage">Pourcentage</SelectItem>
+                  <SelectItem value="fixed_amount">Montant fixe</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Valeur</Label>
+              <Input
+                type="number"
+                min="0"
+                value={ruleForm.value}
+                onChange={(event) => setRuleForm((current) => ({ ...current, value: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Devise</Label>
+              <Input
+                value={ruleForm.currency}
+                onChange={(event) => setRuleForm((current) => ({ ...current, currency: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Statut</Label>
+              <Select
+                value={ruleForm.status}
+                onValueChange={(value) => setRuleForm((current) => ({ ...current, status: value as CommissionStatus }))}
+              >
+                <SelectTrigger className="min-h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                  <SelectItem value="archived">Archivée</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Notes</Label>
+              <Textarea
+                value={ruleForm.notes}
+                onChange={(event) => setRuleForm((current) => ({ ...current, notes: event.target.value }))}
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRuleDialogOpen(false)} disabled={ruleSaving}>
+              Annuler
+            </Button>
+            <Button onClick={saveCommissionRule} disabled={ruleSaving}>
+              {ruleSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+              Enregistrer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(onboardingReview)} onOpenChange={(open) => !open && setOnboardingReview(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
@@ -2563,7 +3095,111 @@ export default function OrganizationsAdmin() {
                 <Badge variant="outline">Statut dossier: {String(onboardingReview.caseRow.status ?? "—")}</Badge>
                 <Badge variant="outline">Organisation: {onboardingReview.organization.status}</Badge>
                 <Badge variant="outline">Créé le {fmtDateTime(onboardingReview.caseRow.created_at)}</Badge>
+                {onboardingReview.caseRow.updated_at && (
+                  <Badge variant="outline">Mis à jour le {fmtDateTime(onboardingReview.caseRow.updated_at)}</Badge>
+                )}
               </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const organization = onboardingReview.organization;
+                    setOnboardingReview(null);
+                    openAgencyProfile(organization);
+                  }}
+                >
+                  <Percent className="h-3.5 w-3.5" />
+                  Profil agence / commissions
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setOnboardingEditForm(onboardingEditFormFromCase(onboardingReview.caseRow));
+                    setOnboardingEditMode((current) => !current);
+                  }}
+                >
+                  <Edit className="h-3.5 w-3.5" />
+                  {onboardingEditMode ? "Annuler modification" : "Modifier dossier"}
+                </Button>
+              </div>
+
+              {onboardingEditMode && (
+                <Card className="p-4">
+                  <p className="font-semibold">Correction admin du dossier</p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    {[
+                      ["legal_name", "Raison sociale"],
+                      ["commercial_name", "Nom commercial"],
+                      ["registration_number", "RC"],
+                      ["tax_number", "Tax"],
+                      ["website", "Site web"],
+                      ["city", "Ville"],
+                      ["country", "Pays"],
+                    ].map(([key, label]) => (
+                      <div key={key} className="space-y-2">
+                        <Label>{label}</Label>
+                        <Input
+                          value={onboardingEditForm.agency_information[key as keyof OnboardingEditForm["agency_information"]]}
+                          onChange={(event) =>
+                            updateOnboardingAgencyField(
+                              key as keyof OnboardingEditForm["agency_information"],
+                              event.target.value
+                            )
+                          }
+                        />
+                      </div>
+                    ))}
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Adresse</Label>
+                      <Textarea
+                        value={onboardingEditForm.agency_information.address}
+                        onChange={(event) => updateOnboardingAgencyField("address", event.target.value)}
+                        rows={3}
+                      />
+                    </div>
+                    {[
+                      ["full_name", "Nom contact"],
+                      ["position", "Fonction"],
+                      ["email", "Email contact"],
+                      ["phone", "Téléphone contact"],
+                    ].map(([key, label]) => (
+                      <div key={key} className="space-y-2">
+                        <Label>{label}</Label>
+                        <Input
+                          value={onboardingEditForm.contact_person[key as keyof OnboardingEditForm["contact_person"]]}
+                          onChange={(event) =>
+                            updateOnboardingContactField(
+                              key as keyof OnboardingEditForm["contact_person"],
+                              event.target.value
+                            )
+                          }
+                        />
+                      </div>
+                    ))}
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Notes de revue</Label>
+                      <Textarea
+                        value={onboardingEditForm.review_notes}
+                        onChange={(event) =>
+                          setOnboardingEditForm((current) => ({ ...current, review_notes: event.target.value }))
+                        }
+                        rows={3}
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-4 flex justify-end">
+                    <Button onClick={saveOnboardingDossier} disabled={onboardingBusy}>
+                      {onboardingBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Enregistrer le dossier
+                    </Button>
+                  </div>
+                </Card>
+              )}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <Card className="p-4">
@@ -2607,13 +3243,36 @@ export default function OrganizationsAdmin() {
                           <span>{label}</span>
                           {fileName && <p className="truncate text-xs text-muted-foreground">{fileName}</p>}
                         </div>
-                        <Badge variant="outline" className={doc ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
-                          {doc ? String(doc.status ?? "Reçu") : "Manquant"}
-                        </Badge>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Badge variant="outline" className={doc ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
+                            {doc ? String(doc.status ?? "Reçu") : "Manquant"}
+                          </Badge>
+                          {doc && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => downloadOnboardingDocument(doc)}
+                              disabled={documentDownloadBusy === (doc.id ?? doc.file_path ?? doc.storage_path ?? key)}
+                            >
+                              {documentDownloadBusy === (doc.id ?? doc.file_path ?? doc.storage_path ?? key) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Download className="h-3.5 w-3.5" />
+                              )}
+                              Télécharger
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
                 </div>
+                {documentDownloadError && (
+                  <p className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {documentDownloadError}
+                  </p>
+                )}
               </Card>
 
               <Card className="p-4">
@@ -2623,6 +3282,11 @@ export default function OrganizationsAdmin() {
                     ? `Accusé accepté le ${fmtDateTime(onboardingDisplayData.digital_signature_acknowledged_at)}`
                     : "Accusé non accepté"}
                 </p>
+                {onboardingReview.caseRow.review_notes && (
+                  <p className="mt-3 rounded-md border border-border bg-secondary/40 px-3 py-2 text-muted-foreground">
+                    Notes de revue: {String(onboardingReview.caseRow.review_notes)}
+                  </p>
+                )}
               </Card>
             </div>
           )}
@@ -2636,10 +3300,14 @@ export default function OrganizationsAdmin() {
                 <div>
                   <p className="mb-2 font-semibold text-muted-foreground">onboarding_case</p>
                   <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.caseRow, null, 2)}</pre>
+                  <p className="mb-2 mt-4 font-semibold text-muted-foreground">form_data</p>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.caseRow.form_data ?? null, null, 2)}</pre>
                 </div>
                 <div>
                   <p className="mb-2 font-semibold text-muted-foreground">agency_profile</p>
                   <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.agencyProfile, null, 2)}</pre>
+                  <p className="mb-2 mt-4 font-semibold text-muted-foreground">partner_onboarding_documents</p>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.documents, null, 2)}</pre>
                 </div>
                 <div>
                   <p className="mb-2 font-semibold text-muted-foreground">organization</p>

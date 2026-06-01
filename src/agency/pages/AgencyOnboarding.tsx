@@ -177,6 +177,46 @@ const buildMetadata = (
   digital_signature_acknowledged_at: formState.digital_signature_acknowledged_at,
 });
 
+const buildFormData = (
+  existingFormData: Record<string, any> | null | undefined,
+  formState: OnboardingFormState,
+  documents: Partial<Record<DocumentType, DocumentMeta>>
+) => ({
+  ...(existingFormData && typeof existingFormData === "object" ? existingFormData : {}),
+  agency_information: formState.agency_information,
+  contact_person: formState.contact_person,
+  documents,
+  digital_signature_acknowledged: formState.digital_signature_acknowledged,
+  digital_signature_acknowledged_at: formState.digital_signature_acknowledged_at,
+});
+
+const buildCompleteFormData = (
+  existingFormData: Record<string, any> | null | undefined,
+  formState: OnboardingFormState,
+  documents: Partial<Record<DocumentType, DocumentMeta>>
+) => ({
+  ...(existingFormData && typeof existingFormData === "object" ? existingFormData : {}),
+  agency_information: {
+    legal_name: formState.agency_information.legal_name,
+    commercial_name: formState.agency_information.commercial_name,
+    registration_number: formState.agency_information.registration_number,
+    tax_number: formState.agency_information.tax_number,
+    website: formState.agency_information.website,
+    address: formState.agency_information.address,
+    city: formState.agency_information.city,
+    country: formState.agency_information.country,
+  },
+  contact_person: {
+    full_name: formState.contact_person.full_name,
+    position: formState.contact_person.position,
+    email: formState.contact_person.email,
+    phone: formState.contact_person.phone,
+  },
+  documents,
+  digital_signature_acknowledged: formState.digital_signature_acknowledged,
+  digital_signature_acknowledged_at: formState.digital_signature_acknowledged_at,
+});
+
 const sectionComplete = (values: Record<string, string>, required: string[]) =>
   required.every((key) => values[key]?.trim().length > 0);
 
@@ -185,6 +225,7 @@ const statusLabel = (status: string) =>
     draft: "Brouillon",
     awaiting_documents: "Documents attendus",
     under_review: "En revue",
+    submitted: "Soumis",
     approved: "Approuvé",
     rejected: "Rejeté",
   })[status] ?? status;
@@ -193,10 +234,13 @@ const statusClass = (status: string) =>
   ({
     approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
     under_review: "border-sky-200 bg-sky-50 text-sky-700",
+    submitted: "border-sky-200 bg-sky-50 text-sky-700",
     rejected: "border-destructive/30 bg-destructive/10 text-destructive",
     awaiting_documents: "border-amber-200 bg-amber-50 text-amber-800",
     draft: "border-muted bg-secondary text-muted-foreground",
   })[status] ?? "border-border";
+
+const READ_ONLY_STATUSES = new Set(["under_review", "submitted", "approved", "rejected"]);
 
 export default function AgencyOnboarding() {
   const { user } = useAuth();
@@ -211,8 +255,11 @@ export default function AgencyOnboarding() {
   const [editMode, setEditMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [savedDocumentRows, setSavedDocumentRows] = useState<Record<string, any>[]>([]);
+  const [saveDebug, setSaveDebug] = useState<Record<string, any> | null>(null);
   const formStateRef = useRef(formState);
   const documentsRef = useRef(documents);
+  const caseRowRef = useRef<OnboardingCase | null>(caseRow);
   const fileInputRefs = useRef<Partial<Record<DocumentType, HTMLInputElement | null>>>({});
 
   useEffect(() => {
@@ -222,6 +269,10 @@ export default function AgencyOnboarding() {
   useEffect(() => {
     documentsRef.current = documents;
   }, [documents]);
+
+  useEffect(() => {
+    caseRowRef.current = caseRow;
+  }, [caseRow]);
 
   const metadata = useMemo(() => buildMetadata(formState, documents), [formState, documents]);
 
@@ -264,15 +315,27 @@ export default function AgencyOnboarding() {
           .order("created_at", { ascending: false, nullsFirst: false });
         if (!docsResult.error) documentRows = docsResult.data ?? [];
       }
+      console.log("[agency/onboarding diagnostic]", {
+        query: {
+          case:
+            "partner_onboarding_cases.select(*).eq(organization_id).order(created_at desc).limit(5)",
+          documents:
+            "partner_onboarding_documents.select(*).eq(onboarding_case_id).order(created_at desc)",
+        },
+        onboarding_case: row,
+        form_data: row?.form_data ?? null,
+        partner_onboarding_documents: documentRows,
+      });
       setCaseRow(row);
       setSavedCaseData(row);
+      setSavedDocumentRows(documentRows);
       const nextMetadata = normalizeMetadata(row?.form_data ?? row?.metadata);
       nextMetadata.documents = {
         ...nextMetadata.documents,
         ...normalizeDocumentRows(documentRows),
       };
       applyMetadata(nextMetadata);
-      setEditMode(!row || !["under_review", "approved"].includes(String(row.status)));
+      setEditMode(!row || !READ_ONLY_STATUSES.has(String(row.status)));
     }
     setLoading(false);
   };
@@ -298,65 +361,148 @@ export default function AgencyOnboarding() {
   }, [metadata]);
 
   const progress = completedSections * 25;
-  const isSubmitted = caseRow?.status === "under_review" || caseRow?.status === "approved";
+  const lockedStatus = READ_ONLY_STATUSES.has(String(caseRow?.status));
+  const isApproved = caseRow?.status === "approved";
+  const isSubmitted = lockedStatus;
   const isLocked = isSubmitted && !editMode;
+  const lockedFieldClass = isLocked ? "bg-muted text-muted-foreground opacity-80" : "";
 
-  const updateCase = async (nextMetadata: OnboardingMetadata, nextStatus?: string) => {
+  const refetchCase = async (caseId?: string | null) => {
     if (!organization) return false;
-    const payload: Record<string, unknown> = {
-      organization_id: organization.id,
-      form_data: nextMetadata,
-      status: nextStatus ?? (caseRow?.status === "draft" || !caseRow ? "awaiting_documents" : caseRow.status),
-      ...(nextStatus === "under_review" ? { submitted_at: new Date().toISOString() } : {}),
-    };
-
-    const request = caseRow
+    const request = caseId
       ? db
           .from("partner_onboarding_cases")
-          .update(payload)
-          .eq("id", caseRow.id)
           .select("*")
-          .limit(1)
+          .eq("id", caseId)
           .maybeSingle()
       : db
           .from("partner_onboarding_cases")
-          .insert(payload)
           .select("*")
+          .eq("organization_id", organization.id)
+          .order("created_at", { ascending: false, nullsFirst: false })
           .limit(1)
           .maybeSingle();
-
     const { data, error } = await request;
+    if (error || !data) return false;
+    const nextCase = data as OnboardingCase;
+    setCaseRow(nextCase);
+    setSavedCaseData(nextCase);
+    caseRowRef.current = nextCase;
+    return true;
+  };
+
+  const updateCase = async (nextStatus?: string) => {
+    if (!organization) return false;
+    const currentCase = caseRowRef.current;
+    const completeFormData = buildCompleteFormData(
+      (currentCase?.form_data ?? savedCaseData?.form_data) as Record<string, any> | null | undefined,
+      formStateRef.current,
+      documentsRef.current
+    );
+    const nextCaseStatus = nextStatus ?? (currentCase?.status === "draft" || !currentCase ? "awaiting_documents" : currentCase.status);
+    const payload: Record<string, unknown> = {
+      form_data: completeFormData,
+      status: nextCaseStatus,
+      ...(nextStatus === "under_review" ? { submitted_at: new Date().toISOString() } : {}),
+    };
+
+    const startedDebug = {
+      target: currentCase
+        ? `partner_onboarding_cases.update(payload).eq("id", "${currentCase.id}")`
+        : "partner_onboarding_cases.insert({ organization_id, ...payload })",
+      payload,
+      complete_form_data: completeFormData,
+      current_form_state: formStateRef.current,
+      existing_form_data: currentCase?.form_data ?? null,
+      update_response_data: null,
+      update_error: null,
+      update_status: null,
+      update_status_text: null,
+      update_count: null,
+      affected_row: null,
+      no_row_updated_message: null,
+      select_after_update_data: null,
+      select_after_update_error: null,
+      select_after_update_status: null,
+      select_after_update_status_text: null,
+    };
+    console.log("[agency/onboarding save diagnostic]", startedDebug);
+    setSaveDebug(startedDebug);
+
+    const request = currentCase
+      ? db
+          .from("partner_onboarding_cases")
+          .update(payload, { count: "exact" })
+          .eq("id", currentCase.id)
+          .select("*")
+          .maybeSingle()
+      : db
+          .from("partner_onboarding_cases")
+          .insert({ organization_id: organization.id, ...payload })
+          .select("*")
+          .maybeSingle();
+
+    const updateResponse = await request;
+    const { data, error } = updateResponse;
+    const updateDebug = {
+      ...startedDebug,
+      update_response_data: data ?? null,
+      update_error: error ?? null,
+      update_status: updateResponse.status ?? null,
+      update_status_text: updateResponse.statusText ?? null,
+      update_count: updateResponse.count ?? null,
+      affected_row: data ?? null,
+      no_row_updated_message: !error && !data ? "No row updated. Check RLS or wrong case id." : null,
+    };
+    setSaveDebug(updateDebug);
 
     if (error) {
       toast.error(error.message ?? "Impossible d'enregistrer le dossier.");
       return false;
     }
 
-    if (!data) {
-      const { data: latest } = await db
+    const savedCaseId = (data as OnboardingCase | null)?.id ?? currentCase?.id ?? null;
+    if (savedCaseId) {
+      const selected = await db
         .from("partner_onboarding_cases")
-        .select("id, status")
-        .eq("organization_id", organization.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
+        .select("*")
+        .eq("id", savedCaseId)
         .maybeSingle();
-      if (latest) {
-        setCaseRow(latest as OnboardingCase);
-        setSavedCaseData(latest as OnboardingCase);
+      const selectedCase = (selected.data ?? null) as OnboardingCase | null;
+      const selectedDebug = {
+        ...updateDebug,
+        select_after_update_query: `partner_onboarding_cases.select("*").eq("id", "${savedCaseId}").maybeSingle()`,
+        select_after_update_data: selected.data ?? null,
+        select_after_update_error: selected.error ?? null,
+        select_after_update_status: selected.status ?? null,
+        select_after_update_status_text: selected.statusText ?? null,
+        select_after_update_form_data: selectedCase?.form_data ?? null,
+      };
+      console.log("[agency/onboarding save diagnostic after select]", selectedDebug);
+      setSaveDebug(selectedDebug);
+
+      if (!selected.error && selectedCase) {
+        setCaseRow(selectedCase);
+        setSavedCaseData(selectedCase);
+        caseRowRef.current = selectedCase;
+        if (nextStatus === "under_review" || READ_ONLY_STATUSES.has(String(selectedCase.status))) setEditMode(false);
+        return true;
       }
-      return true;
     }
+
+    if (!data) return refetchCase(currentCase?.id);
 
     const updated = data as OnboardingCase;
     setCaseRow(updated);
     setSavedCaseData(updated);
-    if (updated.status === "under_review" || updated.status === "approved") setEditMode(false);
+    caseRowRef.current = updated;
+    if (nextStatus === "under_review" || READ_ONLY_STATUSES.has(String(updated.status))) setEditMode(false);
     return true;
   };
 
   const save = async () => {
     setSaving(true);
-    const ok = await updateCase(metadata);
+    const ok = await updateCase();
     setSaving(false);
     if (ok) toast.success("Informations enregistrées");
   };
@@ -367,7 +513,7 @@ export default function AgencyOnboarding() {
       return;
     }
     setSaving(true);
-    const ok = await updateCase(metadata, "under_review");
+    const ok = await updateCase("under_review");
     setSaving(false);
     if (ok) toast.success("Dossier soumis");
   };
@@ -430,10 +576,10 @@ export default function AgencyOnboarding() {
       status: "received",
     };
     const nextDocuments = { ...documentsRef.current, [type]: document };
-    const nextMetadata = buildMetadata(formStateRef.current, nextDocuments);
     setDocuments(nextDocuments);
+    documentsRef.current = nextDocuments;
     await bestEffortDocumentInsert(document, file);
-    await updateCase(nextMetadata);
+    await updateCase();
     toast.success("Document ajouté");
     setUploading(null);
   };
@@ -467,8 +613,8 @@ export default function AgencyOnboarding() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {isSubmitted && !editMode ? (
-            <Button type="button" variant="outline" onClick={() => setEditMode(true)} disabled={saving || loading || caseRow?.status === "approved"}>
+          {isApproved ? null : isSubmitted && !editMode ? (
+            <Button type="button" variant="outline" onClick={() => setEditMode(true)} disabled={saving || loading}>
               Modifier la demande
             </Button>
           ) : (
@@ -477,10 +623,12 @@ export default function AgencyOnboarding() {
               Enregistrer
             </Button>
           )}
-          <Button type="button" onClick={submitForReview} disabled={saving || loading || !caseRow || isLocked || progress < 100}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            {isSubmitted ? "Soumettre à nouveau" : "Soumettre"}
-          </Button>
+          {(!isSubmitted || editMode) && (
+            <Button type="button" onClick={submitForReview} disabled={saving || loading || !caseRow || isLocked || progress < 100}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {isSubmitted ? "Soumettre à nouveau" : "Soumettre"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -524,6 +672,13 @@ export default function AgencyOnboarding() {
             Dossier créé le {fmtDateTime(caseRow.created_at)}. Dernière mise à jour: {fmtDateTime(caseRow.updated_at)}.
           </p>
         )}
+        {isLocked && (
+          <p className="mt-3 text-sm text-muted-foreground">
+            {isApproved
+              ? "Votre dossier partenaire est approuvé. Pour toute modification, contactez LeJapon.ma."
+              : "La demande est soumise. Les champs sont en lecture seule jusqu'à ce que vous cliquiez sur Modifier la demande."}
+          </p>
+        )}
       </Card>
 
       {caseRow && (
@@ -546,6 +701,8 @@ export default function AgencyOnboarding() {
                     value={metadata.agency_information[key as keyof AgencyInfo]}
                     onChange={(event) => updateAgencyInfo(key as keyof AgencyInfo, event.target.value)}
                     disabled={isLocked}
+                    readOnly={isLocked}
+                    className={lockedFieldClass}
                   />
                 </div>
               ))}
@@ -555,6 +712,8 @@ export default function AgencyOnboarding() {
                   value={metadata.agency_information.address}
                   onChange={(event) => updateAgencyInfo("address", event.target.value)}
                   disabled={isLocked}
+                  readOnly={isLocked}
+                  className={lockedFieldClass}
                   rows={3}
                 />
               </div>
@@ -577,6 +736,8 @@ export default function AgencyOnboarding() {
                     value={metadata.contact_person[key as keyof ContactPerson]}
                     onChange={(event) => updateContact(key as keyof ContactPerson, event.target.value)}
                     disabled={isLocked}
+                    readOnly={isLocked}
+                    className={lockedFieldClass}
                   />
                 </div>
               ))}
@@ -666,10 +827,26 @@ export default function AgencyOnboarding() {
           <div>
             <p className="mb-2 font-semibold text-muted-foreground">saved case data</p>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(savedCaseData, null, 2)}</pre>
+            <p className="mb-2 mt-4 font-semibold text-muted-foreground">saved form_data</p>
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(savedCaseData?.form_data ?? null, null, 2)}</pre>
+            <p className="mb-2 mt-4 font-semibold text-muted-foreground">last save/update debug</p>
+            {saveDebug?.update_error && (
+              <div className="mb-2 rounded border border-destructive/30 bg-destructive/10 p-2 font-semibold text-destructive">
+                Update error: {JSON.stringify(saveDebug.update_error)}
+              </div>
+            )}
+            {saveDebug?.no_row_updated_message && (
+              <div className="mb-2 rounded border border-destructive/30 bg-destructive/10 p-2 font-semibold text-destructive">
+                {saveDebug.no_row_updated_message}
+              </div>
+            )}
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(saveDebug, null, 2)}</pre>
           </div>
           <div>
             <p className="mb-2 font-semibold text-muted-foreground">uploaded documents state</p>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(documents, null, 2)}</pre>
+            <p className="mb-2 mt-4 font-semibold text-muted-foreground">partner_onboarding_documents rows</p>
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(savedDocumentRows, null, 2)}</pre>
           </div>
         </div>
       </details>

@@ -71,18 +71,15 @@ export type AgencyBooking = {
 export type CommissionRule = {
   id: string;
   organization_id: string;
-  scope: "global" | "destination" | "product";
-  destination: string | null;
-  product_trip_id: string | null;
-  rule_name: string | null;
-  commission_type: "percentage" | "fixed_amount";
-  commission_value: number;
+  scope: "agency_default" | "destination" | "product" | "trip_override";
+  rule_type: "percentage" | "fixed_amount";
+  value: number;
   currency: string;
-  applies_to: "booking_total" | "base_trip_price";
-  effective_from: string;
-  effective_to: string | null;
+  destination: string | null;
+  product_type: string | null;
+  trip_id: string | null;
   status: "active" | "inactive" | "archived";
-  priority: number | null;
+  notes: string | null;
 };
 
 export type TripSummary = {

@@ -46,6 +46,7 @@ type UserRow = {
 
 type ExternalMemberRow = {
   member_id: string;
+  organization_member_profile_id: string | null;
   user_id: string;
   email: string | null;
   full_name: string | null;
@@ -65,6 +66,9 @@ type ExternalMemberRow = {
   role: string;
   status: string;
   created_at: string | null;
+  raw_member?: Record<string, any> | null;
+  raw_profile?: Record<string, any> | null;
+  raw_organization?: Record<string, any> | null;
 };
 
 type VisaClientRow = {
@@ -91,6 +95,8 @@ type ResetResult = {
 type ProfileEditState = {
   user_id: string;
   member_id?: string | null;
+  organization_id?: string | null;
+  organization_member_profile_id?: string | null;
   email: string;
   organization_name?: string;
   full_name: string;
@@ -174,6 +180,23 @@ const functionErrorMessage = async (error: any) => {
   return body?.json?.detail || body?.json?.error || body?.text || body?.message || error?.message || "Edge Function returned a non-2xx status code.";
 };
 
+const ORGANIZATION_MEMBER_PROFILE_COLUMNS = [
+  "id",
+  "organization_member_id",
+  "user_id",
+  "organization_id",
+  "full_name",
+  "email",
+  "phone",
+  "secondary_phone",
+  "secondary_email",
+  "position_title",
+  "point_of_sale",
+  "notes",
+].join(",");
+
+const cleanDisplay = (value: unknown) => (typeof value === "string" && value.trim().length ? value.trim() : null);
+
 export default function UsersAdmin() {
   const { user, isSuperAdmin } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -205,6 +228,99 @@ export default function UsersAdmin() {
     [usersById, visaClients, visaFilter]
   );
 
+  const loadExternalMembersDirect = async (authUserMap: Map<string, any>) => {
+    const queries = {
+      organization_members:
+        "organization_members.select(id, organization_id, user_id, role, status, created_at).order(created_at desc)",
+      organization_member_profiles:
+        "organization_member_profiles.select(id, organization_member_id, user_id, organization_id, full_name, email, phone, secondary_phone, secondary_email, position_title, point_of_sale, notes).in(organization_member_id)",
+      organizations:
+        "organizations.select(id, display_name, legal_name, type, status, email, phone, website).in(id)",
+    };
+
+    const membersResult = await db
+      .from("organization_members")
+      .select("id,organization_id,user_id,role,status,created_at")
+      .order("created_at", { ascending: false, nullsFirst: false });
+
+    if (membersResult.error) {
+      setExternalMembers([]);
+      setExternalRawResponse(JSON.stringify({ queries, organization_members_error: membersResult.error }, null, 2));
+      toast.error(`Utilisateurs externes: ${membersResult.error.message}`);
+      return;
+    }
+
+    const memberRows = (membersResult.data ?? []) as Record<string, any>[];
+    const memberIds = Array.from(new Set(memberRows.map((member) => member.id).filter(Boolean)));
+    const organizationIds = Array.from(new Set(memberRows.map((member) => member.organization_id).filter(Boolean)));
+
+    const profilesResult = memberIds.length
+      ? await db
+          .from("organization_member_profiles")
+          .select(ORGANIZATION_MEMBER_PROFILE_COLUMNS)
+          .in("organization_member_id", memberIds)
+      : { data: [], error: null };
+
+    const organizationsResult = organizationIds.length
+      ? await db
+          .from("organizations")
+          .select("id,display_name,legal_name,type,status,email,phone,website")
+          .in("id", organizationIds)
+      : { data: [], error: null };
+
+    const profileRows = (profilesResult.data ?? []) as Record<string, any>[];
+    const organizationRows = (organizationsResult.data ?? []) as Record<string, any>[];
+    const profileByMemberId = new Map(profileRows.map((profile) => [profile.organization_member_id, profile]));
+    const organizationById = new Map(organizationRows.map((organization) => [organization.id, organization]));
+
+    const rows = memberRows.map((member) => {
+      const memberProfile = profileByMemberId.get(member.id) ?? null;
+      const organization = organizationById.get(member.organization_id) ?? null;
+      const authUser = authUserMap.get(member.user_id);
+      return {
+        member_id: member.id,
+        organization_member_profile_id: memberProfile?.id ?? null,
+        user_id: member.user_id ?? "",
+        organization_id: member.organization_id ?? "",
+        email: cleanDisplay(memberProfile?.email) ?? cleanDisplay(authUser?.email),
+        full_name: cleanDisplay(memberProfile?.full_name) ?? cleanDisplay(authUser?.full_name),
+        phone: cleanDisplay(memberProfile?.phone) ?? cleanDisplay(authUser?.phone),
+        secondary_phone: cleanDisplay(memberProfile?.secondary_phone),
+        secondary_email: cleanDisplay(memberProfile?.secondary_email),
+        position_title: cleanDisplay(memberProfile?.position_title),
+        point_of_sale: cleanDisplay(memberProfile?.point_of_sale),
+        notes: cleanDisplay(memberProfile?.notes),
+        avatar_url: cleanDisplay(authUser?.avatar_url),
+        organization_name: cleanDisplay(organization?.display_name) ?? cleanDisplay(organization?.legal_name),
+        organization_legal_name: cleanDisplay(organization?.legal_name),
+        organization_website: cleanDisplay(organization?.website),
+        organization_type: cleanDisplay(organization?.type),
+        organization_status: cleanDisplay(organization?.status),
+        role: member.role ?? "viewer",
+        status: member.status ?? "suspended",
+        created_at: member.created_at ?? null,
+        raw_member: member,
+        raw_profile: memberProfile,
+        raw_organization: organization,
+      } as ExternalMemberRow;
+    });
+
+    const debugPayload = {
+      queries,
+      organization_members: memberRows,
+      organization_member_profiles: profileRows,
+      organizations: organizationRows,
+      errors: {
+        organization_member_profiles: profilesResult.error ?? null,
+        organizations: organizationsResult.error ?? null,
+      },
+      merged_rows: rows,
+    };
+    console.log("[admin/users external diagnostic]", debugPayload);
+    setExternalRawResponse(JSON.stringify(debugPayload, null, 2));
+    setExternalMembers(rows);
+  };
+
   const loadUsers = async () => {
     setLoading(true);
     setRawError(null);
@@ -212,34 +328,25 @@ export default function UsersAdmin() {
     setExternalDebugResponse(null);
     setAdminUsersFunctionVersion(null);
 
-    const externalPayload = { action: "list_external_members" };
-    const debugPayload = {
-      action: "debug_echo",
-      target: "external_users",
-      next_payload: externalPayload,
-    };
-    setExternalRequestPayload(JSON.stringify(externalPayload, null, 2));
+    setExternalRequestPayload(
+      JSON.stringify(
+        {
+          source: "direct Supabase reads",
+          tables: ["organization_members", "organization_member_profiles", "organizations"],
+        },
+        null,
+        2
+      )
+    );
 
-    const [usersResult, externalDebugResult, visaResult] = await Promise.all([
+    const [usersResult, visaResult] = await Promise.all([
       supabase.functions.invoke("admin-users", { body: { action: "list" } }),
-      supabase.functions.invoke("admin-users", { body: debugPayload }),
       db
         .from("visa_applications")
         .select("id,reference,user_id,surname,given_names,residential_email,passport_no,status,created_at,submitted_at")
         .order("created_at", { ascending: false })
         .limit(250),
     ]);
-
-    if (externalDebugResult.error) {
-      const body = await readFunctionError(externalDebugResult.error);
-      setExternalDebugResponse(JSON.stringify(body ?? { error: externalDebugResult.error.message }, null, 2));
-    } else {
-      const payload = (externalDebugResult.data as any) ?? {};
-      setExternalDebugResponse(JSON.stringify(payload, null, 2));
-      if (payload.function_version) setAdminUsersFunctionVersion(payload.function_version);
-    }
-
-    const externalResult = await supabase.functions.invoke("admin-users", { body: externalPayload });
 
     if (usersResult.error) {
       const body = await readFunctionError(usersResult.error);
@@ -259,58 +366,7 @@ export default function UsersAdmin() {
       rawUsers.forEach((u: any) => authUserMap.set(u.id, u));
     }
 
-    if (externalResult.error) {
-      const body = await readFunctionError(externalResult.error);
-      const message = await functionErrorMessage(externalResult.error);
-      toast.error(`Utilisateurs externes: ${message}`);
-      setRawError(JSON.stringify(body ?? { error: message }, null, 2));
-      setExternalRawResponse(JSON.stringify(body ?? { error: message }, null, 2));
-      if (body?.json?.function_version) setAdminUsersFunctionVersion(body.json.function_version);
-      setExternalMembers([]);
-    } else {
-      const payload = (externalResult.data as any) ?? {};
-      if (payload.function_version) setAdminUsersFunctionVersion(payload.function_version);
-      if (payload.success === false) {
-        const raw = JSON.stringify(payload, null, 2);
-        setRawError(raw);
-        setExternalRawResponse(raw);
-        setExternalMembers([]);
-        toast.error(payload.error ? `Utilisateurs externes: ${payload.error}` : "Impossible de charger les utilisateurs externes.");
-      } else {
-        const sourceRows =
-          payload.rows ??
-          payload.members ??
-          payload.items ??
-          payload.organization_members ??
-          payload.external_members ??
-          [];
-        const rows = (sourceRows as any[]).map((member) => ({
-          ...member,
-          member_id: member.member_id ?? member.id ?? `${member.organization_id ?? "org"}-${member.user_id ?? Math.random()}`,
-          user_id: member.user_id ?? "",
-          organization_id: member.organization_id ?? "",
-          email: member.email ?? authUserMap.get(member.user_id)?.email ?? null,
-          full_name: member.full_name ?? authUserMap.get(member.user_id)?.full_name ?? null,
-          phone: member.phone ?? authUserMap.get(member.user_id)?.phone ?? null,
-          secondary_phone: member.secondary_phone ?? null,
-          secondary_email: member.secondary_email ?? null,
-          position_title: member.position_title ?? null,
-          point_of_sale: member.point_of_sale ?? null,
-          notes: member.notes ?? null,
-          avatar_url: member.avatar_url ?? null,
-          organization_name: member.organization_name ?? null,
-          organization_legal_name: member.organization_legal_name ?? null,
-          organization_website: member.organization_website ?? null,
-          organization_type: member.organization_type ?? null,
-          organization_status: member.organization_status ?? null,
-          role: member.role ?? member.member_role ?? "viewer",
-          status: member.status ?? member.member_status ?? "suspended",
-          created_at: member.created_at ?? null,
-        }));
-        setExternalRawResponse(JSON.stringify(payload, null, 2));
-        setExternalMembers(rows as ExternalMemberRow[]);
-      }
-    }
+    await loadExternalMembersDirect(authUserMap);
 
     if (visaResult.error) {
       setVisaClients([]);
@@ -420,35 +476,88 @@ export default function UsersAdmin() {
   const saveProfile = async () => {
     if (!profileEdit) return;
     setBusy(true);
-    const { data: profileData, error } = await supabase.functions.invoke("admin-users", {
-      body: {
-        action: "update_profile",
+
+    if (profileEdit.isExternal) {
+      if (!profileEdit.member_id || !profileEdit.organization_id) {
+        setBusy(false);
+        toast.error("Membre organisation introuvable pour ce profil.");
+        return;
+      }
+
+      const profilePayload = {
+        organization_member_id: profileEdit.member_id,
         user_id: profileEdit.user_id,
-        member_id: profileEdit.member_id,
-        full_name: profileEdit.full_name,
-        phone: profileEdit.phone,
-        secondary_phone: profileEdit.secondary_phone,
-        secondary_email: profileEdit.secondary_email,
-        position_title: profileEdit.position_title,
-        point_of_sale: profileEdit.point_of_sale,
-        notes: profileEdit.notes,
-        role: profileEdit.role,
-        status: profileEdit.status,
-      },
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(await functionErrorMessage(error));
-      return;
+        organization_id: profileEdit.organization_id,
+        full_name: profileEdit.full_name.trim() || null,
+        email: profileEdit.email.trim() || null,
+        phone: profileEdit.phone.trim() || null,
+        secondary_phone: profileEdit.secondary_phone.trim() || null,
+        secondary_email: profileEdit.secondary_email.trim() || null,
+        position_title: profileEdit.position_title.trim() || null,
+        point_of_sale: profileEdit.point_of_sale.trim() || null,
+        notes: profileEdit.notes.trim() || null,
+      };
+
+      const profileRequest = profileEdit.organization_member_profile_id
+        ? db
+            .from("organization_member_profiles")
+            .update(profilePayload)
+            .eq("id", profileEdit.organization_member_profile_id)
+            .select(ORGANIZATION_MEMBER_PROFILE_COLUMNS)
+            .maybeSingle()
+        : db
+            .from("organization_member_profiles")
+            .upsert(profilePayload, { onConflict: "organization_member_id" })
+            .select(ORGANIZATION_MEMBER_PROFILE_COLUMNS)
+            .maybeSingle();
+
+      const { data: savedProfile, error: profileError } = await profileRequest;
+      if (profileError) {
+        setBusy(false);
+        setRawError(JSON.stringify({ table: "organization_member_profiles", payload: profilePayload, error: profileError }, null, 2));
+        toast.error(profileError.message);
+        return;
+      }
+
+      const memberPatch: Record<string, string> = {};
+      if (profileEdit.role) memberPatch.role = profileEdit.role;
+      if (profileEdit.status) memberPatch.status = profileEdit.status;
+      if (Object.keys(memberPatch).length > 0) {
+        const { error: memberError } = await db.from("organization_members").update(memberPatch).eq("id", profileEdit.member_id);
+        if (memberError) {
+          setBusy(false);
+          setRawError(JSON.stringify({ saved_profile: savedProfile, organization_members_error: memberError }, null, 2));
+          toast.error(memberError.message);
+          return;
+        }
+      }
+
+      setRawError(JSON.stringify({ saved_organization_member_profile: savedProfile }, null, 2));
+    } else {
+      const { data: profileData, error } = await supabase.functions.invoke("admin-users", {
+        body: {
+          action: "update_profile",
+          user_id: profileEdit.user_id,
+          full_name: profileEdit.full_name,
+          phone: profileEdit.phone,
+        },
+      });
+      if (error) {
+        setBusy(false);
+        toast.error(await functionErrorMessage(error));
+        return;
+      }
+      const payload = (profileData ?? {}) as any;
+      if (payload.warnings?.length) {
+        setRawError(JSON.stringify(payload, null, 2));
+        toast.warning("Profil mis à jour avec avertissement. Vérifiez la réponse brute.");
+      }
     }
-    const payload = (profileData ?? {}) as any;
-    if (payload.warnings?.length) {
-      setRawError(JSON.stringify(payload, null, 2));
-      toast.warning("Profil mis à jour avec avertissement. Vérifiez la réponse brute.");
-    }
+
     toast.success("Profil mis à jour.");
     setProfileEdit(null);
-    loadUsers();
+    await loadUsers();
+    setBusy(false);
   };
 
   const updateExternalMember = async (member: ExternalMemberRow, patch: Record<string, string>) => {
@@ -510,6 +619,8 @@ export default function UsersAdmin() {
   const openProfileEdit = (userId: string, fullName?: string | null, phone?: string | null) => {
     setProfileEdit({
       user_id: userId,
+      organization_id: null,
+      organization_member_profile_id: null,
       email: "",
       full_name: fullName ?? "",
       phone: phone ?? "",
@@ -528,6 +639,8 @@ export default function UsersAdmin() {
     setProfileEdit({
       user_id: member.user_id,
       member_id: member.member_id,
+      organization_id: member.organization_id,
+      organization_member_profile_id: member.organization_member_profile_id,
       email: member.email ?? "",
       organization_name: member.organization_name || member.organization_legal_name || member.organization_id,
       full_name: member.full_name ?? "",
@@ -684,7 +797,7 @@ export default function UsersAdmin() {
           <Collapsible open={externalDebugOpen} onOpenChange={setExternalDebugOpen} className="mb-3">
             <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/30 px-4 py-3 text-sm">
               <p className="text-muted-foreground">
-                organization_members retournés: <span className="font-semibold text-foreground">{externalMembers.length}</span>
+                Profils externes fusionnés: <span className="font-semibold text-foreground">{externalMembers.length}</span>
               </p>
               <CollapsibleTrigger asChild>
                 <Button variant="outline" size="sm">Debug</Button>
@@ -709,7 +822,7 @@ export default function UsersAdmin() {
               )}
               {externalRawResponse && (
                 <div>
-                  <p className="font-medium text-foreground">Réponse list_external_members</p>
+                  <p className="font-medium text-foreground">Rows brutes stable V2</p>
                   <pre className="mt-1 max-h-64 overflow-auto rounded-md bg-background p-3 text-xs text-muted-foreground">
                     {externalRawResponse}
                   </pre>
@@ -741,8 +854,8 @@ export default function UsersAdmin() {
                 )}
                 {externalMembers.map((member) => {
                   const authUser = usersById.get(member.user_id);
-                  const displayName = authUser?.full_name ?? member.full_name ?? member.user_id;
-                  const displayEmail = authUser?.email ?? member.email;
+                  const displayName = member.full_name ?? authUser?.full_name ?? member.user_id;
+                  const displayEmail = member.email ?? authUser?.email;
                   const organizationLabel = member.organization_name || member.organization_legal_name || member.organization_id;
                   const organizationMeta = [member.organization_type, member.organization_status, member.organization_website].filter(Boolean).join(" · ");
 

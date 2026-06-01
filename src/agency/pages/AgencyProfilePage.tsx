@@ -57,6 +57,34 @@ export default function AgencyProfilePage() {
   const [loading, setLoading] = useState(true);
   const [savingAccount, setSavingAccount] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [memberProfileRow, setMemberProfileRow] = useState<Record<string, any> | null>(null);
+  const [memberProfileDebug, setMemberProfileDebug] = useState<Record<string, any> | null>(null);
+
+  const loadMemberProfile = async () => {
+    if (!user || !organization || !currentMembership?.id) return null;
+
+    const query =
+      "organization_member_profiles.select(id, organization_member_id, user_id, organization_id, full_name, email, phone, secondary_phone, secondary_email, position_title, point_of_sale, notes).eq(organization_member_id)";
+    const profileResult = await db
+      .from("organization_member_profiles")
+      .select("id,organization_member_id,user_id,organization_id,full_name,email,phone,secondary_phone,secondary_email,position_title,point_of_sale,notes")
+      .eq("organization_member_id", currentMembership.id)
+      .maybeSingle();
+
+    const row = profileResult.error ? null : profileResult.data ?? null;
+    const debug = {
+      query,
+      current_user_id: user.id,
+      organization_id: organization.id,
+      organization_member_id: currentMembership.id,
+      organization_member_profile: row,
+      error: profileResult.error ?? null,
+    };
+    console.log("[agency/profile diagnostic]", debug);
+    setMemberProfileDebug(debug);
+    setMemberProfileRow(row);
+    return row;
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -72,16 +100,7 @@ export default function AgencyProfilePage() {
       else setProfile((data ?? null) as AgencyProfile | null);
 
       if (user) {
-        let memberProfile: Record<string, any> | null = null;
-        if (currentMembership?.id) {
-          const profileResult = await db
-            .from("organization_member_profiles")
-            .select("full_name,email,phone,secondary_phone,secondary_email,position_title,point_of_sale")
-            .eq("organization_member_id", currentMembership.id)
-            .maybeSingle();
-          if (!profileResult.error) memberProfile = profileResult.data ?? null;
-        }
-
+        const memberProfile = await loadMemberProfile();
         const authMetadata = user.user_metadata ?? {};
         setAccount({
           full_name: memberProfile?.full_name ?? authMetadata.full_name ?? authMetadata.name ?? "",
@@ -98,19 +117,52 @@ export default function AgencyProfilePage() {
   }, [organization?.id, currentMembership?.id, user?.id]);
 
   const saveAccount = async () => {
-    if (!user) return;
+    if (!user || !organization || !currentMembership?.id) {
+      toast.error("Membre organisation introuvable.");
+      return;
+    }
     setSavingAccount(true);
+
+    const stablePayload = {
+      organization_member_id: currentMembership.id,
+      user_id: user.id,
+      organization_id: organization.id,
+      full_name: account.full_name || null,
+      email: user.email ?? null,
+      phone: account.phone || null,
+      secondary_phone: account.secondary_phone || null,
+      secondary_email: account.secondary_email || null,
+      position_title: account.position_title || null,
+      point_of_sale: account.point_of_sale || null,
+    };
+
+    const stableRequest = memberProfileRow?.id
+      ? db
+          .from("organization_member_profiles")
+          .update(stablePayload)
+          .eq("id", memberProfileRow.id)
+          .select("id,organization_member_id,user_id,organization_id,full_name,email,phone,secondary_phone,secondary_email,position_title,point_of_sale,notes")
+          .maybeSingle()
+      : db
+          .from("organization_member_profiles")
+          .upsert(stablePayload, { onConflict: "organization_member_id" })
+          .select("id,organization_member_id,user_id,organization_id,full_name,email,phone,secondary_phone,secondary_email,position_title,point_of_sale,notes")
+          .maybeSingle();
+
+    const { error: stableError } = await stableRequest;
+    if (stableError) {
+      setMemberProfileDebug({ save_payload: stablePayload, error: stableError });
+      toast.error(stableError.message);
+      setSavingAccount(false);
+      return;
+    }
 
     const { error: profileError } = await db.from("profiles").upsert({
       id: user.id,
       full_name: account.full_name || null,
       phone: account.phone || null,
     });
-    if (profileError) {
-      toast.error(profileError.message);
-      setSavingAccount(false);
-      return;
-    }
+    if (profileError) toast.warning(`Profil legacy non mis à jour: ${profileError.message}`);
 
     const { error: authError } = await supabase.auth.updateUser({
       data: {
@@ -121,24 +173,17 @@ export default function AgencyProfilePage() {
     });
     if (authError) toast.warning(`Profil Auth non mis à jour: ${authError.message}`);
 
-    if (currentMembership?.id && organization) {
-      const { error: memberProfileError } = await db
-        .from("organization_member_profiles")
-        .upsert({
-          organization_member_id: currentMembership.id,
-          user_id: user.id,
-          organization_id: organization.id,
-          full_name: account.full_name || null,
-          email: user.email ?? null,
-          phone: account.phone || null,
-          secondary_phone: account.secondary_phone || null,
-          secondary_email: account.secondary_email || null,
-          position_title: account.position_title || null,
-          point_of_sale: account.point_of_sale || null,
-        }, { onConflict: "organization_member_id" });
-      if (memberProfileError) toast.warning(`Champs organisation non enregistrés: ${memberProfileError.message}`);
+    const refreshed = await loadMemberProfile();
+    if (refreshed) {
+      setAccount({
+        full_name: refreshed.full_name ?? "",
+        phone: refreshed.phone ?? "",
+        secondary_phone: refreshed.secondary_phone ?? "",
+        secondary_email: refreshed.secondary_email ?? "",
+        position_title: refreshed.position_title ?? "",
+        point_of_sale: refreshed.point_of_sale ?? "",
+      });
     }
-
     toast.success("Profil enregistré.");
     setSavingAccount(false);
   };
@@ -284,6 +329,15 @@ export default function AgencyProfilePage() {
           </div>
         </Card>
       )}
+
+      <details className="rounded-lg border border-border p-4 text-xs">
+        <summary className="cursor-pointer font-mono font-semibold text-muted-foreground hover:text-foreground">
+          Debug: organization_member_profiles
+        </summary>
+        <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
+          {JSON.stringify(memberProfileDebug, null, 2)}
+        </pre>
+      </details>
     </div>
   );
 }

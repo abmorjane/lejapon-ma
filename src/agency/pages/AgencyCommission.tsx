@@ -34,7 +34,9 @@ function RuleCard({ rule, tripTitle }: { rule: CommissionRule; tripTitle?: strin
         <div>
           <p className="font-semibold">{getCommissionScopeLabel(rule)}</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            {rule.scope === "product" ? tripTitle || rule.product_trip_id || "Produit non renseigné" : rule.rule_name || "Règle de référence"}
+            {rule.scope === "trip_override"
+              ? tripTitle || rule.trip_id || "Voyage non renseigné"
+              : rule.notes || "Règle de référence"}
           </p>
         </div>
         <Badge variant="outline" className={cn(statusClass(rule.status))}>{rule.status}</Badge>
@@ -46,16 +48,13 @@ function RuleCard({ rule, tripTitle }: { rule: CommissionRule; tripTitle?: strin
         </div>
         <div>
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Type</p>
-          <p className="mt-1 font-semibold">{rule.commission_type}</p>
+          <p className="mt-1 font-semibold">{rule.rule_type}</p>
         </div>
         <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Appliquée à</p>
-          <p className="mt-1 font-semibold">{rule.applies_to}</p>
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">Portée</p>
+          <p className="mt-1 font-semibold">{rule.scope}</p>
         </div>
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">
-        Effective du {rule.effective_from || "—"} au {rule.effective_to || "sans fin"}.
-      </p>
     </div>
   );
 }
@@ -80,8 +79,7 @@ export default function AgencyCommission() {
           .from("commission_engine_rules")
           .select(commissionRuleColumns)
           .eq("organization_id", organization.id)
-          .order("status", { ascending: true })
-          .order("priority", { ascending: true, nullsFirst: false }),
+          .order("status", { ascending: true }),
         db
           .from("bookings")
           .select(bookingColumns, { count: "exact" })
@@ -105,7 +103,7 @@ export default function AgencyCommission() {
       setBookings((bookingRows ?? []) as AgencyBooking[]);
       setBookingCount(count ?? 0);
 
-      const tripIds = Array.from(new Set(loadedRules.map((rule) => rule.product_trip_id).filter(Boolean)));
+      const tripIds = Array.from(new Set(loadedRules.map((rule) => rule.trip_id).filter(Boolean)));
       if (tripIds.length) {
         const { data: tripRows } = await db.from("trips").select("id,title").in("id", tripIds);
         setTrips((tripRows ?? []) as TripSummary[]);
@@ -119,8 +117,8 @@ export default function AgencyCommission() {
   }, [organization?.id]);
 
   const tripById = useMemo(() => new Map(trips.map((trip) => [trip.id, trip.title])), [trips]);
-  const activeDefault = rules.find((rule) => rule.status === "active" && rule.scope === "global");
-  const activeOverrides = rules.filter((rule) => rule.status === "active" && rule.scope !== "global");
+  const activeDefault = rules.find((rule) => rule.status === "active" && rule.scope === "agency_default");
+  const activeOverrides = rules.filter((rule) => rule.status === "active" && rule.scope !== "agency_default");
   const inactiveRules = rules.filter((rule) => rule.status !== "active");
   const estimatedEarnings = useMemo(
     () => bookings.reduce((sum, booking) => {
@@ -191,7 +189,7 @@ export default function AgencyCommission() {
             {activeOverrides.length ? (
               <div className="grid gap-3">
                 {activeOverrides.map((rule) => (
-                  <RuleCard key={rule.id} rule={rule} tripTitle={tripById.get(rule.product_trip_id ?? "")} />
+                  <RuleCard key={rule.id} rule={rule} tripTitle={tripById.get(rule.trip_id ?? "")} />
                 ))}
               </div>
             ) : (
@@ -232,7 +230,7 @@ export default function AgencyCommission() {
             <div className="space-y-3 border-t border-border p-4">
               {inactiveRules.length ? (
                 inactiveRules.map((rule) => (
-                  <RuleCard key={rule.id} rule={rule} tripTitle={tripById.get(rule.product_trip_id ?? "")} />
+                  <RuleCard key={rule.id} rule={rule} tripTitle={tripById.get(rule.trip_id ?? "")} />
                 ))
               ) : (
                 <p className="text-sm text-muted-foreground">Aucune règle inactive ou archivée.</p>
