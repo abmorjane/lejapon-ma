@@ -731,8 +731,72 @@ export default function AgencyOnboarding() {
           </Card>
 
           <Card className="p-5">
-            <h2 className="font-display text-xl">4. Digital signature acknowledgement</h2>
+            <h2 className="font-display text-xl">4. Conditions du partenariat</h2>
             <Separator className="my-4" />
+            <div className="max-h-[420px] space-y-4 overflow-y-auto rounded-lg border border-border bg-secondary/20 p-4 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">Contrat partenaire LeJapon.ma - principes commerciaux</p>
+              <p>
+                L'agence partenaire agit comme intermédiaire commercial auprès de ses clients et s'engage à présenter les
+                voyages, prestations, disponibilités et conditions LeJapon.ma de manière exacte, loyale et vérifiable.
+              </p>
+              <ol className="list-decimal space-y-3 pl-5">
+                <li>
+                  <span className="font-medium text-foreground">Rôle de l'agence partenaire.</span> L'agence conseille,
+                  prépare et suit ses clients, sans modifier les prestations validées par LeJapon.ma ou Moroccan Express
+                  Travel & Events sans accord écrit préalable.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Commissions.</span> Les commissions sont calculées selon
+                  les règles communiquées et validées dans l'extranet. Toute commission reste conditionnée à la confirmation,
+                  au paiement et à la bonne exécution du dossier concerné.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Suivi client.</span> L'agence reste responsable des
+                  informations transmises par ses clients. LeJapon.ma peut intervenir pour la validation opérationnelle,
+                  documentaire ou qualité du dossier.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Paiement et validation.</span> Aucune réservation,
+                  demande visa ou prestation spéciale n'est considérée comme définitive sans validation et confirmation de
+                  paiement selon les modalités convenues.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Information loyale.</span> L'agence s'interdit toute
+                  promesse non validée: visa garanti, disponibilité garantie, prix figé, surclassement ou prestation non
+                  confirmée par LeJapon.ma.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Marque et supports.</span> Les logos, brochures, textes,
+                  programmes et visuels LeJapon.ma sont utilisés uniquement pour la promotion autorisée des prestations et
+                  ne peuvent être altérés de façon trompeuse.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Confidentialité.</span> Les tarifs nets, règles de
+                  commission, contacts fournisseurs, dossiers clients, documents et informations internes restent
+                  confidentiels.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Non-contournement.</span> L'agence s'engage à ne pas
+                  contourner LeJapon.ma auprès des fournisseurs, guides, hôtels, transporteurs ou partenaires révélés dans
+                  le cadre de la relation commerciale.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Documents.</span> L'agence veille à la collecte complète
+                  et conforme des documents clients. Tout document incomplet, erroné ou transmis hors délai peut entraîner
+                  un report, un refus ou des frais.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Annulation et litiges.</span> Les annulations,
+                  modifications, remboursements et réclamations sont traités selon les conditions de vente applicables et
+                  les frais réellement engagés.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Résiliation.</span> Le partenariat peut être suspendu ou
+                  résilié en cas d'inactivité prolongée, manquement grave, usage abusif de la marque, contournement,
+                  impayé, fausse déclaration ou atteinte à l'image de LeJapon.ma.
+                </li>
+              </ol>
+            </div>
             <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4">
               <Checkbox
                 checked={metadata.digital_signature_acknowledged}
@@ -740,15 +804,13 @@ export default function AgencyOnboarding() {
                 disabled={isLocked}
               />
               <span className="text-sm text-muted-foreground">
-                I confirm that the submitted information is accurate and that I am authorized to complete this partner
-                registration on behalf of the agency. I acknowledge that a digital partner contract may be prepared for
-                review and signature after validation.
+                Je reconnais avoir lu et accepté les conditions du partenariat.
               </span>
             </label>
             {metadata.digital_signature_acknowledged_at && (
               <p className="mt-3 flex items-center gap-2 text-xs text-emerald-700">
                 <CheckCircle2 className="h-4 w-4" />
-                Acknowledged on {fmtDateTime(metadata.digital_signature_acknowledged_at)}
+                Accepté le {fmtDateTime(metadata.digital_signature_acknowledged_at)}
               </p>
             )}
           </Card>

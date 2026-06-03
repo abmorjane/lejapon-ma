@@ -4,7 +4,9 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { checkPassportExpiry } from "@/lib/passport-mrz";
 
 export type PassportOcrFields = {
@@ -15,10 +17,17 @@ export type PassportOcrFields = {
   sex?: string;
   date_of_birth?: string;
   passport_no?: string;
+  national_id_number?: string;
+  place_of_birth?: string;
   passport_issue_date?: string;
   passport_expiry?: string;
+  passport_authority?: string;
+  profession?: string;
   address?: string;
   city?: string;
+  residence_address?: string;
+  residence_city?: string;
+  residence_country?: string;
   mrz?: string;
   mrz_detected?: boolean;
   mrz_raw?: string;
@@ -30,6 +39,7 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentPath?: string | null;
+  bucket?: "passports" | "visa-docs";
   onStoredPathChange?: (path: string | null) => void;
   onApply: (fields: PassportOcrFields) => void;
 };
@@ -38,9 +48,6 @@ const ACCEPTED_TYPES = ["image/jpeg", "image/jpg", "image/png", "application/pdf
 const MISSING_BUCKET_ERROR = "Bucket passports missing";
 const MISSING_STORAGE_POLICY_ERROR = "Storage policy missing";
 const OCR_FAILED_ERROR = "Passeport uploadé avec succès, mais lecture automatique impossible. Merci de saisir les données manuellement.";
-const PDF_OCR_UNSUPPORTED_ERROR = "PDF uploadé, mais la lecture automatique nécessite une image JPG ou PNG.";
-
-const display = (value?: string | number) => value || "—";
 
 function getUploadContentType(file: File, ext: string) {
   if (file.type === "image/jpg") return "image/jpeg";
@@ -61,10 +68,14 @@ function storageErrorMessage(error: unknown) {
   return message || "Lecture automatique impossible";
 }
 
-function passportOcrErrorMessage(code?: string) {
+function passportOcrErrorMessage(code?: string, contextLabel = "admin") {
   switch (code) {
     case "not_staff":
-      return "Votre compte n’a pas les droits nécessaires pour utiliser la lecture automatique.";
+    case "forbidden_path":
+    case "forbidden_bucket":
+      return contextLabel === "visa"
+        ? "Votre session ne permet pas de lire ce fichier passeport. Merci de vous reconnecter."
+        : "Votre compte n’a pas les droits nécessaires pour utiliser la lecture automatique.";
     case "unsupported_file_type":
       return "Le format PDF n’est pas encore supporté. Merci d’utiliser une image JPG ou PNG.";
     case "ai_rate_limited":
@@ -81,7 +92,9 @@ function passportOcrErrorMessage(code?: string) {
       return "La lecture automatique n’a pas reçu le chemin du fichier uploadé.";
     case "missing_auth":
     case "invalid_token":
-      return "Votre session admin a expiré. Merci de vous reconnecter avant de relancer la lecture automatique.";
+      return contextLabel === "visa"
+        ? "Votre session a expiré. Merci de vous reconnecter avant de relancer la lecture automatique."
+        : "Votre session admin a expiré. Merci de vous reconnecter avant de relancer la lecture automatique.";
     default:
       return OCR_FAILED_ERROR;
   }
@@ -91,35 +104,47 @@ function pickDetectedFields(fields: any): PassportOcrFields {
   return {
     first_name: fields?.first_name,
     last_name: fields?.last_name,
+    full_name: fields?.full_name,
     sex: fields?.sex,
     date_of_birth: fields?.date_of_birth,
     nationality: fields?.nationality,
     passport_no: fields?.passport_no,
+    national_id_number: fields?.national_id_number,
+    place_of_birth: fields?.place_of_birth,
     passport_issue_date: fields?.passport_issue_date,
     passport_expiry: fields?.passport_expiry,
-    address: fields?.address,
-    city: fields?.city,
+    passport_authority: fields?.passport_authority,
+    profession: fields?.profession,
+    address: fields?.address ?? fields?.residence_address,
+    city: fields?.city ?? fields?.residence_city,
+    residence_address: fields?.residence_address ?? fields?.address,
+    residence_city: fields?.residence_city ?? fields?.city,
+    residence_country: fields?.residence_country,
     mrz_detected: fields?.mrz_detected,
-    mrz_raw: fields?.mrz_raw,
+    mrz_raw: fields?.mrz_raw ?? fields?.mrz,
     raw_text: fields?.raw_text,
+    confidence: fields?.confidence,
   };
 }
 
-async function directStorageUpload(file: File, ext: string, contentType: string) {
+async function directStorageUpload(file: File, ext: string, contentType: string, bucket: "passports" | "visa-docs") {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user.id;
+  if (!userId) throw new Error("missing_auth");
   const id = crypto.randomUUID();
-  const path = `original/${id}.${ext}`;
-  console.info("[passport-ocr] direct storage upload started", { bucket: "passports", path, type: contentType, size: file.size });
-  const { error: uploadError } = await supabase.storage.from("passports").upload(path, file, {
+  const path = bucket === "visa-docs" ? `${userId}/passport-scans/${id}.${ext}` : `original/${id}.${ext}`;
+  console.info("[passport-ocr] direct storage upload started", { bucket, path, type: contentType, size: file.size });
+  const { error: uploadError } = await supabase.storage.from(bucket).upload(path, file, {
     contentType,
     upsert: false,
   });
   if (uploadError) throw new Error(storageErrorMessage(uploadError));
 
-  console.info("[passport-ocr] direct storage upload succeeded", { bucket: "passports", path });
+  console.info("[passport-ocr] direct storage upload succeeded", { bucket, path });
   return { path };
 }
 
-export function PassportScannerDialog({ open, onOpenChange, currentPath, onStoredPathChange, onApply }: Props) {
+export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket = "passports", onStoredPathChange, onApply }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -147,41 +172,56 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
       if (!ACCEPTED_TYPES.includes(contentType)) {
         throw new Error("Format non supporté. Utilisez JPG, PNG ou PDF.");
       }
-      const { path } = await directStorageUpload(file, ext, contentType);
+      const { path } = await directStorageUpload(file, ext, contentType, bucket);
       setStoredPath(path);
       onStoredPathChange?.(path);
 
-      if (contentType === "application/pdf") {
-        console.info("[passport-ocr] PDF uploaded; OCR skipped because image input is required", { bucket: "passports", path });
-        setError(PDF_OCR_UNSUPPORTED_ERROR);
-        toast.info(PDF_OCR_UNSUPPORTED_ERROR);
-        return;
-      }
-
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData.session) {
-        const message = passportOcrErrorMessage("missing_auth");
+        const message = passportOcrErrorMessage("missing_auth", bucket === "visa-docs" ? "visa" : "admin");
         setError(message);
         toast.error(message);
         return;
       }
 
       const { data, error: invokeError } = await supabase.functions.invoke("passport-ocr", {
-        body: { storage_path: path, path, bucket: "passports" },
+        body: { storage_path: path, path, bucket },
       });
       if (invokeError) {
-        console.error("[passport-ocr] OCR function failed", invokeError);
-        const message = passportOcrErrorMessage("ai_request_failed");
+        console.error("[passport-ocr] OCR function failed", {
+          status: (invokeError as any)?.status,
+          name: invokeError.name,
+          message: invokeError.message,
+          contextBucket: bucket,
+          path,
+        });
+        const message = passportOcrErrorMessage((invokeError as any)?.context?.error || (invokeError as any)?.message, bucket === "visa-docs" ? "visa" : "admin");
         setError(message);
         toast.error(message);
         return;
       }
       if (!data?.ok) {
-        const message = passportOcrErrorMessage(data?.error);
+        const fallbackFields = pickDetectedFields(data?.debug?.parsed_fields ?? {});
+        const hasFallbackFields = Boolean(fallbackFields.passport_no && (fallbackFields.last_name || fallbackFields.full_name));
+        if (hasFallbackFields) {
+          console.warn("[passport-ocr] OCR returned fallback but parsed usable fields", {
+            error: data?.error,
+            fields: fallbackFields,
+            debug: data?.debug,
+          });
+          setFields(fallbackFields);
+          setError("Lecture partielle: vérifiez les champs détectés avant de les appliquer.");
+          toast.warning("Lecture partielle. Vérifiez les champs détectés avant validation.");
+          return;
+        }
+        const message = passportOcrErrorMessage(data?.error, bucket === "visa-docs" ? "visa" : "admin");
         console.warn("[passport-ocr] OCR returned an error", {
           error: data?.error,
           detail: data?.detail,
-          bucket: "passports",
+          status: data?.status,
+          debug: data?.debug,
+          receivedKeys: data?.debug_echo?.received_keys,
+          bucket,
           storagePath: path,
         });
         setError(message);
@@ -198,7 +238,9 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
       toast.success("Informations détectées. Veuillez vérifier avant validation.");
     } catch (e: any) {
       console.error("[passport-ocr] pipeline failed", e);
-      const message = storageErrorMessage(e);
+      const message = e?.message === "missing_auth"
+        ? passportOcrErrorMessage("missing_auth", bucket === "visa-docs" ? "visa" : "admin")
+        : storageErrorMessage(e);
       setError(message);
       toast.error(message);
     } finally {
@@ -209,7 +251,7 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
   const deleteScan = async () => {
     if (!storedPath) return;
     setBusy(true);
-    const { error: removeError } = await supabase.storage.from("passports").remove([storedPath]);
+    const { error: removeError } = await supabase.storage.from(bucket).remove([storedPath]);
     setBusy(false);
     if (removeError) return toast.error(storageErrorMessage(removeError));
     setStoredPath(null);
@@ -225,6 +267,23 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
     toast.info("Veuillez vérifier les informations avant validation.");
     onOpenChange(false);
   };
+
+  const setField = (key: keyof PassportOcrFields, value: string) => {
+    setFields((current) => ({ ...(current ?? {}), [key]: value }));
+  };
+
+  const editableInput = (key: keyof PassportOcrFields, label: string, type = "text") => (
+    <div>
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Input
+        type={type}
+        value={String(fields?.[key] ?? "")}
+        onChange={(event) => setField(key, event.target.value)}
+        className="mt-1"
+      />
+    </div>
+  );
+  const canApplyDetectedFields = Boolean(fields?.passport_no && (fields.last_name || fields.full_name));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -306,18 +365,34 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
                 </div>
               )}
 
-              <dl className="grid gap-3 text-sm sm:grid-cols-2">
-                <div><dt className="text-xs text-muted-foreground">Prénom</dt><dd className="font-medium">{display(fields.first_name)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Nom</dt><dd className="font-medium">{display(fields.last_name)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Nationalité</dt><dd className="font-medium">{display(fields.nationality)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Sexe</dt><dd className="font-medium">{display(fields.sex)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Date de naissance</dt><dd className="font-medium">{display(fields.date_of_birth)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">N° passeport</dt><dd className="font-medium">{display(fields.passport_no)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Date d'émission</dt><dd className="font-medium">{display(fields.passport_issue_date)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Date d'expiration</dt><dd className="font-medium">{display(fields.passport_expiry)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Ville</dt><dd className="font-medium">{display(fields.city)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Adresse</dt><dd className="font-medium">{display(fields.address)}</dd></div>
-              </dl>
+              <div className="grid gap-3 text-sm sm:grid-cols-2">
+                {editableInput("first_name", "Prénom")}
+                {editableInput("last_name", "Nom")}
+                {editableInput("nationality", "Nationalité")}
+                {editableInput("sex", "Sexe")}
+                {editableInput("date_of_birth", "Date de naissance", "date")}
+                {editableInput("passport_no", "N° passeport")}
+                {editableInput("national_id_number", "CIN")}
+                {editableInput("place_of_birth", "Lieu de naissance")}
+                {editableInput("passport_issue_date", "Date d'émission", "date")}
+                {editableInput("passport_expiry", "Date d'expiration", "date")}
+                {editableInput("passport_authority", "Autorité")}
+                {editableInput("residence_country", "Pays résidence")}
+                {editableInput("residence_city", "Ville résidence")}
+                {editableInput("city", "Ville profil")}
+                <div className="sm:col-span-2">
+                  <Label className="text-xs text-muted-foreground">Adresse / domicile</Label>
+                  <Textarea
+                    value={fields.address ?? fields.residence_address ?? ""}
+                    onChange={(event) => {
+                      setField("address", event.target.value);
+                      setField("residence_address", event.target.value);
+                    }}
+                    className="mt-1"
+                    rows={3}
+                  />
+                </div>
+              </div>
 
               {(fields.mrz_raw || fields.raw_text) && (
                 <details className="mt-4 rounded-xl border border-border bg-secondary/30 p-3 text-xs">
@@ -346,7 +421,7 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, onStore
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             <X className="h-4 w-4" /> Annuler
           </Button>
-          <Button type="button" onClick={apply} disabled={!fields || busy}>
+          <Button type="button" onClick={apply} disabled={!canApplyDetectedFields || busy}>
             Appliquer ces informations au profil
           </Button>
         </DialogFooter>

@@ -107,6 +107,7 @@ type OrganizationForm = {
   country: string;
   tax_identifier: string;
   notes: string;
+  agency_logo_url: string;
 };
 
 type OrganizationMemberRow = {
@@ -527,6 +528,7 @@ const defaultForm = (): OrganizationForm => ({
   country: "",
   tax_identifier: "",
   notes: "",
+  agency_logo_url: "",
 });
 
 const defaultExternalUserForm = (): ExternalUserForm => ({
@@ -551,6 +553,7 @@ const toForm = (organization: OrganizationRow): OrganizationForm => ({
   country: organization.country ?? "",
   tax_identifier: organization.tax_identifier ?? "",
   notes: organization.notes ?? "",
+  agency_logo_url: typeof organization.metadata?.agency_logo_url === "string" ? organization.metadata.agency_logo_url : "",
 });
 
 const clean = (value: string) => {
@@ -865,6 +868,10 @@ export default function OrganizationsAdmin() {
 
     setSaving(true);
     const payload = formToPayload(form);
+    (payload as any).metadata = {
+      ...(editing?.metadata ?? {}),
+      agency_logo_url: clean(form.agency_logo_url),
+    };
 
     const request = editing
       ? db.from("organizations").update(payload).eq("id", editing.id).select(ORGANIZATION_COLUMNS).single()
@@ -2614,6 +2621,20 @@ export default function OrganizationsAdmin() {
                 />
               </div>
             ))}
+
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="agency_logo_url">Logo agence URL</Label>
+              <Input
+                id="agency_logo_url"
+                value={form.agency_logo_url}
+                onChange={(event) => setForm((current) => ({ ...current, agency_logo_url: event.target.value }))}
+                className="min-h-11"
+                placeholder="URL du logo agence"
+              />
+              {form.agency_logo_url && (
+                <img src={form.agency_logo_url} alt="Logo agence" className="mt-2 max-h-20 max-w-[220px] rounded border border-border object-contain p-2" />
+              )}
+            </div>
 
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="notes">Notes</Label>

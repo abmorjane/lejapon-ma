@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { Loader2, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -106,6 +106,7 @@ export default function AdminHotels() {
   const [cityFilter, setCityFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<HotelForm>(() => emptyHotelForm());
+  const [uploadingImage, setUploadingImage] = useState<null | "main" | "gallery">(null);
 
   const loadHotels = async () => {
     setLoading(true);
@@ -145,6 +146,40 @@ export default function AdminHotels() {
 
   const setField = <K extends keyof HotelForm>(key: K, value: HotelForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const uploadHotelImage = async (kind: "main" | "gallery", file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Choisissez une image JPG, PNG ou WebP.");
+      return;
+    }
+    setUploadingImage(kind);
+    try {
+      const safeName = file.name.replace(/[^\w.-]+/g, "_");
+      const folder = form.slug || makeHotelSlug({ city: form.city || "hotel", name: form.name || "image" }) || "hotel";
+      const path = `${folder}/${Date.now()}-${safeName}`;
+      const { error } = await supabase.storage.from("hotel-images").upload(path, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+      if (error) throw error;
+      const { data } = supabase.storage.from("hotel-images").getPublicUrl(path);
+      const url = data.publicUrl;
+      if (kind === "main") {
+        setField("main_image_url", url);
+      } else {
+        setForm((current) => ({
+          ...current,
+          gallery_urls: [...listFromTextarea(current.gallery_urls), url].join("\n"),
+        }));
+      }
+      toast.success(kind === "main" ? "Image principale uploadée." : "Image ajoutée à la galerie.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Upload impossible. Vérifiez le bucket hotel-images.");
+    } finally {
+      setUploadingImage(null);
+    }
   };
 
   const saveHotel = async () => {
@@ -203,6 +238,17 @@ export default function AdminHotels() {
       return;
     }
     toast.success("Hôtel supprimé.");
+    await loadHotels();
+  };
+
+  const archiveHotel = async (hotel: HotelCatalogItem) => {
+    if (!window.confirm(`Archiver l'hôtel "${hotel.name}" ? Il ne sera plus visible sur le site public ni dans l'extranet agences.`)) return;
+    const { error } = await db.from("hotel_catalog").update({ is_active: false }).eq("id", hotel.id);
+    if (error) {
+      toast.error(error.message ?? "Impossible d'archiver l'hôtel.");
+      return;
+    }
+    toast.success("Hôtel archivé.");
     await loadHotels();
   };
 
@@ -279,6 +325,11 @@ export default function AdminHotels() {
                         <Button type="button" variant="outline" size="sm" onClick={() => openEdit(hotel)}>
                           Modifier
                         </Button>
+                        {hotel.is_active && (
+                          <Button type="button" variant="outline" size="sm" onClick={() => archiveHotel(hotel)}>
+                            Archiver
+                          </Button>
+                        )}
                         <Button type="button" variant="outline" size="sm" onClick={() => deleteHotel(hotel)}>
                           <Trash2 className="h-3.5 w-3.5" />
                           Supprimer
@@ -323,12 +374,72 @@ export default function AdminHotels() {
               </Select>
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>Image principale URL</Label>
-              <Input value={form.main_image_url} onChange={(event) => setField("main_image_url", event.target.value)} />
+              <Label>Image principale</Label>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Input value={form.main_image_url} onChange={(event) => setField("main_image_url", event.target.value)} placeholder="URL ou image uploadée" />
+                <Button type="button" variant="outline" disabled={uploadingImage === "main"} className="shrink-0">
+                  <label className="inline-flex cursor-pointer items-center gap-2">
+                    {uploadingImage === "main" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    Uploader
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => {
+                        void uploadHotelImage("main", event.target.files?.[0]);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </Button>
+              </div>
+              {form.main_image_url && (
+                <div className="mt-3 flex items-start gap-3 rounded-lg border border-border p-3">
+                  <img src={form.main_image_url} alt="" className="h-24 w-36 rounded-md object-cover" />
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setField("main_image_url", "")}>
+                    <X className="h-4 w-4" /> Retirer
+                  </Button>
+                </div>
+              )}
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>Galerie URLs (une par ligne)</Label>
-              <Textarea rows={3} value={form.gallery_urls} onChange={(event) => setField("gallery_urls", event.target.value)} />
+              <Label>Galerie</Label>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                <Textarea rows={3} value={form.gallery_urls} onChange={(event) => setField("gallery_urls", event.target.value)} placeholder="URLs une par ligne ou images uploadées" />
+                <Button type="button" variant="outline" disabled={uploadingImage === "gallery"} className="shrink-0">
+                  <label className="inline-flex cursor-pointer items-center gap-2">
+                    {uploadingImage === "gallery" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    Ajouter image
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      multiple
+                      onChange={async (event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        for (const file of files) await uploadHotelImage("gallery", file);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </Button>
+              </div>
+              {listFromTextarea(form.gallery_urls).length > 0 && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {listFromTextarea(form.gallery_urls).map((url, index) => (
+                    <div key={`${url}-${index}`} className="group relative overflow-hidden rounded-lg border border-border">
+                      <img src={url} alt="" className="h-24 w-full object-cover" />
+                      <button
+                        type="button"
+                        className="absolute right-1 top-1 rounded-full bg-background/90 p-1 opacity-0 shadow group-hover:opacity-100"
+                        onClick={() => setField("gallery_urls", listFromTextarea(form.gallery_urls).filter((_, itemIndex) => itemIndex !== index).join("\n"))}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Description courte FR</Label>

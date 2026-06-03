@@ -18,6 +18,8 @@ const BLACK = rgb(0.08, 0.08, 0.08);
 const GREY = rgb(0.42, 0.42, 0.42);
 const LIGHT = rgb(0.97, 0.97, 0.97);
 const BORDER = rgb(0.86, 0.86, 0.86);
+const MM_TO_PT = 72 / 25.4;
+const TRAVEL_CONFIRMATION_STAMP_WIDTH = 38 * MM_TO_PT;
 
 const fmtDate = (value?: string | null) => {
   if (!value) return "-";
@@ -141,6 +143,12 @@ function drawImageContain(page: PDFPage, image: any, box: { x: number; y: number
     width,
     height,
   });
+}
+
+function drawImageAtWidth(page: PDFPage, image: any, x: number, y: number, width: number) {
+  const height = width / (image.width / image.height);
+  page.drawImage(image, { x, y, width, height });
+  return { width, height };
 }
 
 function wrap(text: unknown, font: PDFFont, size: number, maxWidth: number): string[] {
@@ -454,7 +462,9 @@ export async function generateTravelConfirmationPdf(app: any, settings: any = {}
   drawWrapped(page, closing, 40, Math.max(y, 138), 330, font, 7.2, GREY, 8.5, 3);
 
   const sigY = 112;
-  if (stamp) drawImageContain(page, stamp, { x: 388, y: sigY + 15, width: 130, height: 58, padding: 2 });
+  if (stamp) {
+    drawImageAtWidth(page, stamp, 426, sigY + 14, TRAVEL_CONFIRMATION_STAMP_WIDTH);
+  }
   text(page, "Signature", 394, sigY + 5, bold, 8, BLACK);
   page.drawRectangle({ x: 394, y: sigY - 3, width: 135, height: 0.6, color: BLACK });
   text(page, agency.manager_name || agency.legal_company_name, 394, sigY - 16, font, 7.5, GREY);

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, X } from "lucide-react";
 import { toast } from "sonner";
+import { mapProfessionTextToCrmSituation } from "@/lib/visa-document-checklists";
 
 type ParsedRow = {
   full_name: string;
@@ -21,6 +22,7 @@ type ParsedRow = {
   phone: string | null;
   city: string | null;
   profession: string | null;
+  metadata?: Record<string, unknown>;
   marital_status: string | null;
   address: string | null;
   nationality: string | null;
@@ -255,6 +257,10 @@ export function ClientsImportDialog({
           phone,
           city,
           profession,
+          metadata: {
+            ...(mapProfessionTextToCrmSituation(profession) ? { professional_situation: mapProfessionTextToCrmSituation(profession) } : {}),
+            ...(profession ? { imported_profession_source: profession } : {}),
+          },
           marital_status,
           address,
           nationality,
@@ -304,6 +310,7 @@ export function ClientsImportDialog({
       phone: r.phone,
       city: r.city,
       profession: r.profession,
+      metadata: r.metadata ?? {},
       marital_status: r.marital_status,
       address: r.address,
       nationality: r.nationality,

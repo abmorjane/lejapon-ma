@@ -298,14 +298,18 @@ export default function TripsCatalog() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div><Label>Texte du badge (optionnel)</Label><Input disabled={publicFieldDisabled} value={edit.badge_text ?? ""} onChange={(e) => setEdit({ ...edit, badge_text: e.target.value })} placeholder="Auto si vide" /></div>
+                <div><Label>Texte du badge / offre (optionnel)</Label><Input disabled={publicFieldDisabled} value={edit.badge_text ?? ""} onChange={(e) => setEdit({ ...edit, badge_text: e.target.value })} placeholder="Offre spéciale, Sakura 2026…" /></div>
                 <div><Label>Date début</Label><Input disabled={publicFieldDisabled} type="date" value={edit.start_date ?? ""} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} /></div>
                 <div><Label>Date fin</Label><Input disabled={publicFieldDisabled} type="date" value={edit.end_date ?? ""} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} /></div>
                 <div><Label>Durée (jours)</Label><Input disabled={publicFieldDisabled} type="number" value={edit.duration_days ?? 14} onChange={(e) => setEdit({ ...edit, duration_days: +e.target.value })} /></div>
-                <div><Label>Prix base (MAD)</Label><Input disabled={publicFieldDisabled} type="number" value={edit.base_price_mad} onChange={(e) => setEdit({ ...edit, base_price_mad: +e.target.value })} /></div>
+                <div><Label>Prix actuel / promotionnel (MAD)</Label><Input disabled={publicFieldDisabled} type="number" value={edit.base_price_mad} onChange={(e) => setEdit({ ...edit, base_price_mad: +e.target.value })} /></div>
                 <div><Label>Places totales</Label><Input disabled={publicFieldDisabled} type="number" value={edit.total_slots} onChange={(e) => setEdit({ ...edit, total_slots: +e.target.value })} /></div>
                 <div><Label>Places restantes</Label><Input disabled={publicFieldDisabled} type="number" value={edit.slots_left} onChange={(e) => setEdit({ ...edit, slots_left: +e.target.value })} /></div>
-                <div><Label>Promotion (%)</Label><Input disabled={publicFieldDisabled} type="number" value={edit.promo_percent ?? ""} onChange={(e) => setEdit({ ...edit, promo_percent: e.target.value === "" ? null : +e.target.value })} placeholder="ex: 10" /></div>
+                <div>
+                  <Label>Promotion active (%)</Label>
+                  <Input disabled={publicFieldDisabled} type="number" value={edit.promo_percent ?? ""} onChange={(e) => setEdit({ ...edit, promo_percent: e.target.value === "" ? null : +e.target.value })} placeholder="ex: 10" />
+                  <p className="mt-1 text-xs text-muted-foreground">L'ancien prix barré est calculé depuis ce pourcentage tant que la colonne original_price n'existe pas.</p>
+                </div>
                 <div><Label>Lien programme</Label><Input disabled={publicFieldDisabled} value={edit.program_link ?? ""} onChange={(e) => setEdit({ ...edit, program_link: e.target.value })} placeholder="/programme?trip=…" /></div>
                 <div className="col-span-2 rounded-xl border border-border bg-secondary/30 p-4">
                   <h3 className="mb-1 text-sm font-semibold">Valeurs visa automatiques</h3>

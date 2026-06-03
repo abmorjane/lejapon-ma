@@ -33,6 +33,7 @@ type TripRow = {
   duration_days: number | null;
   short_description: string | null;
   base_price_mad: number;
+  promo_percent?: number | null;
 };
 
 const fmt = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n)) + " MAD";
@@ -61,7 +62,7 @@ const Booking = () => {
     (async () => {
       const { data } = await supabase
         .from("trips")
-        .select("id,title,slug,season,start_date,end_date,duration_days,short_description,base_price_mad")
+        .select("id,title,slug,season,start_date,end_date,duration_days,short_description,base_price_mad,promo_percent")
         .in("status", ["open", "completed"])
         .order("start_date", { ascending: true, nullsFirst: false });
       setTripsList((data ?? []) as TripRow[]);
@@ -344,14 +345,23 @@ const Booking = () => {
                     <p className="text-foreground/60">Aucun départ disponible pour le moment. Revenez bientôt.</p>
                   ) : (
                     <div className="grid gap-3">
-                      {tripsList.map((tr) => (
+                      {tripsList.map((tr) => {
+                        const hasPromo = typeof tr.promo_percent === "number" && tr.promo_percent > 0 && tr.promo_percent < 100;
+                        const originalPrice = hasPromo ? Math.round(Number(tr.base_price_mad || 0) / (1 - Number(tr.promo_percent) / 100)) : null;
+                        return (
                         <button key={tr.id} onClick={() => setTripId(tr.id)} className={cn(
                           "text-start p-5 sm:p-6 border transition-all duration-300",
                           tripId === tr.id ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40"
                         )}>
-                          <div className="flex items-baseline justify-between gap-3 mb-1">
+                          <div className="flex items-start justify-between gap-3 mb-1">
                             <h3 className="font-display text-lg sm:text-xl leading-tight">{tr.title}</h3>
-                            <span className="text-accent whitespace-nowrap shrink-0 sm:text-base font-bold text-3xl">{fmt(tr.base_price_mad)}</span>
+                            <div className="text-right">
+                              {originalPrice && originalPrice > tr.base_price_mad && (
+                                <div className="text-sm font-semibold text-muted-foreground line-through">{fmt(originalPrice)}</div>
+                              )}
+                              {hasPromo && <div className="mb-1 text-xs font-bold uppercase tracking-wide text-accent">Offre spéciale</div>}
+                              <span className="text-accent whitespace-nowrap shrink-0 sm:text-base font-bold text-3xl">{fmt(tr.base_price_mad)}</span>
+                            </div>
                           </div>
                           <p className="text-xs eyebrow text-muted-foreground mb-2">
                             {tr.season || formatDates(tr.start_date, tr.end_date)}
@@ -374,7 +384,7 @@ const Booking = () => {
                             <p className="text-sm text-foreground/70">{tr.short_description}</p>
                           )}
                         </button>
-                      ))}
+                      )})}
                     </div>
                   )}
                 </div>

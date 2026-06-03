@@ -1,6 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
+const function_version = "send-admin-notification-v2-rich-emails";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -12,7 +14,9 @@ type EventType =
   | "booking_internal"
   | "booking_client"
   | "booking_created"
+  | "agency_booking_internal"
   | "payment_recorded"
+  | "agency_payment_recorded"
   | "contact_message"
   | "test"
   | "test_email"
@@ -39,6 +43,8 @@ const escapeHtml = (value: unknown) =>
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+
+const withFunctionVersion = (html: string) => `${html}\n<!-- function_version: ${function_version} -->`;
 
 const fmtMAD = (value: unknown) =>
   `${Number(value || 0).toLocaleString("fr-FR", { maximumFractionDigits: 0 })} MAD`;
@@ -85,6 +91,66 @@ const truthy = (value: unknown) => {
   return true;
 };
 
+const paymentMethodLabel = (value: unknown) => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  const labels: Record<string, string> = {
+    cash: "Espèces",
+    especes: "Espèces",
+    espèces: "Espèces",
+    bank_transfer: "Virement bancaire",
+    transfer: "Virement bancaire",
+    virement: "Virement bancaire",
+    card: "Carte bancaire",
+    carte: "Carte bancaire",
+    cheque: "Chèque",
+    chèque: "Chèque",
+    agency_payment: "Versement agence",
+    other: "Autre",
+  };
+  return labels[raw] ?? plainMissing(value);
+};
+
+const paymentStatusLabel = (value: unknown) => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  const labels: Record<string, string> = {
+    pending: "En attente",
+    received: "Reçu",
+    paid: "Payé",
+    refunded: "Remboursé",
+    cancelled: "Annulé",
+  };
+  return labels[raw] ?? plainMissing(value);
+};
+
+function safeArray(value: unknown): any[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function quoteAdjustmentsFromBooking(booking: any) {
+  const direct = safeArray(booking?.quote_adjustments);
+  const metadata = safeArray(booking?.metadata?.quote_adjustments);
+  const legacy = booking?.quote_discount;
+  const legacyLine = legacy && typeof legacy === "object"
+    ? [{
+      label: legacy.label || legacy.title || "Réduction / ligne spéciale devis",
+      type: "discount",
+      calculation_type: legacy.type || legacy.calculation_type || "fixed_amount",
+      amount: Number(legacy.amount || 0),
+      visible_on_quote: true,
+    }]
+    : [];
+  return direct.length ? direct : metadata.length ? metadata : legacyLine;
+}
+
+function adjustmentLabel(line: any) {
+  const sign = line?.type === "supplement" ? "+" : "-";
+  const label = plainMissing(line?.label);
+  const amount = line?.calculation_type === "percentage"
+    ? `${Number(line?.amount || 0).toLocaleString("fr-FR", { maximumFractionDigits: 2 })}%`
+    : fmtMAD(line?.amount);
+  return `${label} · ${line?.type === "supplement" ? "Supplément" : "Réduction"} · ${sign}${amount}`;
+}
+
 function sectionHtml(title: string, rows: Array<[string, unknown]>) {
   const renderedRows = rows.map(([label, value]) => `
     <tr>
@@ -112,7 +178,7 @@ function listSectionHtml(title: string, items: string[], emptyText = missing) {
   `;
 }
 
-function bookingNotificationShell(reference: unknown, sections: string[], adminUrl: string) {
+function bookingNotificationShell(reference: unknown, sections: string[], adminUrl: string, title = "Nouvelle réservation — LeJapon.ma", eyebrow = "Nouvelle réservation") {
   return `
     <div style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#171412">
       <div style="max-width:760px;margin:0 auto;padding:28px 14px">
@@ -122,8 +188,8 @@ function bookingNotificationShell(reference: unknown, sections: string[], adminU
         </div>
         <div style="background:#ffffff;border-radius:14px;border:1px solid #e8e4e1;padding:26px;box-shadow:0 6px 24px rgba(0,0,0,.05)">
           <div style="border-bottom:3px solid #E21B2D;padding-bottom:14px;margin-bottom:20px">
-            <p style="margin:0 0 6px;color:#746960;font-size:13px;text-transform:uppercase;letter-spacing:.08em">Nouvelle réservation</p>
-            <h1 style="margin:0;font-size:24px;line-height:1.3;color:#171412">Nouvelle réservation — LeJapon.ma</h1>
+            <p style="margin:0 0 6px;color:#746960;font-size:13px;text-transform:uppercase;letter-spacing:.08em">${escapeHtml(eyebrow)}</p>
+            <h1 style="margin:0;font-size:24px;line-height:1.3;color:#171412">${escapeHtml(title)}</h1>
             <p style="margin:10px 0 0;font-size:14px;color:#3a3531">Référence: <strong>${escapeHtml(plainMissing(reference))}</strong></p>
           </div>
           ${sections.join("")}
@@ -283,7 +349,7 @@ async function createLog(
       subject: payload.subject ?? null,
       status,
       error_message: errorMessage ?? null,
-      metadata: payload.metadata ?? {},
+      metadata: { function_version, ...(payload.metadata ?? {}) },
       sent_at: status === "sent" ? new Date().toISOString() : null,
       related_booking_id: payload.related_booking_id ?? null,
       related_payment_id: payload.related_payment_id ?? null,
@@ -303,7 +369,7 @@ async function updateLogDetails(admin: any, id: string | undefined, payload: Ema
       event_type: payload.eventType,
       recipient: payload.recipient,
       subject: payload.subject,
-      metadata: payload.metadata ?? {},
+      metadata: { function_version, ...(payload.metadata ?? {}) },
       related_booking_id: payload.related_booking_id ?? null,
       related_payment_id: payload.related_payment_id ?? null,
       related_contact_id: payload.related_contact_id ?? null,
@@ -328,6 +394,11 @@ async function updateLog(admin: any, id: string | undefined, status: LogStatus, 
 async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: string) {
   const logId = existingLogId ?? await createLog(admin, payload, "pending");
   if (existingLogId) await updateLogDetails(admin, existingLogId, payload);
+  if (!payload.recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.recipient)) {
+    await updateLog(admin, logId, "failed", "missing_or_invalid_recipient");
+    console.warn("[admin-email] skipped invalid recipient", { eventType: payload.eventType, logId });
+    return { ok: true, log_id: logId, skipped: "missing_or_invalid_recipient" };
+  }
   try {
     console.info("[admin-email] sending", { eventType: payload.eventType, recipient: payload.recipient, subject: payload.subject });
     const smtp = await smtpConfig(admin);
@@ -337,17 +408,17 @@ async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: stri
       to: payload.recipient,
       replyTo: payload.replyTo || smtp.replyTo,
       subject: payload.subject,
-      html: payload.html,
+      html: withFunctionVersion(payload.html),
       content: payload.text,
     });
     await client.close();
     await updateLog(admin, logId, "sent");
-    console.info("[admin-email] sent", { eventType: payload.eventType, logId });
+    console.info("[admin-email] sent", { function_version, eventType: payload.eventType, logId, email_send_success: true });
     return { ok: true, log_id: logId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await updateLog(admin, logId, "failed", message);
-    console.error("[admin-email] failed", { eventType: payload.eventType, logId, error: message });
+    console.error("[admin-email] failed", { function_version, eventType: payload.eventType, logId, email_send_success: false, error_code: "email_send_failed", error: message });
     return { ok: false, log_id: logId, error: "email_send_failed", detail: message };
   }
 }
@@ -361,7 +432,10 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
       .eq("id", bookingId)
       .maybeSingle();
   const booking = fetchedBooking;
-  if (error || !booking) throw new Error(error?.message ?? "Booking not found");
+  if (error || !booking) {
+    console.error("[admin-email] booking fetch failed", { function_version, booking_id: bookingId || null, error_code: "booking_fetch_failed", detail: error?.message ?? "Booking not found" });
+    throw new Error(error?.message ?? "Booking not found");
+  }
 
   const extras = booking.booking_extras ?? [];
   const [{ data: participants }, { data: payments }] = await Promise.all([
@@ -406,6 +480,7 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
   const paymentMethod = latestPayment?.method || booking.payment_method || booking.payment_mode || null;
   const travelerCount = Number(booking.num_adults || 0) + Number(booking.num_children || 0);
   const kyotoHotel = booking.kyoto_hotel_option || booking.kyoto_hotel || booking.hotel_choice || booking.hotel_category || null;
+  const quoteAdjustments = quoteAdjustmentsFromBooking(booking);
   const sourceLabel = agencyName
     ? `Agence partenaire — ${agencyName}`
     : String(booking.source ?? "").toLowerCase().includes("agency")
@@ -433,6 +508,9 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
       `Total: ${lineTotal ? fmtMAD(lineTotal) : missing}`,
     ].join(" · ");
   });
+  const adjustmentItems = quoteAdjustments
+    .filter((line: any) => line?.visible_on_quote !== false)
+    .map(adjustmentLabel);
 
   const sections = [
     sectionHtml("Client", [
@@ -453,11 +531,12 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
     ]),
     listSectionHtml("Participants", participantItems, "Aucun participant détaillé renseigné."),
     listSectionHtml("Extras", extrasItems, "Aucun extra sélectionné."),
+    listSectionHtml("Ajustements devis", adjustmentItems, "Aucun ajustement devis."),
     sectionHtml("Prix & paiement", [
       ["Total", fmtMAD(total)],
       ["Montant payé", paid ? fmtMAD(paid) : missing],
       ["Reste à payer", fmtMAD(balance)],
-      ["Mode de paiement", paymentMethod],
+      ["Mode de paiement", paymentMethodLabel(paymentMethod)],
     ]),
     sectionHtml("Source", [
       ["Origine", sourceLabel],
@@ -466,10 +545,16 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
     ]),
   ];
 
-  const subject = `Nouvelle réservation — LeJapon.ma (${plainMissing(booking.reference)})`;
-  const html = bookingNotificationShell(booking.reference, sections, adminUrl);
+  const subject = `Nouvelle réservation LeJapon.ma — ${plainMissing(booking.contact_name)} — ${plainMissing(trip?.title || tripLabel)}`;
+  const html = bookingNotificationShell(
+    booking.reference,
+    sections,
+    adminUrl,
+    `Nouvelle réservation — ${plainMissing(booking.contact_name)} — ${plainMissing(trip?.title || tripLabel)}`
+  );
   const participantsText = participantItems.length ? participantItems.map((item: string) => `- ${item}`).join("\n") : `- ${missing}`;
   const extrasText = extrasItems.length ? extrasItems.map((item: string) => `- ${item}`).join("\n") : `- ${missing}`;
+  const adjustmentsText = adjustmentItems.length ? adjustmentItems.map((item: string) => `- ${item}`).join("\n") : `- ${missing}`;
 
   return {
     eventType: "booking_internal",
@@ -501,11 +586,14 @@ ${participantsText}
 Extras
 ${extrasText}
 
+Ajustements devis
+${adjustmentsText}
+
 Prix & paiement
 - Total: ${fmtMAD(total)}
 - Payé: ${paid ? fmtMAD(paid) : missing}
 - Reste à payer: ${fmtMAD(balance)}
-- Mode de paiement: ${plainMissing(paymentMethod)}
+- Mode de paiement: ${paymentMethodLabel(paymentMethod)}
 
 Source
 - Origine: ${sourceLabel}
@@ -527,26 +615,41 @@ async function bookingClientEmail(admin: any, bookingId: string, fullBookingData
       .eq("id", bookingId)
       .maybeSingle();
   const booking = fetchedBooking;
-  if (error || !booking) throw new Error(error?.message ?? "Booking not found");
+  if (error || !booking) {
+    console.error("[admin-email] booking client fetch failed", { function_version, booking_id: bookingId || null, error_code: "booking_fetch_failed", detail: error?.message ?? "Booking not found" });
+    throw new Error(error?.message ?? "Booking not found");
+  }
 
   const total = Number(booking.total_amount_mad || 0);
-  const phone = booking.contact_phone || "—";
   const trip = booking.trips;
   const tripLabel = [trip?.season, trip?.title].filter(Boolean).join(" — ") || booking.preferred_dates || "votre voyage";
-  const subject = "Confirmation de votre inscription au voyage au Japon — LeJapon.ma";
-  const intro = `Bonjour ${plain(booking.contact_name)},\n\nMerci pour votre inscription à notre prochain voyage au Japon.`;
+  const travelers = Number(booking.num_adults || 0) + Number(booking.num_children || 0);
+  const extras = safeArray(booking.booking_extras).map((extra: any) => {
+    const qty = Number(extra.qty || extra.quantity || 1);
+    const unit = Number(extra.unit_price_mad || extra.price_mad || 0);
+    const total = Number(extra.total_mad || unit * qty || 0);
+    return `${plainMissing(extra.name_snapshot || extra.name)} · Qté: ${qty || 1}${unit ? ` · ${fmtMAD(unit)} / unité` : ""}${total ? ` · Total: ${fmtMAD(total)}` : ""}`;
+  });
+  const extrasSummary = extras.length ? extras.join("\n") : "Aucun extra sélectionné";
+  const depositAmount = Number(booking.deposit_amount_mad || booking.metadata?.deposit_amount_mad || 0);
+  const whatsappHref = "https://wa.me/212711449838";
+  const subject = "Votre demande de réservation LeJapon.ma a bien été reçue";
   const html = emailShell(
-    "Confirmation de votre inscription",
-    `${intro}\n\nNous avons bien noté vos informations et vos choix de voyage. Un conseiller va prendre contact avec vous très bientôt sur le téléphone suivant : ${plain(phone)}, afin de confirmer votre inscription et répondre à vos questions.\n\nVeuillez noter que le prix à payer pour votre voyage est de ${fmtMAD(total)}.\n\nPensez à payer la somme totale de votre voyage très rapidement pour profiter de 2% de réduction. Offre valable uniquement jusqu'à six mois avant la date de départ de votre voyage.\n\nCordialement,\nL'équipe LeJapon.ma`,
+    "Votre demande de réservation est bien reçue",
+    `Bonjour ${plain(booking.contact_name)},\n\nNous avons bien reçu votre demande de réservation LeJapon.ma.\n\nVotre réservation sera confirmée après réception du premier acompte. Un conseiller LeJapon.ma vous contactera rapidement pour répondre à vos questions et valider les détails de votre voyage.`,
     [
-      ["Nom", booking.contact_name],
-      ["Email", booking.contact_email],
-      ["Téléphone", phone],
+      ["Référence", booking.reference],
       ["Voyage", tripLabel],
-      ["Prix total", fmtMAD(total)],
+      ["Date de départ", fmtDateOnly(trip?.start_date || booking.start_date)],
+      ["Nombre de voyageurs", travelers || missing],
+      ["Type de chambre", booking.room_type],
+      ["Option hôtel / formule", booking.formula || booking.hotel_choice || booking.hotel_category],
+      ["Extras sélectionnés", extrasSummary],
+      ["Montant total estimé", total ? fmtMAD(total) : missing],
+      ["Acompte à prévoir", depositAmount ? fmtMAD(depositAmount) : missing],
     ],
-    undefined,
-    "LeJapon.ma",
+    { label: "Nous contacter sur WhatsApp", href: whatsappHref },
+    "LeJapon.ma / Moroccan Express Travel & Events · info@lejapon.ma · +212 711 449 838",
   );
 
   return {
@@ -554,45 +657,269 @@ async function bookingClientEmail(admin: any, bookingId: string, fullBookingData
     recipient: normalizeEmail(booking.contact_email),
     subject,
     html,
-    text: `Bonjour ${plain(booking.contact_name)},\n\nMerci pour votre inscription à notre prochain voyage au Japon.\n\nNous avons bien noté vos informations et vos choix de voyage. Un conseiller va prendre contact avec vous très bientôt sur le téléphone suivant : ${plain(phone)}, afin de confirmer votre inscription et répondre à vos questions.\n\nVeuillez noter que le prix à payer pour votre voyage est de ${fmtMAD(total)}.\n\nPensez à payer la somme totale de votre voyage très rapidement pour profiter de 2% de réduction.\nOffre valable uniquement jusqu'à six mois avant la date de départ de votre voyage.\n\nCordialement,\nL'équipe LeJapon.ma`,
+    text: `Bonjour ${plain(booking.contact_name)},
+
+Nous avons bien reçu votre demande de réservation LeJapon.ma.
+
+Référence: ${plainMissing(booking.reference)}
+Voyage: ${tripLabel}
+Date de départ: ${fmtDateOnly(trip?.start_date || booking.start_date)}
+Nombre de voyageurs: ${travelers || missing}
+Type de chambre: ${plainMissing(booking.room_type)}
+Option hôtel / formule: ${plainMissing(booking.formula || booking.hotel_choice || booking.hotel_category)}
+Extras:
+${extras.map((item: string) => `- ${item}`).join("\n") || "- Aucun extra sélectionné"}
+Montant total estimé: ${total ? fmtMAD(total) : missing}
+Acompte à prévoir: ${depositAmount ? fmtMAD(depositAmount) : missing}
+
+Votre réservation sera confirmée après réception du premier acompte.
+Un conseiller LeJapon.ma vous contactera rapidement pour répondre à vos questions et valider les détails.
+
+WhatsApp: +212 711 449 838
+Email: info@lejapon.ma
+
+LeJapon.ma / Moroccan Express Travel & Events`,
     related_booking_id: booking.id,
     metadata: { reference: booking.reference, client_email: booking.contact_email },
   };
 }
 
-async function paymentEmail(admin: any, paymentId: string): Promise<EmailPayload> {
-  const { data: payment, error } = await admin.from("payments").select("*").eq("id", paymentId).maybeSingle();
-  if (error || !payment) throw new Error(error?.message ?? "Payment not found");
+async function paymentEmail(admin: any, paymentId: string, paymentPayload?: any, bookingIdHint?: string): Promise<EmailPayload> {
+  const { data: fetchedPayment, error } = paymentPayload
+    ? { data: paymentPayload, error: null }
+    : paymentId
+      ? await admin.from("payments").select("*").eq("id", paymentId).maybeSingle()
+      : bookingIdHint
+        ? await admin
+          .from("payments")
+          .select("*")
+          .eq("booking_id", bookingIdHint)
+          .order("paid_at", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        : { data: null, error: null };
+  const payment = fetchedPayment;
+  if (error || !payment) {
+    console.error("[admin-email] payment fetch failed", { function_version, payment_id: paymentId || null, booking_id: bookingIdHint || null, error_code: "payment_fetch_failed", detail: error?.message ?? "Payment not found" });
+    throw new Error(error?.message ?? "Payment not found");
+  }
 
   const { data: booking, error: bookingError } = await admin
     .from("bookings")
-    .select("*, trips(title, season)")
-    .eq("id", payment.booking_id)
+    .select("*, trips(title, season), clients(*)")
+    .eq("id", payment.booking_id || bookingIdHint)
     .maybeSingle();
-  if (bookingError || !booking) throw new Error(bookingError?.message ?? "Booking not found");
+  if (bookingError || !booking) {
+    console.error("[admin-email] payment booking fetch failed", { function_version, payment_id: payment.id || paymentId || null, booking_id: payment.booking_id || bookingIdHint || null, error_code: "payment_booking_fetch_failed", detail: bookingError?.message ?? "Booking not found" });
+    throw new Error(bookingError?.message ?? "Booking not found");
+  }
 
+  const { data: payments } = await admin
+    .from("payments")
+    .select("amount_mad,status")
+    .eq("booking_id", booking.id);
+  const paidTotal = safeArray(payments)
+    .filter((row: any) => String(row.status ?? "received") !== "refunded")
+    .reduce((sum, row: any) => sum + Number(row.amount_mad || 0), 0);
+  let agencyName: string | null = null;
+  if (booking.agency_organization_id) {
+    const { data: agency } = await admin
+      .from("organizations")
+      .select("display_name,legal_name")
+      .eq("id", booking.agency_organization_id)
+      .maybeSingle();
+    agencyName = agency?.display_name || agency?.legal_name || null;
+  }
   const tripLabel = [booking.trips?.season, booking.trips?.title].filter(Boolean).join(" — ") || "—";
-  const rest = Math.max(0, Number(booking.total_amount_mad || 0) - Number(booking.paid_amount_mad || 0));
+  const rest = Math.max(0, Number(booking.total_amount_mad || 0) - paidTotal);
   const adminUrl = `${adminBaseUrl()}/admin/bookings/${booking.id}`;
-  const subject = `Paiement enregistré – ${booking.contact_name} – ${fmtMAD(payment.amount_mad)}`;
+  const subject = `Nouveau paiement LeJapon.ma — ${plainMissing(booking.contact_name)} — ${fmtMAD(payment.amount_mad)}`;
 
   return {
     eventType: "payment_recorded",
     recipient: adminRecipient(),
     subject,
-    html: emailShell("Paiement enregistré", "Un paiement vient d'être ajouté ou validé dans l'admin.", [
-      ["Nom client", booking.contact_name],
+    html: emailShell("Nouveau paiement LeJapon.ma", "Un paiement vient d'être ajouté ou validé.", [
+      ["ID / référence paiement", payment.reference || payment.id],
       ["Réservation", booking.reference],
+      ["Nom client", booking.contact_name],
+      ["Email client", booking.contact_email || booking.clients?.email],
+      ["Téléphone client", booking.contact_phone || booking.clients?.phone],
       ["Voyage", tripLabel],
+      ["Agence", agencyName],
       ["Montant payé", fmtMAD(payment.amount_mad)],
-      ["Mode de paiement", payment.method],
+      ["Mode de paiement", paymentMethodLabel(payment.method)],
       ["Date du paiement", fmtDate(payment.paid_at || payment.created_at)],
+      ["Statut", paymentStatusLabel(payment.status)],
+      ["Référence externe", payment.reference],
+      ["Notes", payment.notes],
+      ["Total payé", fmtMAD(paidTotal)],
       ["Reste à payer", fmtMAD(rest)],
-    ], { label: "Ouvrir dans l'admin", href: adminUrl }),
-    text: `Paiement enregistré\n\nClient: ${booking.contact_name}\nRéservation: ${booking.reference}\nVoyage: ${tripLabel}\nMontant: ${fmtMAD(payment.amount_mad)}\nMode: ${payment.method ?? "—"}\nDate: ${fmtDate(payment.paid_at || payment.created_at)}\nReste à payer: ${fmtMAD(rest)}\nAdmin: ${adminUrl}`,
+    ], { label: "Ouvrir la réservation", href: adminUrl }),
+    text: `Nouveau paiement LeJapon.ma
+
+Paiement: ${plainMissing(payment.reference || payment.id)}
+Réservation: ${plainMissing(booking.reference)}
+Client: ${plainMissing(booking.contact_name)}
+Email: ${plainMissing(booking.contact_email || booking.clients?.email)}
+Téléphone: ${plainMissing(booking.contact_phone || booking.clients?.phone)}
+Voyage: ${tripLabel}
+Agence: ${plainMissing(agencyName)}
+Montant: ${fmtMAD(payment.amount_mad)}
+Méthode: ${paymentMethodLabel(payment.method)}
+Date: ${fmtDate(payment.paid_at || payment.created_at)}
+Statut: ${paymentStatusLabel(payment.status)}
+Référence externe: ${plainMissing(payment.reference)}
+Notes: ${plainMissing(payment.notes)}
+Total payé: ${fmtMAD(paidTotal)}
+Reste à payer: ${fmtMAD(rest)}
+
+Ouvrir: ${adminUrl}`,
     related_booking_id: booking.id,
     related_payment_id: payment.id,
     metadata: { reference: booking.reference },
+  };
+}
+
+async function agencyBookingEmail(admin: any, requestId: string): Promise<EmailPayload> {
+  const { data: request, error } = await admin
+    .from("agency_booking_requests")
+    .select("*")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (error || !request) throw new Error(error?.message ?? "Agency booking request not found");
+
+  const [{ data: organization }, { data: trip }] = await Promise.all([
+    request.organization_id
+      ? admin.from("organizations").select("display_name,legal_name,email,phone").eq("id", request.organization_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    request.metadata?.trip_id
+      ? admin.from("trips").select("title,season,start_date,end_date").eq("id", request.metadata.trip_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  const metadata = request.metadata ?? {};
+  const extrasItems = safeArray(metadata.selected_extras).map((extra: any) => [
+    plainMissing(extra.name),
+    `Qté: ${Number(extra.quantity || 1)}`,
+    `Prix unitaire: ${extra.unit_price || extra.price_mad ? fmtMAD(extra.unit_price || extra.price_mad) : missing}`,
+    `Total: ${extra.total ? fmtMAD(extra.total) : missing}`,
+  ].join(" · "));
+  const adminUrl = `${adminBaseUrl()}/admin/bookings`;
+  const agencyName = organization?.display_name || organization?.legal_name || request.organization_id;
+  const tripLabel = metadata.trip_title || request.trip_interest || [trip?.season, trip?.title].filter(Boolean).join(" — ");
+  const subject = `Nouvelle réservation agence — ${plainMissing(request.client_full_name)} — ${plainMissing(tripLabel)}`;
+  const sections = [
+    sectionHtml("Agence", [
+      ["Agence", agencyName],
+      ["Email agence", organization?.email],
+      ["Téléphone agence", organization?.phone],
+    ]),
+    sectionHtml("Client", [
+      ["Nom", request.client_full_name],
+      ["Email", request.client_email],
+      ["Téléphone", request.client_phone],
+      ["Voyageurs", request.travelers_count],
+    ]),
+    sectionHtml("Voyage & options", [
+      ["Voyage", tripLabel],
+      ["Départ", fmtDateOnly(request.preferred_departure_date || trip?.start_date)],
+      ["Chambre", metadata.room_type],
+      ["Option hôtel", metadata.hotel_category],
+      ["Demandes spéciales", metadata.special_requests || request.message],
+    ]),
+    listSectionHtml("Extras", extrasItems, "Aucun extra sélectionné."),
+    sectionHtml("Prix & commission", [
+      ["Total estimé", metadata.estimated_total ? fmtMAD(metadata.estimated_total) : missing],
+      ["Commission estimée", metadata.estimated_commission ? fmtMAD(metadata.estimated_commission) : missing],
+      ["Statut", request.status],
+    ]),
+  ];
+
+  return {
+    eventType: "agency_booking_internal",
+    recipient: adminRecipient(),
+    subject,
+    html: bookingNotificationShell(request.id, sections, adminUrl, "Nouvelle réservation agence", "Agence partenaire"),
+    text: `Nouvelle réservation agence
+
+Agence: ${plainMissing(agencyName)}
+Client: ${plainMissing(request.client_full_name)}
+Email: ${plainMissing(request.client_email)}
+Téléphone: ${plainMissing(request.client_phone)}
+Voyage: ${plainMissing(tripLabel)}
+Départ: ${fmtDateOnly(request.preferred_departure_date || trip?.start_date)}
+Voyageurs: ${plainMissing(request.travelers_count)}
+Chambre: ${plainMissing(metadata.room_type)}
+Option hôtel: ${plainMissing(metadata.hotel_category)}
+Total estimé: ${metadata.estimated_total ? fmtMAD(metadata.estimated_total) : missing}
+Commission estimée: ${metadata.estimated_commission ? fmtMAD(metadata.estimated_commission) : missing}
+
+Ouvrir: ${adminUrl}`,
+    metadata: { agency_booking_request_id: request.id },
+  };
+}
+
+async function agencyPaymentEmail(admin: any, requestId: string, paymentId?: string): Promise<EmailPayload> {
+  const { data: request, error } = await admin
+    .from("agency_booking_requests")
+    .select("*")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (error || !request) throw new Error(error?.message ?? "Agency booking request not found");
+
+  const metadata = request.metadata ?? {};
+  const payments = safeArray(metadata.payments);
+  const payment = payments.find((item: any) => item.id === paymentId) ?? payments[0] ?? null;
+  if (!payment) throw new Error("Agency payment not found");
+  const paidTotal = payments
+    .filter((item: any) => !["cancelled", "refunded"].includes(String(item.status ?? "")))
+    .reduce((sum: number, item: any) => sum + Number(item.amount_mad || 0), 0);
+  const total = Number(metadata.estimated_total || 0);
+  const rest = Math.max(0, total - paidTotal);
+  const { data: organization } = request.organization_id
+    ? await admin.from("organizations").select("display_name,legal_name").eq("id", request.organization_id).maybeSingle()
+    : { data: null };
+  const agencyName = organization?.display_name || organization?.legal_name || request.organization_id;
+  const adminUrl = `${adminBaseUrl()}/admin/bookings`;
+  const subject = `Nouveau paiement agence — ${plainMissing(request.client_full_name)} — ${fmtMAD(payment.amount_mad)}`;
+
+  return {
+    eventType: "agency_payment_recorded",
+    recipient: adminRecipient(),
+    subject,
+    html: emailShell("Nouveau paiement agence", "Une agence partenaire vient d'ajouter ou modifier un paiement sur une réservation agence.", [
+      ["Paiement", payment.reference || payment.id],
+      ["Agence", agencyName],
+      ["Client", request.client_full_name],
+      ["Voyage", metadata.trip_title || request.trip_interest],
+      ["Montant", fmtMAD(payment.amount_mad)],
+      ["Méthode", paymentMethodLabel(payment.method)],
+      ["Date", fmtDate(payment.paid_at || payment.created_at)],
+      ["Statut", paymentStatusLabel(payment.status)],
+      ["Référence", payment.reference],
+      ["Notes", payment.notes],
+      ["Total payé", fmtMAD(paidTotal)],
+      ["Reste à payer", total ? fmtMAD(rest) : missing],
+    ], { label: "Ouvrir les réservations", href: adminUrl }),
+    text: `Nouveau paiement agence
+
+Paiement: ${plainMissing(payment.reference || payment.id)}
+Agence: ${plainMissing(agencyName)}
+Client: ${plainMissing(request.client_full_name)}
+Voyage: ${plainMissing(metadata.trip_title || request.trip_interest)}
+Montant: ${fmtMAD(payment.amount_mad)}
+Méthode: ${paymentMethodLabel(payment.method)}
+Date: ${fmtDate(payment.paid_at || payment.created_at)}
+Statut: ${paymentStatusLabel(payment.status)}
+Référence: ${plainMissing(payment.reference)}
+Notes: ${plainMissing(payment.notes)}
+Total payé: ${fmtMAD(paidTotal)}
+Reste à payer: ${total ? fmtMAD(rest) : missing}
+
+Ouvrir: ${adminUrl}`,
+    metadata: { agency_booking_request_id: request.id, payment_id: payment.id },
   };
 }
 
@@ -711,15 +1038,19 @@ async function requireStaff(admin: any, req: Request) {
 
 function eventTypeFromBody(body: any): EventType {
   const type = String(body?.type ?? "");
-  if (type === "booking") return "booking_internal";
-  if (type === "payment") return "payment_recorded";
+  if (type === "booking" || type === "new_booking") return "booking_internal";
+  if (type === "agency_booking") return "agency_booking_internal";
+  if (type === "payment" || type === "new_payment") return "payment_recorded";
+  if (type === "agency_payment") return "agency_payment_recorded";
   if (type === "contact") return "contact_internal";
   if (type === "test") return "test";
   if (type === "resend") return "resend_log";
   if (["contact_internal", "contact_client", "booking_internal", "booking_client"].includes(type)) return type as EventType;
 
   const eventType = String(body?.event_type ?? "");
-  if (["booking_created", "payment_recorded", "contact_message", "test_email", "test", "resend_log"].includes(eventType)) {
+  if (["booking_created", "new_booking", "agency_booking_internal", "payment_recorded", "new_payment", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log"].includes(eventType)) {
+    if (eventType === "new_booking") return "booking_created";
+    if (eventType === "new_payment") return "payment_recorded";
     return eventType as EventType;
   }
   return "unknown";
@@ -728,6 +1059,7 @@ function eventTypeFromBody(body: any): EventType {
 function sanitizeRequestBody(body: any) {
   const payload = body?.payload && typeof body.payload === "object" ? body.payload : {};
   return {
+    action: body?.action ?? null,
     type: body?.type ?? null,
     event_type: body?.event_type ?? null,
     booking_id: body?.booking_id ?? payload.booking_id ?? null,
@@ -748,6 +1080,7 @@ function errorCode(message: string) {
 
 async function payloadFromBody(admin: any, body: any, req: Request): Promise<EmailPayload[]> {
   const type = String(body.type ?? "");
+  const payload = body?.payload && typeof body.payload === "object" ? body.payload : {};
   if (type === "contact") return contactEmailsFromPayload(admin, body.payload ?? {});
   if (type === "contact_internal") {
     const contactId = String(body.payload?.contact_id ?? body.contact_id ?? "");
@@ -761,15 +1094,19 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
     const [, client] = await contactEmailsFromPayload(admin, body.payload ?? {});
     return [client];
   }
-  if (type === "booking") {
-    const bookingId = String(body.payload?.booking_id ?? body.payload?.id ?? "");
+  if (type === "booking" || type === "new_booking") {
+    const bookingId = String(payload.booking_id ?? body.booking_id ?? payload.id ?? "");
     const fullBookingData = body.payload?.fullBookingData;
     if (!fullBookingData && !bookingId) throw new Error("missing_booking_email_data");
     return [await bookingEmail(admin, bookingId, fullBookingData), await bookingClientEmail(admin, bookingId, fullBookingData)];
   }
-  if (type === "booking_internal") return [await bookingEmail(admin, String(body.payload?.booking_id ?? body.payload?.id ?? body.booking_id ?? ""), body.payload?.fullBookingData)];
-  if (type === "booking_client") return [await bookingClientEmail(admin, String(body.payload?.booking_id ?? body.payload?.id ?? body.booking_id ?? ""), body.payload?.fullBookingData)];
-  if (type === "payment") return [await paymentEmail(admin, String(body.payload?.payment_id ?? body.payload?.id ?? ""))];
+  if (type === "agency_booking") {
+    return [await agencyBookingEmail(admin, String(body.payload?.request_id ?? body.payload?.id ?? body.request_id ?? ""))];
+  }
+  if (type === "booking_internal") return [await bookingEmail(admin, String(payload.booking_id ?? payload.id ?? body.booking_id ?? ""), payload.fullBookingData)];
+  if (type === "booking_client") return [await bookingClientEmail(admin, String(payload.booking_id ?? payload.id ?? body.booking_id ?? ""), payload.fullBookingData)];
+  if (type === "payment" || type === "new_payment") return [await paymentEmail(admin, String(payload.payment_id ?? body.payment_id ?? payload.id ?? ""), payload.payment, String(payload.booking_id ?? body.booking_id ?? ""))];
+  if (type === "agency_payment") return [await agencyPaymentEmail(admin, String(body.payload?.request_id ?? body.request_id ?? ""), String(body.payload?.payment_id ?? body.payment_id ?? ""))];
   if (type === "test") {
     await requireStaff(admin, req);
     return [testEmail()];
@@ -788,11 +1125,13 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
   }
 
   const eventType = String(body.event_type ?? "");
-  if (eventType === "booking_created") {
-    const bookingId = String(body.booking_id ?? "");
+  if (eventType === "booking_created" || eventType === "new_booking") {
+    const bookingId = String(body.booking_id ?? body.payload?.booking_id ?? "");
     return [await bookingEmail(admin, bookingId, body.fullBookingData), await bookingClientEmail(admin, bookingId, body.fullBookingData)];
   }
-  if (eventType === "payment_recorded") return [await paymentEmail(admin, String(body.payment_id ?? ""))];
+  if (eventType === "agency_booking_internal") return [await agencyBookingEmail(admin, String(body.request_id ?? body.payload?.request_id ?? ""))];
+  if (eventType === "payment_recorded" || eventType === "new_payment") return [await paymentEmail(admin, String(body.payment_id ?? body.payload?.payment_id ?? ""), body.payload?.payment, String(body.booking_id ?? body.payload?.booking_id ?? ""))];
+  if (eventType === "agency_payment_recorded") return [await agencyPaymentEmail(admin, String(body.request_id ?? body.payload?.request_id ?? ""), String(body.payment_id ?? body.payload?.payment_id ?? ""))];
   if (eventType === "contact_message") {
     const contactId = String(body.contact_id ?? "");
     return [await contactEmail(admin, contactId), await contactClientEmail(admin, contactId)];
@@ -819,11 +1158,31 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  let body: any = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+
+  if (body?.action === "debug_echo") {
+    return new Response(JSON.stringify({
+      success: true,
+      ok: true,
+      function_version,
+      received_keys: Object.keys(body ?? {}),
+    }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {
     return new Response(JSON.stringify({
       ok: false,
+      function_version,
       error: "missing_supabase_config",
       detail: "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing; email_logs cannot be written.",
     }), {
@@ -833,15 +1192,16 @@ Deno.serve(async (req) => {
   }
 
   const admin = createClient(supabaseUrl, serviceRoleKey);
-  let body: any = {};
   let failureLogId: string | undefined;
 
   try {
-    body = await req.json();
     const requestSummary = sanitizeRequestBody(body);
     console.info("[admin-email] request", {
+      function_version,
       function: "send-admin-notification",
       has_auth: Boolean(req.headers.get("Authorization")),
+      has_booking_id: Boolean(requestSummary.booking_id),
+      has_payment_id: Boolean(requestSummary.payment_id),
       ...requestSummary,
     });
 
@@ -853,12 +1213,14 @@ Deno.serve(async (req) => {
     const failed = results.filter((result) => !result.ok);
     const result = {
       ok: failed.length === 0,
+      function_version,
       results,
       log_ids: results.map((item) => item.log_id).filter(Boolean),
       error: failed.length ? "one_or_more_emails_failed" : undefined,
       detail: failed.length ? failed.map((item) => item.detail || item.error).filter(Boolean).join(" | ") : undefined,
     };
     console.info("[admin-email] response", {
+      function_version,
       ok: result.ok,
       log_ids: result.log_ids,
       error: result.error ?? null,
@@ -882,6 +1244,7 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: false,
+      function_version,
       error: code,
       detail: message,
       log_id: failureLogId,

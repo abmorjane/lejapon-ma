@@ -22,6 +22,11 @@ import { PassportScannerDialog, type PassportOcrFields } from "../components/Pas
 import { checkPassportExpiry } from "@/lib/passport-mrz";
 import { exportCsv } from "@/admin/lib/export-csv";
 import {
+  CRM_PROFESSIONAL_SITUATIONS,
+  mapProfessionTextToCrmSituation,
+  professionalSituationLabel,
+} from "@/lib/visa-document-checklists";
+import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
@@ -29,7 +34,7 @@ import {
 const empty = {
   full_name: "", email: "", phone: "", city: "", country: "Maroc", source: "",
   passport_number: "", passport_expiry: "", passport_issue_date: "", birthdate: "",
-  nationality: "", sex: "", passport_file_path: "", profession: "", marital_status: "", address: "",
+  nationality: "", sex: "", passport_file_path: "", profession: "", marital_status: "", address: "", metadata: {},
 };
 const ClientsImportDialog = lazy(() =>
   import("../components/ClientsImportDialog").then((module) => ({ default: module.ClientsImportDialog }))
@@ -70,7 +75,7 @@ const exportHeaders = [
 ];
 
 const todayStamp = () => new Date().toISOString().slice(0, 10);
-const CLIENT_SELECT = "id, full_name, email, phone, city, country, source, passport_number, passport_expiry, birthdate, nationality, sex, passport_issue_date, passport_file_path, profession, marital_status, address, last_trip_label, loyalty_tier, is_returning, trips_completed, rewards_used, created_at";
+const CLIENT_SELECT = "id, full_name, email, phone, city, country, source, passport_number, passport_expiry, birthdate, nationality, sex, passport_issue_date, passport_file_path, profession, marital_status, address, metadata, last_trip_label, loyalty_tier, is_returning, trips_completed, rewards_used, created_at";
 
 const MARITAL_STATUS_OPTIONS = [
   { value: "celibataire", label: "Célibataire" },
@@ -81,6 +86,9 @@ const MARITAL_STATUS_OPTIONS = [
 
 const maritalStatusLabel = (value?: string | null) =>
   MARITAL_STATUS_OPTIONS.find((option) => option.value === value)?.label ?? value ?? "";
+
+const clientProfessionalSituation = (client: any) =>
+  String(asRecord(client?.metadata).professional_situation ?? "");
 
 const calculateAge = (birthdate?: string | null) => {
   if (!birthdate) return null;
@@ -114,6 +122,33 @@ const normalizeClientDateFields = (client: any) => ({
   birthdate: client.birthdate === "" ? null : client.birthdate,
 });
 
+const asRecord = (value: unknown): Record<string, any> =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+
+const passportOcrMetadata = (fields: PassportOcrFields) => ({
+  passport_number: fields.passport_no || null,
+  cin: fields.national_id_number || null,
+  national_id_number: fields.national_id_number || null,
+  first_name: fields.first_name || null,
+  last_name: fields.last_name || null,
+  full_name: fields.full_name || [fields.first_name, fields.last_name].filter(Boolean).join(" ") || null,
+  nationality: fields.nationality || null,
+  sex: fields.sex || null,
+  birthdate: fields.date_of_birth || null,
+  place_of_birth: fields.place_of_birth || null,
+  passport_issue_date: fields.passport_issue_date || null,
+  passport_expiry_date: fields.passport_expiry || null,
+  passport_authority: fields.passport_authority || null,
+  profession: fields.profession || null,
+  residence_address: fields.residence_address || fields.address || null,
+  residence_city: fields.residence_city || fields.city || null,
+  residence_country: fields.residence_country || null,
+  mrz_raw: fields.mrz_raw || fields.mrz || null,
+  captured_at: new Date().toISOString(),
+});
+
+const getPassportOcr = (metadata: unknown) => asRecord(asRecord(metadata).passport_ocr);
+
 const fadeIn = {
   initial: { opacity: 0, y: 10 },
   animate: { opacity: 1, y: 0 },
@@ -122,7 +157,7 @@ const fadeIn = {
 
 export default function Clients() {
   const { id: routeClientId } = useParams();
-  const { user, isAdmin, isSuperAdmin, session } = useAuth();
+  const { user, isAdmin, isSuperAdmin, session, roles, can } = useAuth();
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState("");
   const [professionFilter, setProfessionFilter] = useState("");
@@ -187,6 +222,8 @@ export default function Clients() {
   useEffect(() => { fetchClients(); }, [q, professionFilter, maritalFilter, cityFilter, ageFilter]);
 
   const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
+  const canManageClients = can("clients");
+  const canScanPassport = canManageClients || roles.some((role) => ["super_admin", "admin", "manager", "sales", "sales_user", "agent"].includes(role));
   const visibleRowsForExport = useMemo(() => {
     const base = exportScope === "selected" ? selectedRows : rows;
     if (passportFilter === "with_passport") return base.filter(hasPassportData);
@@ -322,7 +359,10 @@ export default function Clients() {
   }, [routeClientId]);
 
   const save = async () => {
-    const payload = normalizeClientDateFields(edit);
+    const payload = normalizeClientDateFields({
+      ...edit,
+      metadata: asRecord(edit.metadata),
+    });
     console.log("CLIENT INSERT PAYLOAD", { table: "public.clients", payload });
     console.log("[CRM Clients] save client payload", { table: "public.clients", payload });
     const result = payload.id
@@ -340,18 +380,35 @@ export default function Clients() {
   };
 
   const applyPassportFields = (fields: PassportOcrFields) => {
-    setEdit((current: any) => ({
-      ...current,
-      full_name: fields.full_name || [fields.first_name, fields.last_name].filter(Boolean).join(" ") || current.full_name,
-      passport_number: fields.passport_no || current.passport_number,
-      passport_expiry: fields.passport_expiry || current.passport_expiry,
-      passport_issue_date: fields.passport_issue_date || current.passport_issue_date,
-      birthdate: fields.date_of_birth || current.birthdate,
-      nationality: fields.nationality || current.nationality,
-      sex: fields.sex || current.sex,
-      address: fields.address || current.address,
-      city: fields.city || current.city,
-    }));
+    setEdit((current: any) => {
+      const metadata = asRecord(current.metadata);
+      const residenceCountry = fields.residence_country || metadata.passport_ocr?.residence_country;
+      const mappedSituation = mapProfessionTextToCrmSituation(fields.profession);
+      const nextMetadata = {
+        ...metadata,
+        ...(mappedSituation ? { professional_situation: mappedSituation } : {}),
+        ...(fields.profession ? { ocr_profession_source: fields.profession } : {}),
+        passport_ocr: {
+          ...asRecord(metadata.passport_ocr),
+          ...passportOcrMetadata(fields),
+        },
+      };
+      return {
+        ...current,
+        full_name: fields.full_name || [fields.first_name, fields.last_name].filter(Boolean).join(" ") || current.full_name,
+        passport_number: fields.passport_no || current.passport_number,
+        passport_expiry: fields.passport_expiry || current.passport_expiry,
+        passport_issue_date: fields.passport_issue_date || current.passport_issue_date,
+        birthdate: fields.date_of_birth || current.birthdate,
+        nationality: fields.nationality || current.nationality,
+        sex: fields.sex || current.sex,
+        address: fields.residence_address || fields.address || current.address,
+        city: fields.residence_city || fields.city || current.city,
+        country: residenceCountry || current.country,
+        profession: fields.profession || current.profession,
+        metadata: nextMetadata,
+      };
+    });
   };
 
   const addNote = async () => {
@@ -397,6 +454,8 @@ export default function Clients() {
     fetchClients();
   };
 
+  const selectedPassportOcr = getPassportOcr(selected?.metadata);
+
   return (
     <motion.div {...fadeIn} className="space-y-6">
       <PageHeader title="Clients (CRM)" description="Fiches, historique, notes."
@@ -417,7 +476,7 @@ export default function Clients() {
               <div className="rounded-xl border border-border bg-secondary/40 p-3 text-sm text-muted-foreground">
                 Le scan passeport aide à pré-remplir la fiche. L'admin doit toujours vérifier avant validation.
               </div>
-              {isAdmin && (
+              {canScanPassport && (
                 <Button type="button" variant="outline" className="h-11 w-full justify-center" onClick={() => setScannerOpen(true)}>
                   <FileScan className="h-4 w-4" /> Scanner passeport
                 </Button>
@@ -427,7 +486,28 @@ export default function Clients() {
                   <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Informations personnelles</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="sm:col-span-2"><Label>Nom complet</Label><Input value={edit.full_name} onChange={(e) => setEdit({ ...edit, full_name: e.target.value })} /></div>
-                <div><Label>Profession</Label><Input value={edit.profession ?? ""} onChange={(e) => setEdit({ ...edit, profession: e.target.value })} placeholder="Ingénieur, médecin…" /></div>
+                <div>
+                  <Label>Situation professionnelle</Label>
+                  <Select
+                    value={clientProfessionalSituation(edit) || "none"}
+                    onValueChange={(value) => {
+                      const metadata = asRecord(edit.metadata);
+                      const nextMetadata = { ...metadata };
+                      if (value === "none") delete nextMetadata.professional_situation;
+                      else nextMetadata.professional_situation = value;
+                      setEdit({ ...edit, metadata: nextMetadata });
+                    }}
+                  >
+                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">—</SelectItem>
+                      {CRM_PROFESSIONAL_SITUATIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div><Label>Profession / activité exacte</Label><Input value={edit.profession ?? ""} onChange={(e) => setEdit({ ...edit, profession: e.target.value })} placeholder="Ingénieur, médecin…" /></div>
                 <div><Label>État civil</Label>
                   <Select value={edit.marital_status || "none"} onValueChange={(v) => setEdit({ ...edit, marital_status: v === "none" ? "" : v })}>
                     <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
@@ -468,7 +548,7 @@ export default function Clients() {
                   <p>{checkPassportExpiry(edit.passport_expiry).warning}</p>
                 </div>
               )}
-              {isAdmin && (
+              {canScanPassport && (
                 <PassportScannerDialog
                   open={scannerOpen}
                   onOpenChange={setScannerOpen}
@@ -685,6 +765,7 @@ export default function Clients() {
                 <div className="grid grid-cols-2 gap-3 border-t border-border p-4 text-sm">
                   <div><p className="text-xs text-muted-foreground">Voyage</p><p className="font-medium">{c.last_trip_label ?? "—"}</p></div>
                   <div><p className="text-xs text-muted-foreground">Ville</p><p className="font-medium">{c.city ?? "—"}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Situation</p><p className="font-medium">{professionalSituationLabel(clientProfessionalSituation(c))}</p></div>
                   <div><p className="text-xs text-muted-foreground">Profession</p><p className="font-medium">{c.profession ?? "—"}</p></div>
                   <div><p className="text-xs text-muted-foreground">État civil</p><p className="font-medium">{maritalStatusLabel(c.marital_status) || "—"}</p></div>
                   <div><p className="text-xs text-muted-foreground">Passeport</p><p className="font-medium">{c.passport_number ?? "—"}</p></div>
@@ -738,9 +819,9 @@ export default function Clients() {
                         {c.full_name}
                         <LoyaltyBadge tier={c.loyalty_tier} isReturning={c.is_returning} trips={c.trips_completed} />
                       </div>
-                      {(c.profession || c.marital_status) && (
+                      {(clientProfessionalSituation(c) || c.profession || c.marital_status) && (
                         <p className="mt-1 text-xs font-normal text-muted-foreground">
-                          {[c.profession, maritalStatusLabel(c.marital_status)].filter(Boolean).join(" · ")}
+                          {[professionalSituationLabel(clientProfessionalSituation(c)), c.profession, maritalStatusLabel(c.marital_status)].filter((value) => value && value !== "Non renseignée").join(" · ")}
                         </p>
                       )}
                     </td>
@@ -790,13 +871,31 @@ export default function Clients() {
               <div className="mb-4 rounded-xl border border-border bg-muted/20 p-3 text-xs">
                 <p className="mb-2 font-semibold uppercase text-muted-foreground">Informations personnelles</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <div><p className="text-muted-foreground">Profession</p><p className="font-medium">{selected.profession || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Situation</p><p className="font-medium">{professionalSituationLabel(clientProfessionalSituation(selected))}</p></div>
+                  <div><p className="text-muted-foreground">Profession / activité exacte</p><p className="font-medium">{selected.profession || "—"}</p></div>
                   <div><p className="text-muted-foreground">État civil</p><p className="font-medium">{maritalStatusLabel(selected.marital_status) || "—"}</p></div>
                   <div><p className="text-muted-foreground">Naissance</p><p className="font-medium">{selected.birthdate ? fmtDate(selected.birthdate) : "—"}</p></div>
                   <div><p className="text-muted-foreground">Âge</p><p className="font-medium">{calculateAge(selected.birthdate) ?? "—"}</p></div>
                   <div className="col-span-2"><p className="text-muted-foreground">Adresse</p><p className="whitespace-pre-wrap font-medium">{selected.address || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Ville</p><p className="font-medium">{selected.city || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Pays</p><p className="font-medium">{selected.country || "—"}</p></div>
                 </div>
               </div>
+              {Object.keys(selectedPassportOcr).length > 0 && (
+                <details className="mb-4 rounded-xl border border-border bg-muted/20 p-3 text-xs">
+                  <summary className="cursor-pointer font-semibold uppercase text-muted-foreground">Données passeport OCR</summary>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div><p className="text-muted-foreground">Passeport</p><p className="font-medium">{selectedPassportOcr.passport_number || "—"}</p></div>
+                    <div><p className="text-muted-foreground">CIN</p><p className="font-medium">{selectedPassportOcr.cin || selectedPassportOcr.national_id_number || "—"}</p></div>
+                    <div><p className="text-muted-foreground">Émission</p><p className="font-medium">{selectedPassportOcr.passport_issue_date ? fmtDate(selectedPassportOcr.passport_issue_date) : "—"}</p></div>
+                    <div><p className="text-muted-foreground">Expiration</p><p className="font-medium">{selectedPassportOcr.passport_expiry_date ? fmtDate(selectedPassportOcr.passport_expiry_date) : "—"}</p></div>
+                    <div><p className="text-muted-foreground">Lieu de naissance</p><p className="font-medium">{selectedPassportOcr.place_of_birth || "—"}</p></div>
+                    <div><p className="text-muted-foreground">Autorité</p><p className="font-medium">{selectedPassportOcr.passport_authority || "—"}</p></div>
+                    <div className="col-span-2"><p className="text-muted-foreground">Profession OCR</p><p className="font-medium">{selectedPassportOcr.profession || asRecord(selected.metadata).ocr_profession_source || "—"}</p></div>
+                    <div className="col-span-2"><p className="text-muted-foreground">Résidence OCR</p><p className="whitespace-pre-wrap font-medium">{[selectedPassportOcr.residence_address, selectedPassportOcr.residence_city, selectedPassportOcr.residence_country].filter(Boolean).join(", ") || "—"}</p></div>
+                  </div>
+                </details>
+              )}
               {checkPassportExpiry(selected.passport_expiry).warning && (
                 <div className="mb-4 flex items-start gap-2 rounded-xl border border-orange-300 bg-orange-50 p-3 text-xs text-orange-900">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

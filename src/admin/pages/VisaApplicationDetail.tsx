@@ -8,11 +8,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ArrowLeft, Download, Eye, FileText, Mail, Pencil, Save } from "lucide-react";
 import { toast } from "sonner";
 import { generateVisaPdf, downloadBlob } from "@/lib/visa-pdf";
 import { generateInvitationLetter, generateGuaranteeLetter } from "@/lib/visa-letters";
 import { generateTravelConfirmationPdf, generateTravelProgrammePdf } from "@/lib/travel-documents-pdf";
+import { isVisaProcurationDocument, upsertVisaProcurationDocument } from "@/lib/visa-procuration-pdf";
+import { isVisaChecklistDocument, upsertVisaChecklistDocument } from "@/lib/visa-checklist-pdf";
+import {
+  PROFESSIONAL_SITUATIONS,
+  checklistSnapshotText,
+  findChecklistForSituation,
+  professionalSituationLabel,
+} from "@/lib/visa-document-checklists";
 import { PdfPreviewDialog } from "@/admin/components/PdfPreviewDialog";
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
@@ -21,6 +30,14 @@ import JSZip from "jszip";
 import { QuickActions } from "@/admin/components/QuickActions";
 import { fetchAgencySettings, type AgencySettings } from "@/lib/agency-settings";
 import { lookupVisaPrefillByPassport, normalizePassportNo } from "@/lib/visa-prefill";
+import {
+  buildPreviousJapanStayValue,
+  formatPreviousJapanStayForDisplay,
+  formatVisaDate,
+  isRetiredVisaCategory,
+  parsePreviousJapanStay,
+  RETIRED_NOT_APPLICABLE,
+} from "@/lib/visa-format";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -54,6 +71,95 @@ type TravelContext = {
   participants?: any[];
   agency?: AgencySettings | null;
 };
+
+type DraftInputProps = {
+  draft: any;
+  field: string;
+  label: string;
+  type?: string;
+  className?: string;
+  disabled?: boolean;
+  displayValue?: string;
+  onChange: (field: string, value: unknown) => void;
+};
+
+function DraftInput({
+  draft,
+  field,
+  label,
+  type = "text",
+  className = "",
+  disabled = false,
+  displayValue,
+  onChange,
+}: DraftInputProps) {
+  return (
+    <div className={className}>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <Input
+        type={type}
+        disabled={disabled}
+        value={displayValue ?? draft?.[field] ?? ""}
+        onChange={(e) => onChange(field, e.target.value)}
+      />
+    </div>
+  );
+}
+
+function DraftSelect({
+  draft,
+  field,
+  label,
+  options,
+  onChange,
+}: {
+  draft: any;
+  field: string;
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (field: string, value: unknown) => void;
+}) {
+  return (
+    <div>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <Select value={draft?.[field] ?? ""} onValueChange={(value) => onChange(field, value)}>
+        <SelectTrigger className="min-h-10">
+          <SelectValue placeholder={label} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function DraftBoolean({
+  draft,
+  field,
+  label,
+  onChange,
+}: {
+  draft: any;
+  field: string;
+  label: string;
+  onChange: (field: string, value: unknown) => void;
+}) {
+  return (
+    <div>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <Select value={draft?.[field] ? "yes" : "no"} onValueChange={(value) => onChange(field, value === "yes")}>
+        <SelectTrigger className="min-h-10"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="no">Non</SelectItem>
+          <SelectItem value="yes">Oui</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
 
 async function loadTravelContextForTrip(tripId: string | null | undefined, participants: any[] = [], agency?: AgencySettings | null): Promise<TravelContext> {
   const ctx: TravelContext = { participants, agency, trip: null, programme: null, days: [], hotels: [] };
@@ -105,6 +211,7 @@ export default function VisaApplicationDetail() {
   const [app, setApp] = useState<any | null>(null);
   const [docs, setDocs] = useState<any[]>([]);
   const [settings, setSettings] = useState<any | null>(null);
+  const [checklists, setChecklists] = useState<any[]>([]);
   const [trips, setTrips] = useState<any[]>([]);
   const [bookingTripId, setBookingTripId] = useState<string | null>(null);
   const [selectedTravelTripId, setSelectedTravelTripId] = useState<string | null>(null);
@@ -119,9 +226,10 @@ export default function VisaApplicationDetail() {
       supabase.from("visa_applications").select("*").eq("id", id!).maybeSingle(),
       supabase.from("visa_documents").select("*").eq("application_id", id!).order("created_at"),
       supabase.from("visa_settings").select("*").limit(1).maybeSingle(),
+      supabase.from("visa_document_checklists").select("*").eq("is_active", true).order("sort_order"),
       supabase.from("trips").select("id,title,season,start_date,end_date,label").order("start_date", { ascending: false }),
       fetchAgencySettings(),
-    ]).then(async ([a, d, s, t, agency]) => {
+    ]).then(async ([a, d, s, c, t, agency]) => {
       if (!a.data) { toast.error("Demande introuvable"); nav("/admin/visa"); return; }
       let appRow: any = a.data;
       let nextBookingTripId: string | null = null;
@@ -163,6 +271,7 @@ export default function VisaApplicationDetail() {
       setApp(appRow);
       setDocs(d.data ?? []);
       setSettings(s.data);
+      setChecklists(c.data ?? []);
       setTrips(t.data ?? []);
       setBookingTripId(nextBookingTripId);
       setSelectedTravelTripId(effectiveTravelTripId);
@@ -205,6 +314,29 @@ export default function VisaApplicationDetail() {
 
   const updateVisaDraft = (key: string, value: unknown) => {
     setVisaDraft((current: any) => ({ ...current, [key]: value }));
+  };
+
+  const updateVisaDraftProfessionalSituation = (value: string) => {
+    setVisaDraft((current: any) => {
+      const next = { ...current, category: value };
+      if (isRetiredVisaCategory(value)) {
+        next.profession = next.profession || "Retraité";
+        next.employer_name = "";
+        next.employer_tel = "";
+        next.employer_address = "";
+      }
+      return next;
+    });
+  };
+
+  const updateVisaDraftPreviousStay = (patch: Partial<ReturnType<typeof parsePreviousJapanStay>>) => {
+    setVisaDraft((current: any) => {
+      const previousStay = parsePreviousJapanStay(current?.previous_stays);
+      return {
+        ...current,
+        previous_stays: buildPreviousJapanStayValue({ ...previousStay, ...patch }),
+      };
+    });
   };
 
   const saveVisaInfo = async () => {
@@ -258,8 +390,17 @@ export default function VisaApplicationDetail() {
       "remarks",
       "date_of_application",
     ];
+    const normalizedDraft = isRetiredVisaCategory(visaDraft.category)
+      ? {
+          ...visaDraft,
+          profession: visaDraft.profession || "Retraité",
+          employer_name: null,
+          employer_tel: null,
+          employer_address: null,
+        }
+      : visaDraft;
     const patch = editableFields.reduce<Record<string, unknown>>((acc, key) => {
-      const value = visaDraft[key];
+      const value = normalizedDraft[key];
       acc[key] = value === "" ? null : value;
       return acc;
     }, {});
@@ -493,54 +634,64 @@ export default function VisaApplicationDetail() {
     finally { setBusy(false); }
   };
 
+  const generateProcuration = async () => {
+    if (!app?.user_id) return toast.error("Utilisateur visa introuvable pour ce dossier.");
+    setBusy(true);
+    try {
+      const doc = await upsertVisaProcurationDocument(app, app.user_id);
+      setDocs((current) => [doc, ...current.filter((item) => !isVisaProcurationDocument(item))]);
+      toast.success("Procuration générée");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erreur génération procuration");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const regenerateChecklist = async () => {
+    if (!app?.user_id) return toast.error("Utilisateur visa introuvable pour ce dossier.");
+    const selectedChecklist = findChecklistForSituation(checklists, app.category);
+    const items = selectedChecklist?.items ?? [];
+    const snapshot = checklistSnapshotText(items);
+    const requested_documents = snapshot
+      ? `Liste personnalisée des documents à fournir — ${professionalSituationLabel(app.category)}\n${snapshot}`
+      : `Liste personnalisée des documents à fournir — ${professionalSituationLabel(app.category)}\nAucune règle active n'est configurée pour cette situation. Notre équipe confirmera les documents à fournir.`;
+    setBusy(true);
+    try {
+      const { data, error } = await supabase
+        .from("visa_applications")
+        .update({ requested_documents } as any)
+        .eq("id", app.id)
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      const doc = await upsertVisaChecklistDocument(data ?? { ...app, requested_documents }, app.user_id, items);
+      setApp(data ?? { ...app, requested_documents });
+      setDocs((current) => [doc, ...current.filter((item) => !isVisaChecklistDocument(item))]);
+      toast.success("Checklist régénérée depuis les règles actuelles.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erreur génération checklist");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!app) return <p className="text-muted-foreground">Chargement…</p>;
+  const procurationDoc = docs.find(isVisaProcurationDocument);
+  const checklistDoc = docs.find(isVisaChecklistDocument);
+  const selectedChecklist = findChecklistForSituation(checklists, app.category);
+  const selectedChecklistItems = selectedChecklist?.items ?? [];
 
   const Row = ({ label, value }: any) => (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2 py-2 text-sm border-b border-border/40 last:border-0">
       <span className="text-muted-foreground">{label}</span>
-      <span className="sm:col-span-2 font-medium break-words">{value || "—"}</span>
+      <span className="sm:col-span-2 whitespace-pre-wrap font-medium break-words">{value || "—"}</span>
     </div>
   );
 
-  const DraftInput = ({ field, label, type = "text", className = "" }: { field: string; label: string; type?: string; className?: string }) => (
-    <div className={className}>
-      <label className="text-xs text-muted-foreground">{label}</label>
-      <Input
-        type={type}
-        value={visaDraft?.[field] ?? ""}
-        onChange={(e) => updateVisaDraft(field, e.target.value)}
-      />
-    </div>
-  );
-
-  const DraftSelect = ({ field, label, options }: { field: string; label: string; options: Array<{ value: string; label: string }> }) => (
-    <div>
-      <label className="text-xs text-muted-foreground">{label}</label>
-      <Select value={visaDraft?.[field] ?? ""} onValueChange={(value) => updateVisaDraft(field, value)}>
-        <SelectTrigger className="min-h-10">
-          <SelectValue placeholder={label} />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-
-  const DraftBoolean = ({ field, label }: { field: string; label: string }) => (
-    <div>
-      <label className="text-xs text-muted-foreground">{label}</label>
-      <Select value={visaDraft?.[field] ? "yes" : "no"} onValueChange={(value) => updateVisaDraft(field, value === "yes")}>
-        <SelectTrigger className="min-h-10"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="no">Non</SelectItem>
-          <SelectItem value="yes">Oui</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
-  );
+  const draftPreviousStay = parsePreviousJapanStay(visaDraft?.previous_stays);
+  const draftIsRetired = isRetiredVisaCategory(visaDraft?.category);
+  const appIsRetired = isRetiredVisaCategory(app.category);
 
   return (
     <div>
@@ -599,18 +750,18 @@ export default function VisaApplicationDetail() {
             <section>
               <h3 className="mb-3 font-semibold">Identité</h3>
               <div className="grid gap-3 md:grid-cols-2">
-                <DraftInput field="surname" label="Nom" />
-                <DraftInput field="given_names" label="Prénom(s)" />
-                <DraftInput field="other_names" label="Autres noms / alias" />
-                <DraftInput field="date_of_birth" label="Date de naissance" type="date" />
-                <DraftInput field="place_of_birth_city" label="Ville de naissance" />
-                <DraftInput field="place_of_birth_state" label="Région / Province" />
-                <DraftInput field="place_of_birth_country" label="Pays de naissance" />
-                <DraftInput field="nationality" label="Nationalité" />
-                <DraftInput field="former_nationality" label="Nationalité antérieure" />
-                <DraftInput field="national_id_no" label="N° pièce d'identité" />
-                <DraftSelect field="sex" label="Sexe" options={[{ value: "male", label: "Homme" }, { value: "female", label: "Femme" }]} />
-                <DraftSelect field="marital_status" label="État civil" options={[
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="surname" label="Nom" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="given_names" label="Prénom(s)" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="other_names" label="Autres noms / alias" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="date_of_birth" label="Date de naissance" type="date" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="place_of_birth_city" label="Ville de naissance" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="place_of_birth_state" label="Région / Province" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="place_of_birth_country" label="Pays de naissance" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="nationality" label="Nationalité" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="former_nationality" label="Nationalité antérieure" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="national_id_no" label="N° pièce d'identité" />
+                <DraftSelect draft={visaDraft} onChange={updateVisaDraft} field="sex" label="Sexe" options={[{ value: "male", label: "Homme" }, { value: "female", label: "Femme" }]} />
+                <DraftSelect draft={visaDraft} onChange={updateVisaDraft} field="marital_status" label="État civil" options={[
                   { value: "single", label: "Célibataire" },
                   { value: "married", label: "Marié(e)" },
                   { value: "widowed", label: "Veuf(ve)" },
@@ -622,60 +773,132 @@ export default function VisaApplicationDetail() {
             <section>
               <h3 className="mb-3 font-semibold">Passeport</h3>
               <div className="grid gap-3 md:grid-cols-2">
-                <DraftSelect field="passport_type" label="Type de passeport" options={[
+                <DraftSelect draft={visaDraft} onChange={updateVisaDraft} field="passport_type" label="Type de passeport" options={[
                   { value: "ordinary", label: "Ordinaire" },
                   { value: "diplomatic", label: "Diplomatique" },
                   { value: "official", label: "Officiel" },
                   { value: "other", label: "Autre" },
                 ]} />
-                <DraftInput field="passport_no" label="Numéro de passeport" />
-                <DraftInput field="passport_place_of_issue" label="Lieu de délivrance" />
-                <DraftInput field="passport_date_of_issue" label="Date de délivrance" type="date" />
-                <DraftInput field="passport_issuing_authority" label="Autorité de délivrance" />
-                <DraftInput field="passport_date_of_expiry" label="Date d'expiration" type="date" />
-                <DraftInput field="certificate_of_eligibility_no" label="N° Certificat d'éligibilité" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="passport_no" label="Numéro de passeport" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="passport_place_of_issue" label="Lieu de délivrance" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="passport_date_of_issue" label="Date de délivrance" type="date" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="passport_issuing_authority" label="Autorité de délivrance" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="passport_date_of_expiry" label="Date d'expiration" type="date" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="certificate_of_eligibility_no" label="N° Certificat d'éligibilité" />
               </div>
             </section>
 
             <section>
               <h3 className="mb-3 font-semibold">Voyage</h3>
               <div className="grid gap-3 md:grid-cols-2">
-                <DraftInput field="purpose_of_visit" label="Motif de voyage" />
-                <DraftInput field="intended_length_of_stay" label="Durée prévue du séjour" />
-                <DraftInput field="date_of_arrival" label="Arrivée Japon" type="date" />
-                <DraftInput field="port_of_entry" label="Port / aéroport d'entrée" />
-                <DraftInput field="airline_or_ship" label="Compagnie / vol" />
-                <DraftInput field="hotel_name" label="Hôtel" />
-                <DraftInput field="hotel_tel" label="Téléphone hôtel" />
-                <DraftInput field="hotel_address" label="Adresse hôtel" />
-                <DraftInput field="previous_stays" label="Séjours précédents au Japon" className="md:col-span-2" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="purpose_of_visit" label="Motif de voyage" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="intended_length_of_stay" label="Durée prévue du séjour" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="date_of_arrival" label="Arrivée Japon" type="date" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="port_of_entry" label="Port / aéroport d'entrée" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="airline_or_ship" label="Compagnie / vol" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="hotel_name" label="Hôtel" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="hotel_tel" label="Téléphone hôtel" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="hotel_address" label="Adresse hôtel" />
+                <div className="md:col-span-2">
+                  <label className="text-xs text-muted-foreground">Avez-vous déjà séjourné au Japon ?</label>
+                  <RadioGroup
+                    value={draftPreviousStay.hasPrevious}
+                    onValueChange={(value) => updateVisaDraftPreviousStay({ hasPrevious: value as "yes" | "no" })}
+                    className="mt-2 flex gap-4"
+                  >
+                    <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="yes" /> Oui</label>
+                    <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="no" /> Non</label>
+                  </RadioGroup>
+                </div>
+                {draftPreviousStay.hasPrevious === "yes" && (
+                  <>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Date du dernier séjour au Japon</label>
+                      <Input
+                        type="date"
+                        value={draftPreviousStay.lastStayDate}
+                        onChange={(event) => updateVisaDraftPreviousStay({ lastStayDate: event.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Nombre de séjours précédents</label>
+                      <Input
+                        type="number"
+                        min="1"
+                        value={draftPreviousStay.stayCount}
+                        onChange={(event) => updateVisaDraftPreviousStay({ stayCount: event.target.value })}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             </section>
 
             <section>
               <h3 className="mb-3 font-semibold">Résidence, profession et école</h3>
               <div className="grid gap-3 md:grid-cols-2">
-                <DraftInput field="residential_address" label="Adresse de résidence" className="md:col-span-2" />
-                <DraftInput field="residential_tel" label="Téléphone fixe" />
-                <DraftInput field="residential_mobile" label="Mobile" />
-                <DraftInput field="residential_email" label="Email" type="email" />
-                <DraftInput field="profession" label="Profession actuelle" />
-                <DraftInput field="partner_profession" label="Profession du conjoint / parents, si mineur" />
-                <DraftInput field="employer_name" label="Nom de l'employeur ou de l'école si étudiant" />
-                <DraftInput field="employer_tel" label="Téléphone de l'employeur ou de l'école si étudiant" />
-                <DraftInput field="employer_address" label="Adresse de l'employeur ou de l'école si étudiant" className="md:col-span-2" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="residential_address" label="Adresse de résidence" className="md:col-span-2" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="residential_tel" label="Téléphone fixe" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="residential_mobile" label="Mobile" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="residential_email" label="Email" type="email" />
+                <div>
+                  <label className="text-xs text-muted-foreground">Situation professionnelle</label>
+                  <Select value={visaDraft?.category ?? ""} onValueChange={updateVisaDraftProfessionalSituation}>
+                    <SelectTrigger className="min-h-10">
+                      <SelectValue placeholder="Situation professionnelle" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROFESSIONAL_SITUATIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="profession" label="Profession / activité exacte" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="partner_profession" label="Profession du conjoint / parents, si mineur" />
+                {draftIsRetired && (
+                  <Alert className="md:col-span-2">
+                    <AlertTitle>Retraité</AlertTitle>
+                    <AlertDescription>{RETIRED_NOT_APPLICABLE}</AlertDescription>
+                  </Alert>
+                )}
+                <DraftInput
+                  draft={visaDraft}
+                  onChange={updateVisaDraft}
+                  field="employer_name"
+                  label="Nom de l'employeur ou de l'école si étudiant"
+                  disabled={draftIsRetired}
+                  displayValue={draftIsRetired ? RETIRED_NOT_APPLICABLE : undefined}
+                />
+                <DraftInput
+                  draft={visaDraft}
+                  onChange={updateVisaDraft}
+                  field="employer_tel"
+                  label="Téléphone de l'employeur ou de l'école si étudiant"
+                  disabled={draftIsRetired}
+                  displayValue={draftIsRetired ? RETIRED_NOT_APPLICABLE : undefined}
+                />
+                <DraftInput
+                  draft={visaDraft}
+                  onChange={updateVisaDraft}
+                  field="employer_address"
+                  label="Adresse de l'employeur ou de l'école si étudiant"
+                  className="md:col-span-2"
+                  disabled={draftIsRetired}
+                  displayValue={draftIsRetired ? RETIRED_NOT_APPLICABLE : undefined}
+                />
               </div>
             </section>
 
             <section>
               <h3 className="mb-3 font-semibold">Déclarations et date</h3>
               <div className="grid gap-3 md:grid-cols-2">
-                <DraftBoolean field="q_convicted_crime" label="Crime / délit" />
-                <DraftBoolean field="q_imprisoned_1y" label="Emprisonnement 1 an+" />
-                <DraftBoolean field="q_deported" label="Déportation" />
-                <DraftBoolean field="q_drug_offence" label="Drogue" />
-                <DraftBoolean field="q_prostitution" label="Prostitution" />
-                <DraftBoolean field="q_trafficking" label="Traite" />
+                <DraftBoolean draft={visaDraft} onChange={updateVisaDraft} field="q_convicted_crime" label="Crime / délit" />
+                <DraftBoolean draft={visaDraft} onChange={updateVisaDraft} field="q_imprisoned_1y" label="Emprisonnement 1 an+" />
+                <DraftBoolean draft={visaDraft} onChange={updateVisaDraft} field="q_deported" label="Déportation" />
+                <DraftBoolean draft={visaDraft} onChange={updateVisaDraft} field="q_drug_offence" label="Drogue" />
+                <DraftBoolean draft={visaDraft} onChange={updateVisaDraft} field="q_prostitution" label="Prostitution" />
+                <DraftBoolean draft={visaDraft} onChange={updateVisaDraft} field="q_trafficking" label="Traite" />
                 <div className="md:col-span-2">
                   <label className="text-xs text-muted-foreground">Précisions déclarations</label>
                   <Textarea rows={3} value={visaDraft.declarations_details ?? ""} onChange={(e) => updateVisaDraft("declarations_details", e.target.value)} />
@@ -684,7 +907,7 @@ export default function VisaApplicationDetail() {
                   <label className="text-xs text-muted-foreground">Remarques</label>
                   <Textarea rows={3} value={visaDraft.remarks ?? ""} onChange={(e) => updateVisaDraft("remarks", e.target.value)} />
                 </div>
-                <DraftInput field="date_of_application" label="Date de la demande" type="date" />
+                <DraftInput draft={visaDraft} onChange={updateVisaDraft} field="date_of_application" label="Date de la demande" type="date" />
               </div>
             </section>
           </div>
@@ -697,12 +920,12 @@ export default function VisaApplicationDetail() {
             <h2 className="font-display text-lg mb-3">Identité</h2>
             <Row label="Nom / Prénom" value={`${app.surname ?? ""} ${app.given_names ?? ""}`.trim()} />
             <Row label="Autres noms" value={app.other_names} />
-            <Row label="Date de naissance" value={app.date_of_birth} />
+            <Row label="Date de naissance" value={formatVisaDate(app.date_of_birth)} />
             <Row label="Lieu de naissance" value={[app.place_of_birth_city, app.place_of_birth_state, app.place_of_birth_country].filter(Boolean).join(", ")} />
             <Row label="Sexe / État civil" value={[app.sex, app.marital_status].filter(Boolean).join(" / ")} />
             <Row label="Nationalité" value={app.nationality} />
             <Row label="N° pièce d'identité" value={app.national_id_no} />
-            <Row label="Date de la demande" value={app.date_of_application || todayISO()} />
+            <Row label="Date de la demande" value={formatVisaDate(app.date_of_application || todayISO())} />
             <Row
               label="Source voyageur liée"
               value={app.booking_id
@@ -718,9 +941,9 @@ export default function VisaApplicationDetail() {
             <QuickActions passport={app.passport_no} compact className="mb-3" />
             <Row label="Type / N°" value={`${app.passport_type ?? ""} · ${app.passport_no ?? ""}`} />
             <Row label="Lieu de délivrance" value={app.passport_place_of_issue} />
-            <Row label="Date de délivrance" value={app.passport_date_of_issue} />
+            <Row label="Date de délivrance" value={formatVisaDate(app.passport_date_of_issue)} />
             <Row label="Autorité" value={app.passport_issuing_authority} />
-            <Row label="Date d'expiration" value={app.passport_date_of_expiry} />
+            <Row label="Date d'expiration" value={formatVisaDate(app.passport_date_of_expiry)} />
           </Card>
 
           <Card className="p-4 sm:p-5">
@@ -740,6 +963,7 @@ export default function VisaApplicationDetail() {
             )}
             <Row label="Motif" value={app.purpose_of_visit} />
             <Row label="Durée" value={app.intended_length_of_stay} />
+            <Row label="Séjours précédents au Japon" value={formatPreviousJapanStayForDisplay(app.previous_stays)} />
             <div className="my-4 rounded-lg border border-border bg-secondary/20 p-3">
               <label className="text-xs text-muted-foreground">Voyage utilisé pour Programme / Confirmation PDF</label>
               <Select value={selectedTravelTripId || "none"} onValueChange={changeTravelTrip}>
@@ -750,7 +974,7 @@ export default function VisaApplicationDetail() {
                   <SelectItem value="none">Aucun voyage sélectionné</SelectItem>
                   {trips.map((trip) => (
                     <SelectItem key={trip.id} value={trip.id}>
-                      {[trip.title, trip.season, trip.start_date].filter(Boolean).join(" · ")}
+                      {[trip.title, trip.season, formatVisaDate(trip.start_date)].filter(Boolean).join(" · ")}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -796,10 +1020,50 @@ export default function VisaApplicationDetail() {
             <Row label="Adresse" value={app.residential_address} />
             <Row label="Tel / Mobile" value={[app.residential_tel, app.residential_mobile].filter(Boolean).join(" · ")} />
             <Row label="Email" value={app.residential_email} />
-            <Row label="Profession" value={app.profession} />
-            <Row label="Employeur / école" value={app.employer_name} />
-            <Row label="Tel employeur / école" value={app.employer_tel} />
-            <Row label="Adresse employeur / école" value={app.employer_address} />
+            <Row label="Situation professionnelle" value={professionalSituationLabel(app.category)} />
+            <Row label="Profession / activité exacte" value={app.profession} />
+            <Row label="Employeur / école" value={appIsRetired ? RETIRED_NOT_APPLICABLE : app.employer_name} />
+            <Row label="Tel employeur / école" value={appIsRetired ? RETIRED_NOT_APPLICABLE : app.employer_tel} />
+            <Row label="Adresse employeur / école" value={appIsRetired ? RETIRED_NOT_APPLICABLE : app.employer_address} />
+          </Card>
+
+          <Card className="p-4 sm:p-5">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-display text-lg">Checklist documents visa</h2>
+                <p className="text-sm text-muted-foreground">Snapshot attendu pour cette demande et règles actuelles par situation.</p>
+              </div>
+              <Button size="sm" variant="outline" className="min-h-10" onClick={regenerateChecklist} disabled={busy}>
+                <FileText className="w-4 h-4" /> Régénérer
+              </Button>
+            </div>
+            <Row label="Situation sélectionnée" value={professionalSituationLabel(app.category)} />
+            <div className="mt-4 rounded-lg border border-border bg-secondary/20 p-3">
+              <p className="mb-2 text-sm font-semibold">Snapshot enregistré</p>
+              <p className="whitespace-pre-wrap text-sm text-muted-foreground">{app.requested_documents || "Aucun snapshot enregistré."}</p>
+            </div>
+            <div className="mt-4">
+              <p className="mb-2 text-sm font-semibold">Règles actives actuelles</p>
+              {selectedChecklistItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aucune règle active trouvée pour cette situation.</p>
+              ) : (
+                <div className="space-y-2">
+                  {selectedChecklistItems.map((item, index) => (
+                    <div key={item.id ?? index} className="rounded-lg border border-border p-3 text-sm">
+                      <p className="font-medium">{item.title_fr}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {[
+                          item.required ? "Obligatoire" : "Le cas échéant",
+                          item.original_required ? "original requis" : null,
+                          item.copy_upload_required ? "copie / scan requis" : null,
+                        ].filter(Boolean).join(" · ")}
+                      </p>
+                      {item.notes && <p className="mt-2 text-xs text-muted-foreground">{item.notes}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </Card>
 
           <Card className="p-4 sm:p-5">
@@ -865,6 +1129,44 @@ export default function VisaApplicationDetail() {
 
           <Card className="p-4 sm:p-5">
             <h2 className="font-display text-lg mb-3">Documents ({docs.length})</h2>
+            <div className="mb-3 rounded-lg border border-accent/30 bg-accent/5 p-3 text-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-semibold">Liste personnalisée des documents</p>
+                  <p className="text-xs text-muted-foreground">
+                    Statut: {checklistDoc ? "générée / téléchargeable" : "à générer"}
+                  </p>
+                </div>
+                {checklistDoc ? (
+                  <Button size="sm" variant="outline" className="min-h-10" onClick={() => downloadDoc(checklistDoc)}>
+                    <Download className="w-4 h-4" /> Télécharger la liste
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" className="min-h-10" onClick={regenerateChecklist} disabled={busy}>
+                    <FileText className="w-4 h-4" /> Générer la liste
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-semibold">Procuration</p>
+                  <p className="text-xs">
+                    Statut: {procurationDoc ? "à signer / à recevoir" : "à générer puis à signer / à recevoir"}
+                  </p>
+                </div>
+                {procurationDoc ? (
+                  <Button size="sm" variant="outline" className="min-h-10" onClick={() => downloadDoc(procurationDoc)}>
+                    <Download className="w-4 h-4" /> Télécharger procuration
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" className="min-h-10" onClick={generateProcuration} disabled={busy}>
+                    <FileText className="w-4 h-4" /> Générer procuration
+                  </Button>
+                )}
+              </div>
+            </div>
             {docs.length === 0 && <p className="text-sm text-muted-foreground">Aucun document.</p>}
             <div className="space-y-2">
               {docs.map((d) => (
@@ -872,7 +1174,9 @@ export default function VisaApplicationDetail() {
                   <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm truncate">{d.file_name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{d.doc_type}</p>
+                    <p className="text-xs text-muted-foreground capitalize">
+                      {isVisaChecklistDocument(d) ? "Liste des documents · générée" : isVisaProcurationDocument(d) ? "Procuration · à signer / à recevoir" : d.doc_type}
+                    </p>
                   </div>
                   <Download className="w-4 h-4 text-muted-foreground" />
                 </button>
@@ -893,7 +1197,7 @@ export default function VisaApplicationDetail() {
             />
             {app.documents_requested_at && (
               <p className="text-xs text-muted-foreground mt-2">
-                Demandé le {new Date(app.documents_requested_at).toLocaleDateString("fr-FR")}
+                Demandé le {formatVisaDate(app.documents_requested_at)}
               </p>
             )}
             <div className="flex gap-2 mt-2">

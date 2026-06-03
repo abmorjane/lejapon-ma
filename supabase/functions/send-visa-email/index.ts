@@ -20,6 +20,92 @@ const STATUS_LABEL: Record<string, string> = {
   form_received: "Formulaire de visa reçu",
 };
 
+const missing = "Non renseigné";
+
+const escapeHtml = (value: unknown) =>
+  String(value ?? missing)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const truthy = (value: unknown) => {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+};
+
+const plainMissing = (value: unknown) => {
+  const text = String(value ?? "").trim();
+  return text || missing;
+};
+
+const fmtDate = (value: unknown) => {
+  if (!value) return missing;
+  try {
+    return new Date(String(value)).toLocaleDateString("fr-FR", { dateStyle: "medium" });
+  } catch {
+    return String(value);
+  }
+};
+
+const adminBaseUrl = () =>
+  (Deno.env.get("ADMIN_BASE_URL") || Deno.env.get("SITE_URL") || "https://lejapon.ma").replace(/\/$/, "");
+
+const adminRecipient = () => Deno.env.get("ADMIN_NOTIFICATION_EMAIL") || "info@lejapon.ma";
+
+const professionalSituationLabel = (value: unknown) => {
+  const labels: Record<string, string> = {
+    private_employee: "Salarié du secteur privé",
+    civil_servant: "Fonctionnaire",
+    business_owner: "Chef d'entreprise / Gérant",
+    liberal_profession: "Profession libérale",
+    student: "Étudiant",
+    retired: "Retraité",
+    unemployed: "Sans emploi",
+    other: "Autre",
+    tourism: "Tourisme",
+  };
+  return labels[String(value ?? "")] ?? plainMissing(value);
+};
+
+function brandedShell(title: string, intro: string, sections: string, action?: { label: string; href: string }) {
+  return `
+    <div style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#171412">
+      <div style="max-width:720px;margin:0 auto;padding:28px 14px">
+        <div style="padding:0 0 16px;text-align:center">
+          <div style="font-size:24px;font-weight:700;color:#ea5b14;letter-spacing:.02em">LeJapon.ma</div>
+          <div style="margin-top:4px;font-size:12px;color:#766f68">Moroccan Express Travel & Events</div>
+        </div>
+        <div style="background:#ffffff;border-radius:14px;border:1px solid #e8e4e1;padding:26px;box-shadow:0 6px 24px rgba(0,0,0,.05)">
+          <div style="border-bottom:3px solid #ea5b14;padding-bottom:14px;margin-bottom:20px">
+            <h1 style="margin:0;font-size:22px;line-height:1.3;color:#171412">${escapeHtml(title)}</h1>
+          </div>
+          <p style="font-size:15px;line-height:1.7;margin:0 0 20px;color:#3a3531">${escapeHtml(intro).replace(/\n/g, "<br>")}</p>
+          ${sections}
+          ${action ? `<p style="margin:26px 0 0"><a href="${escapeHtml(action.href)}" style="display:inline-block;background:#ea5b14;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold">${escapeHtml(action.label)}</a></p>` : ""}
+        </div>
+        <p style="margin:18px 0 0;text-align:center;color:#8a8178;font-size:12px">LeJapon.ma / Moroccan Express Travel & Events · info@lejapon.ma</p>
+      </div>
+    </div>
+  `;
+}
+
+function sectionHtml(title: string, rows: Array<[string, unknown]>) {
+  const renderedRows = rows.map(([label, value]) => `
+    <tr>
+      <td style="padding:9px 0;color:#746960;width:190px;border-bottom:1px solid #f0ece8;vertical-align:top">${escapeHtml(label)}</td>
+      <td style="padding:9px 0;border-bottom:1px solid #f0ece8;vertical-align:top"><strong>${escapeHtml(truthy(value) ? value : missing)}</strong></td>
+    </tr>
+  `).join("");
+  return `
+    <div style="margin:18px 0 0;padding:16px;border:1px solid #eee7e1;border-radius:12px;background:#fffdfa">
+      <h2 style="margin:0 0 10px;font-size:16px;color:#171412">${escapeHtml(title)}</h2>
+      <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px">${renderedRows}</table>
+    </div>
+  `;
+}
+
 function bodyForStatus(status: string, app: any, extra?: string) {
   const ref = app.reference;
   const name = [app.surname, app.given_names].filter(Boolean).join(" ") || "Cher client";
@@ -30,7 +116,8 @@ function bodyForStatus(status: string, app: any, extra?: string) {
     case "submitted":
       html = `${base}<p>Votre demande de visa <strong>${ref}</strong> a bien été soumise.</p>
         <p>Notre équipe va l'examiner sous 24 à 48h ouvrées.</p>
-        <p style="background:#fff8e1;padding:12px 16px;border-left:3px solid #d4a017;border-radius:4px"><strong>Prochaine étape :</strong> envoyez-nous vos documents originaux à l'adresse de l'agence, ou téléversez les copies demandées dans votre espace client.</p>`;
+        <p style="background:#fff8e1;padding:12px 16px;border-left:3px solid #d4a017;border-radius:4px"><strong>Prochaine étape :</strong> téléchargez depuis votre espace client la liste personnalisée des documents à fournir ainsi que la procuration, puis envoyez-nous vos documents originaux à l'adresse de l'agence ou téléversez les copies demandées.</p>
+        <p><a href="https://lejapon.ma/formulaire-visa" style="display:inline-block;background:#ea5b14;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px">Accéder à mon espace visa</a></p>`;
       break;
     case "awaiting_documents":
       html = `${base}<p>Concernant votre demande <strong>${ref}</strong>, nous attendons les documents suivants pour pouvoir avancer&nbsp;:</p>
@@ -81,6 +168,85 @@ function bodyForStatus(status: string, app: any, extra?: string) {
   return html + sign;
 }
 
+async function buildInternalVisaEmail(admin: any, app: any) {
+  const adminUrl = `${adminBaseUrl()}/admin/visa/${app.id}`;
+  let trip: any = null;
+  let booking: any = null;
+  const tripId = app.selected_trip_id || app.document_trip_id || app.trip_id || null;
+  if (tripId) {
+    const { data } = await admin.from("trips").select("id,title,season,start_date,end_date").eq("id", tripId).maybeSingle();
+    trip = data ?? null;
+  }
+  if (!trip && app.booking_id) {
+    const { data } = await admin
+      .from("bookings")
+      .select("id,reference,trip_id,trips(id,title,season,start_date,end_date)")
+      .eq("id", app.booking_id)
+      .maybeSingle();
+    booking = data ?? null;
+    trip = booking?.trips ?? null;
+  }
+
+  const { data: docs } = await admin
+    .from("visa_documents")
+    .select("id,doc_type,file_name")
+    .eq("application_id", app.id);
+  const docRows = Array.isArray(docs) ? docs : [];
+  const hasChecklist = docRows.some((doc: any) => /checklist|liste/i.test(`${doc.doc_type ?? ""} ${doc.file_name ?? ""}`));
+  const hasProcuration = docRows.some((doc: any) => /procuration/i.test(`${doc.doc_type ?? ""} ${doc.file_name ?? ""}`));
+  const clientName = [app.surname, app.given_names].filter(Boolean).join(" ") || missing;
+  const tripLabel = trip ? [trip.season, trip.title].filter(Boolean).join(" — ") : missing;
+  const sections = [
+    sectionHtml("Dossier visa", [
+      ["Référence", app.reference],
+      ["Client", clientName],
+      ["Email", app.residential_email],
+      ["Téléphone", app.residential_mobile || app.residential_tel],
+      ["Passeport", app.passport_no],
+      ["Nationalité", app.nationality],
+      ["Situation professionnelle", professionalSituationLabel(app.professional_situation || app.category)],
+    ]),
+    sectionHtml("Voyage lié", [
+      ["Voyage", tripLabel],
+      ["Réservation", booking?.reference || app.booking_id],
+      ["Départ", fmtDate(trip?.start_date || app.date_of_arrival)],
+      ["Arrivée Japon", fmtDate(app.date_of_arrival)],
+      ["Retour / départ Japon", fmtDate(trip?.end_date || app.date_of_departure)],
+    ]),
+    sectionHtml("Documents", [
+      ["Checklist", hasChecklist || app.requested_documents ? "Préparée" : "Non générée"],
+      ["Procuration", hasProcuration ? "Générée" : "Non générée"],
+      ["Documents reçus", docRows.length ? `${docRows.length} document(s)` : missing],
+    ]),
+  ].join("");
+
+  const subject = `Nouvelle demande visa — ${clientName} — ${plainMissing(app.passport_no)}`;
+  return {
+    to: adminRecipient(),
+    subject,
+    html: brandedShell("Nouvelle demande visa", "Une nouvelle demande visa vient d'être soumise depuis l'espace client.", sections, {
+      label: "Ouvrir la demande visa",
+      href: adminUrl,
+    }),
+    text: `Nouvelle demande visa
+
+Référence: ${plainMissing(app.reference)}
+Client: ${clientName}
+Email: ${plainMissing(app.residential_email)}
+Téléphone: ${plainMissing(app.residential_mobile || app.residential_tel)}
+Passeport: ${plainMissing(app.passport_no)}
+Nationalité: ${plainMissing(app.nationality)}
+Situation professionnelle: ${professionalSituationLabel(app.professional_situation || app.category)}
+Voyage: ${tripLabel}
+Départ: ${fmtDate(trip?.start_date || app.date_of_arrival)}
+Arrivée Japon: ${fmtDate(app.date_of_arrival)}
+Checklist: ${hasChecklist || app.requested_documents ? "Préparée" : "Non générée"}
+Procuration: ${hasProcuration ? "Générée" : "Non générée"}
+
+Ouvrir: ${adminUrl}`,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -100,13 +266,6 @@ Deno.serve(async (req) => {
     const { data: app, error: appErr } = await admin
       .from("visa_applications").select("*").eq("id", application_id).maybeSingle();
     if (appErr || !app) throw new Error(appErr?.message ?? "Demande introuvable");
-
-    const recipient = app.residential_email;
-    if (!recipient) {
-      return new Response(JSON.stringify({ skipped: "no_recipient_email" }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     const { data: smtp, error: smtpErr } = await admin
       .from("email_settings").select("*").eq("is_active", true).maybeSingle();
@@ -132,18 +291,38 @@ Deno.serve(async (req) => {
         ? `Demande de visa Japon – Réception confirmée`
         : `Visa Japon — ${STATUS_LABEL[status] ?? status} (${app.reference})`;
     const html = bodyForStatus(status, app, extra);
+    const sent: Record<string, boolean | string> = {};
 
-    await client.send({
-      from: `${smtp.from_name} <${smtp.from_email}>`,
-      to: recipient,
-      replyTo: smtp.reply_to ?? undefined,
-      subject,
-      html,
-      content: "auto",
-    });
+    if (app.residential_email) {
+      await client.send({
+        from: `${smtp.from_name} <${smtp.from_email}>`,
+        to: app.residential_email,
+        replyTo: smtp.reply_to ?? undefined,
+        subject,
+        html,
+        content: "auto",
+      });
+      sent.client = true;
+    } else {
+      sent.client = "skipped_no_recipient_email";
+    }
+
+    if (status === "submitted") {
+      const internal = await buildInternalVisaEmail(admin, app);
+      await client.send({
+        from: `${smtp.from_name} <${smtp.from_email}>`,
+        to: internal.to,
+        replyTo: smtp.reply_to ?? undefined,
+        subject: internal.subject,
+        html: internal.html,
+        content: internal.text,
+      });
+      sent.internal = true;
+    }
+
     await client.close();
 
-    return new Response(JSON.stringify({ ok: true }), {
+    return new Response(JSON.stringify({ ok: true, sent }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

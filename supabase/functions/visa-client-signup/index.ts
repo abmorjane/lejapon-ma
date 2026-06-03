@@ -1,7 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
-const functionVersion = "visa-client-signup-v1";
+const functionVersion = "visa-client-signup-v2-email-design";
 
 const baseCorsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -154,24 +154,43 @@ async function lookupPrefillStatus(admin: any, passportNo: string, lastName: str
 
 async function upsertClient(admin: any, userId: string, firstName: string, lastName: string, email: string, passportNo: string | null) {
   const fullName = `${firstName} ${lastName}`.trim();
-  const payload: Record<string, unknown> = {
-    full_name: fullName,
+  const basePayload: Record<string, unknown> = {
     email,
     source: "visa_signup",
-    country: "Maroc",
   };
-  if (passportNo) payload.passport_number = passportNo;
+  if (passportNo) basePayload.passport_number = passportNo;
 
-  const existing = await admin
+  const byEmail = await admin
     .from("clients")
-    .select("id")
+    .select("id,full_name,email,passport_number,country")
     .eq("email", email)
     .limit(1)
     .maybeSingle();
 
-  const result = existing.data?.id
-    ? await admin.from("clients").update(payload).eq("id", existing.data.id).select("id").single()
-    : await admin.from("clients").insert(payload).select("id").single();
+  let targetClient = byEmail.data ?? null;
+  if (!targetClient && passportNo) {
+    const byPassport = await admin
+      .from("clients")
+      .select("id,full_name,email,passport_number,country")
+      .eq("passport_number", passportNo)
+      .limit(3);
+    if (!byPassport.error) {
+      const safe = (byPassport.data ?? []).filter((row: any) => lastNameMatches(row.full_name, lastName) || emailMatches(row.email, email));
+      if (safe.length === 1) targetClient = safe[0];
+    }
+  }
+
+  const result = targetClient?.id
+    ? await admin.from("clients").update({
+        ...basePayload,
+        full_name: targetClient.full_name || fullName,
+        country: targetClient.country || "Maroc",
+      }).eq("id", targetClient.id).select("id").single()
+    : await admin.from("clients").insert({
+        ...basePayload,
+        full_name: fullName,
+        country: "Maroc",
+      }).select("id").single();
 
   if (result.error) {
     safeLogWarn("client upsert skipped", result.error);
@@ -222,7 +241,7 @@ async function sendWelcomeEmail(admin: any, firstName: string, email: string) {
   const siteUrl = "https://lejapon.ma";
   const loginUrl = `${siteUrl}/formulaire-visa/login`;
   const logoUrl = `${siteUrl}/favicon.png`;
-  const subject = "Bienvenue dans votre espace visa LeJapon.ma";
+  const subject = "Bienvenue sur LeJapon.ma — votre espace visa est prêt";
   const text = `Bonjour ${firstName},
 
 Votre espace visa Japon est prêt.
@@ -247,20 +266,21 @@ Moroccan Express Travel & Events
 info@lejapon.ma`;
 
   const html = `
-    <div style="margin:0;padding:0;background:#f6f3ef;font-family:Arial,Helvetica,sans-serif;color:#151922">
+    <!-- function_version: ${functionVersion} -->
+    <div style="margin:0;padding:0;background:#f6f3ef;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
       <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">
         Votre espace visa Japon est prêt. Complétez votre demande et suivez son avancement depuis votre espace client LeJapon.ma.
       </div>
       <div style="max-width:600px;margin:0 auto;padding:28px 14px">
         <div style="padding:18px 10px 22px;text-align:center">
-          <img src="${escapeHtml(logoUrl)}" width="54" height="54" alt="LeJapon.ma" style="display:block;margin:0 auto 12px;border:0;border-radius:14px" />
-          <div style="font-size:28px;font-weight:800;letter-spacing:-0.02em;color:#111827;line-height:1">LeJapon.ma</div>
+          <img src="${escapeHtml(logoUrl)}" width="64" height="64" alt="LeJapon.ma" style="display:block;margin:0 auto 12px;border:0;border-radius:16px" />
+          <div style="font-size:28px;font-weight:800;letter-spacing:-0.02em;color:#0f172a;line-height:1">LeJapon.ma</div>
           <div style="font-size:12px;color:#f97316;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;margin-top:8px">Visa Japon</div>
         </div>
         <div style="background:#ffffff;border:1px solid #eadfd7;border-radius:22px;padding:0;box-shadow:0 18px 45px rgba(17,24,39,0.10);overflow:hidden">
           <div style="height:6px;background:#f97316;line-height:6px;font-size:6px">&nbsp;</div>
           <div style="padding:34px 28px 30px">
-            <h1 style="font-size:26px;line-height:1.22;margin:0 0 18px;color:#111827;font-weight:800;letter-spacing:-0.03em">Bienvenue dans votre espace visa</h1>
+            <h1 style="font-size:26px;line-height:1.22;margin:0 0 18px;color:#0f172a;font-weight:800;letter-spacing:-0.03em">Bienvenue dans votre espace visa</h1>
             <p style="font-size:16px;line-height:1.7;margin:0 0 14px;color:#2f3746">Bonjour ${escapeHtml(firstName)},</p>
             <p style="font-size:16px;line-height:1.7;margin:0 0 14px;color:#2f3746">Votre espace visa Japon est prêt.</p>
             <p style="font-size:16px;line-height:1.7;margin:0 0 24px;color:#2f3746">Vous pouvez compléter votre demande, téléverser vos documents et suivre l’avancement depuis votre espace client.</p>
@@ -285,7 +305,7 @@ info@lejapon.ma`;
             </div>
 
             <div style="border-top:1px solid #f0e6dd;padding-top:18px">
-              <p style="font-size:13px;line-height:1.6;color:#667085;margin:0">Identifiant de connexion&nbsp;: <strong style="color:#111827">${escapeHtml(email)}</strong></p>
+              <p style="font-size:13px;line-height:1.6;color:#667085;margin:0">Identifiant de connexion&nbsp;: <strong style="color:#0f172a">${escapeHtml(email)}</strong></p>
               <p style="font-size:13px;line-height:1.6;color:#667085;margin:10px 0 0">Si vous n’êtes pas à l’origine de cette demande, veuillez nous contacter.</p>
             </div>
           </div>

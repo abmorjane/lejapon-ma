@@ -13,11 +13,28 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { ArrowLeft, Save, Send, Upload, Trash2, Download, FileText, Camera, CheckCircle2, Info } from "lucide-react";
+import { ArrowLeft, Save, Send, Upload, Trash2, Download, FileText, Camera, CheckCircle2, Info, FileScan, Search } from "lucide-react";
 import { Seo } from "@/components/Seo";
 import { PassportPhotoDialog } from "./PassportPhotoDialog";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
 import { applyEmptyFieldPatch, lookupVisaPrefillByPassport, normalizePassportNo } from "@/lib/visa-prefill";
+import { isVisaProcurationDocument, upsertVisaProcurationDocument } from "@/lib/visa-procuration-pdf";
+import { isVisaChecklistDocument, upsertVisaChecklistDocument } from "@/lib/visa-checklist-pdf";
+import {
+  PROFESSIONAL_SITUATIONS,
+  checklistSnapshotText,
+  crmSituationToVisaSituation,
+  findChecklistForSituation,
+  professionalSituationLabel,
+} from "@/lib/visa-document-checklists";
+import { PassportScannerDialog, type PassportOcrFields } from "@/admin/components/PassportScannerDialog";
+import {
+  buildPreviousJapanStayValue,
+  formatVisaDate,
+  isRetiredVisaCategory,
+  parsePreviousJapanStay,
+  RETIRED_NOT_APPLICABLE,
+} from "@/lib/visa-format";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Brouillon",
@@ -67,6 +84,9 @@ const durationFromTrip = (trip: VisaTripOption | null) => {
   return null;
 };
 
+const firstString = (...values: unknown[]) =>
+  values.find((value) => typeof value === "string" && value.trim()) as string | undefined;
+
 export default function VisaForm() {
   const { id } = useParams();
   const { user, loading } = useAuth();
@@ -84,6 +104,10 @@ export default function VisaForm() {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [photoDialogOpen, setPhotoDialogOpen] = useState(false);
+  const [passportScannerOpen, setPassportScannerOpen] = useState(false);
+  const [passportScanPath, setPassportScanPath] = useState<string | null>(null);
+  const [passportLookupBusy, setPassportLookupBusy] = useState(false);
+  const [lastPassportLookup, setLastPassportLookup] = useState("");
   const [autoSaveAt, setAutoSaveAt] = useState<Date | null>(null);
   const skipAutoSaveRef = useRef(true);
   const saveTimerRef = useRef<number | null>(null);
@@ -108,30 +132,72 @@ export default function VisaForm() {
       if (appRes.error || !appRes.data) { toast.error("Demande introuvable"); nav(visaBase); return; }
       let hydratedApp = {
         ...appRes.data,
-        category: appRes.data.category ?? "tourism",
+        category: appRes.data.category ?? "",
         passport_type: appRes.data.passport_type ?? "ordinary",
         purpose_of_visit: appRes.data.purpose_of_visit || "Tourisme",
         date_of_application: appRes.data.date_of_application || todayISO(),
       };
       const metadata = user.user_metadata ?? {};
+      const metadataPassportNo = normalizePassportNo(firstString(metadata.passport_no, metadata.passport_number));
+      const userClientProfile = user.email
+        ? await supabase
+            .from("clients")
+            .select("id,email,passport_number,passport_no,metadata")
+            .eq("email", user.email)
+            .limit(1)
+            .maybeSingle()
+        : { data: null, error: null };
+      const clientMetadata = userClientProfile.data?.metadata && typeof userClientProfile.data.metadata === "object"
+        ? userClientProfile.data.metadata as Record<string, any>
+        : {};
+      const clientPassportOcr = clientMetadata.passport_ocr && typeof clientMetadata.passport_ocr === "object"
+        ? clientMetadata.passport_ocr as Record<string, any>
+        : {};
+      const profilePassportNo = normalizePassportNo(firstString(
+        userClientProfile.data?.passport_number,
+        userClientProfile.data?.passport_no,
+        clientPassportOcr.passport_number,
+        clientPassportOcr.passport_no,
+      ));
+      const passportForAutoPrefill = metadataPassportNo || profilePassportNo;
+      if (import.meta.env.DEV) {
+        console.info("[visa-form] initial passport prefill diagnostics", {
+          userId: user.id,
+          metadataPassportNo: firstString(metadata.passport_no, metadata.passport_number) || null,
+          normalizedMetadataPassportNo: metadataPassportNo || null,
+          clientProfileQueryError: userClientProfile.error,
+          clientProfileFound: Boolean(userClientProfile.data),
+          normalizedClientProfilePassportNo: profilePassportNo || null,
+        });
+      }
       const metadataPatch = applyEmptyFieldPatch(hydratedApp, {
         surname: metadata.last_name,
         given_names: metadata.first_name,
-        passport_no: normalizePassportNo(metadata.passport_no),
+        passport_no: passportForAutoPrefill,
+        category: crmSituationToVisaSituation(String(metadata.professional_situation ?? "")) || undefined,
       });
       hydratedApp = { ...hydratedApp, ...metadataPatch };
-      if (hydratedApp.status === "draft" && normalizePassportNo(metadata.passport_no) && !appRes.data.submitted_at) {
+      if (hydratedApp.status === "draft" && passportForAutoPrefill && !appRes.data.submitted_at) {
         const lookup = await lookupVisaPrefillByPassport({
-          passportNo: normalizePassportNo(metadata.passport_no),
+          passportNo: passportForAutoPrefill,
           lastName: String(metadata.last_name ?? hydratedApp.surname ?? ""),
           email: user.email ?? "",
         });
+        if (import.meta.env.DEV) {
+          console.info("[visa-form] initial passport prefill lookup result", {
+            normalizedPassportNo: passportForAutoPrefill,
+            status: lookup.status,
+            source: lookup.status === "matched" ? lookup.source : null,
+            sourceId: lookup.status === "matched" ? lookup.sourceId : null,
+            finalPrefillKeysApplied: lookup.status === "matched" ? Object.keys(applyEmptyFieldPatch(hydratedApp, lookup.patch)) : [],
+          });
+        }
         if (lookup.status === "matched") {
           const safePatch = applyEmptyFieldPatch(hydratedApp, lookup.patch);
           hydratedApp = { ...hydratedApp, ...safePatch };
           if (Object.keys(safePatch).length) {
             await supabase.from("visa_applications").update(safePatch as any).eq("id", hydratedApp.id);
-            toast.info(`Formulaire prérempli depuis: ${lookup.sourceLabel}.`);
+            toast.info("Informations préremplies depuis votre dossier passeport. Merci de vérifier avant validation.");
           }
         } else if (lookup.status === "none" || lookup.status === "multiple") {
           toast.info(lookup.message);
@@ -161,6 +227,79 @@ export default function VisaForm() {
 
   const upd = (patch: any) => setApp((a: any) => ({ ...a, ...patch }));
 
+  const normalizeVisaSex = (value?: string) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (["m", "male", "homme", "masculin"].includes(normalized)) return "male";
+    if (["f", "female", "femme", "feminin", "féminin"].includes(normalized)) return "female";
+    return value || "";
+  };
+
+  const applyPassportOcrToVisa = (fields: PassportOcrFields) => {
+    const residenceAddress = [fields.residence_address || fields.address, fields.residence_city || fields.city, fields.residence_country]
+      .filter(Boolean)
+      .join(", ");
+    const patch = applyEmptyFieldPatch(app ?? {}, {
+      surname: fields.last_name || fields.full_name?.split(/\s+/).slice(-1).join(" ") || "",
+      given_names: fields.first_name || fields.full_name?.split(/\s+/).slice(0, -1).join(" ") || "",
+      date_of_birth: fields.date_of_birth || "",
+      place_of_birth_city: fields.place_of_birth || "",
+      nationality: fields.nationality || "",
+      national_id_no: fields.national_id_number || "",
+      sex: normalizeVisaSex(fields.sex) || "",
+      passport_type: "ordinary",
+      passport_no: fields.passport_no || "",
+      passport_date_of_issue: fields.passport_issue_date || "",
+      passport_date_of_expiry: fields.passport_expiry || "",
+      passport_place_of_issue: fields.passport_authority || "",
+      passport_issuing_authority: fields.passport_authority || "",
+      residential_address: residenceAddress || "",
+    });
+    upd(patch);
+    toast.success("Informations passeport appliquées au formulaire. Merci de vérifier avant validation.");
+  };
+
+  const lookupPassportFromForm = async (force = false) => {
+    if (!app?.passport_no || isReadOnly) return;
+    const normalized = normalizePassportNo(app.passport_no);
+    if (import.meta.env.DEV) {
+      console.info("[visa-form] passport CRM lookup requested", {
+        userId: user?.id,
+        input: app.passport_no,
+        normalized,
+        tables: ["clients", "booking_participants"],
+        fields: ["passport_number", "passport_no", "metadata.passport_ocr.passport_number", "metadata.passport_ocr.passport_no"],
+      });
+    }
+    if (!normalized) return;
+    if (!force && normalized === lastPassportLookup) return;
+    setLastPassportLookup(normalized);
+    setPassportLookupBusy(true);
+    const lookup = await lookupVisaPrefillByPassport({
+      passportNo: normalized,
+      lastName: String(app.surname ?? ""),
+      email: String(app.residential_email ?? user?.email ?? ""),
+    });
+    setPassportLookupBusy(false);
+    if (import.meta.env.DEV) {
+      console.info("[visa-form] passport CRM lookup result", {
+        normalized,
+        status: lookup.status,
+        source: lookup.status === "matched" ? lookup.source : null,
+        sourceId: lookup.status === "matched" ? lookup.sourceId : null,
+        finalPrefillKeysApplied: lookup.status === "matched" ? Object.keys(applyEmptyFieldPatch(app, lookup.patch)) : [],
+      });
+    }
+    if (lookup.status === "matched") {
+      const safePatch = applyEmptyFieldPatch(app, lookup.patch);
+      const patch = { ...safePatch, passport_no: normalized };
+      upd(patch);
+      await supabase.from("visa_applications").update(patch as any).eq("id", app.id);
+      toast.success("Informations préremplies depuis votre fiche client. Merci de vérifier avant validation.");
+      return;
+    }
+    toast.info(lookup.message);
+  };
+
   const selectDurationSource = (value: string) => {
     setDurationSource(value);
     if (value === "other") {
@@ -186,13 +325,43 @@ export default function VisaForm() {
     }
   };
 
+  const normalizeVisaPayload = (source: any) => {
+    if (!isRetiredVisaCategory(source?.category)) return source;
+    return {
+      ...source,
+      profession: source.profession || "Retraité",
+      employer_name: null,
+      employer_tel: null,
+      employer_address: null,
+    };
+  };
+
+  const updateProfessionalSituation = (value: string) => {
+    if (isRetiredVisaCategory(value)) {
+      upd({
+        category: value,
+        profession: app?.profession || "Retraité",
+        employer_name: "",
+        employer_tel: "",
+        employer_address: "",
+      });
+      return;
+    }
+    upd({ category: value });
+  };
+
+  const updatePreviousJapanStay = (patch: Partial<ReturnType<typeof parsePreviousJapanStay>>) => {
+    const current = parsePreviousJapanStay(app?.previous_stays);
+    upd({ previous_stays: buildPreviousJapanStayValue({ ...current, ...patch }) });
+  };
+
   // Debounced auto-save (drafts only)
   useEffect(() => {
     if (!app || isReadOnly || skipAutoSaveRef.current) return;
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(async () => {
       try {
-        const { id: _i, created_at, updated_at, reference, status, user_id, submitted_at, reviewed_at, reviewed_by, admin_notes, ...payload } = app;
+        const { id: _i, created_at, updated_at, reference, status, user_id, submitted_at, reviewed_at, reviewed_by, admin_notes, ...payload } = normalizeVisaPayload(app);
         const { error } = await supabase.from("visa_applications").update(payload).eq("id", app.id);
         if (!error) setAutoSaveAt(new Date());
       } catch { /* silent */ }
@@ -265,10 +434,12 @@ export default function VisaForm() {
   const save = async (silent = false) => {
     if (!app) return;
     setBusy(true);
-    const { id: _id, created_at, updated_at, reference, status, user_id, submitted_at, reviewed_at, reviewed_by, admin_notes, ...payload } = app;
+    const normalized = normalizeVisaPayload(app);
+    const { id: _id, created_at, updated_at, reference, status, user_id, submitted_at, reviewed_at, reviewed_by, admin_notes, ...payload } = normalized;
     const { error } = await supabase.from("visa_applications").update(payload).eq("id", app.id);
     setBusy(false);
     if (error) return toast.error(error.message);
+    setApp(normalized);
     if (!silent) toast.success("Enregistré");
   };
 
@@ -278,23 +449,52 @@ export default function VisaForm() {
       return toast.error("Veuillez accepter les déclarations finales.");
     }
     const { validateVisaApplication } = await import("@/lib/visa-pdf");
-    const missing = validateVisaApplication(app);
+    const normalizedApp = normalizeVisaPayload(app);
+    const missing = validateVisaApplication(normalizedApp);
     if (durationSource === "other" && !manualDurationDays.trim()) {
       missing.push("Nombre de jours");
+    }
+    if (!app.category) {
+      missing.push("Situation professionnelle");
     }
     setMissingFields(missing);
     if (missing.length) {
       return toast.error("Veuillez compléter les champs obligatoires indiqués.");
     }
-    await save(true);
+    const selectedChecklist = findChecklistForSituation(checklists, app.category);
+    const checklistItems = selectedChecklist?.items ?? [];
+    const snapshot = checklistSnapshotText(checklistItems);
+    const checklistPayload = snapshot
+      ? `Liste personnalisée des documents à fournir — ${professionalSituationLabel(app.category)}\n${snapshot}`
+      : `Liste personnalisée des documents à fournir — ${professionalSituationLabel(app.category)}\nAucune règle active n'est configurée pour cette situation. Notre équipe vous confirmera les documents à fournir.`;
+    const appWithChecklist = { ...normalizedApp, requested_documents: checklistPayload };
+    setApp(appWithChecklist);
+    const { id: _id, created_at, updated_at, reference, status, user_id, submitted_at, reviewed_at, reviewed_by, admin_notes, ...draftPayload } = appWithChecklist;
+    await supabase.from("visa_applications").update(draftPayload as any).eq("id", app.id);
     setBusy(true);
+    const submittedAt = new Date().toISOString();
     const { error } = await supabase.from("visa_applications")
-      .update({ status: "submitted", submitted_at: new Date().toISOString() })
+      .update({ status: "submitted", submitted_at: submittedAt })
       .eq("id", app.id);
     setBusy(false);
     if (error) return toast.error(error.message);
+    const submittedApp = { ...appWithChecklist, status: "submitted", submitted_at: submittedAt };
+    try {
+      const [checklistDoc, procuration] = await Promise.all([
+        upsertVisaChecklistDocument(submittedApp, user!.id, checklistItems),
+        upsertVisaProcurationDocument(submittedApp, user!.id),
+      ]);
+      setDocs((current) => [
+        checklistDoc,
+        procuration,
+        ...current.filter((doc) => !isVisaProcurationDocument(doc) && !isVisaChecklistDocument(doc)),
+      ]);
+    } catch (e) {
+      console.warn("generated visa documents failed", e);
+      toast.error("Demande soumise, mais les PDF de checklist/procuration n'ont pas pu être générés automatiquement.");
+    }
     toast.success("Demande soumise. Notre équipe va l'examiner.");
-    setApp({ ...app, status: "submitted", submitted_at: new Date().toISOString() });
+    setApp(submittedApp);
     supabase.functions.invoke("send-visa-email", {
       body: { application_id: app.id, status: "submitted" },
     }).then(({ error: e }) => { if (e) console.warn("notification email failed", e); });
@@ -341,6 +541,8 @@ export default function VisaForm() {
   };
 
   if (!app) return <div className="container-app py-20 text-center text-muted-foreground">Chargement…</div>;
+  const procurationDoc = docs.find(isVisaProcurationDocument);
+  const checklistDoc = docs.find(isVisaChecklistDocument);
 
   const T = (k: string, label: string, type = "text") => (
     <F key={k} label={label}>
@@ -350,6 +552,10 @@ export default function VisaForm() {
 
   const selectedDurationTrip = durationSource === "other" ? null : tripOptions.find((trip) => trip.id === durationSource) ?? null;
   const selectedDurationDays = durationFromTrip(selectedDurationTrip);
+  const selectedChecklist = findChecklistForSituation(checklists, app.category);
+  const selectedChecklistItems = selectedChecklist?.items ?? [];
+  const previousJapanStay = parsePreviousJapanStay(app.previous_stays);
+  const isRetiredApplicant = isRetiredVisaCategory(app.category);
 
   return (
     <div className="container-app py-10 max-w-5xl">
@@ -387,51 +593,28 @@ export default function VisaForm() {
           <p className="text-sm font-semibold mb-2">✅ Votre demande a été soumise</p>
           <ol className="text-sm text-muted-foreground space-y-1 list-decimal pl-5 mb-3">
             <li>Téléchargez les documents PDF générés ci-dessous.</li>
+            <li>Merci de signer et légaliser cette procuration, puis de la joindre aux documents à nous envoyer.</li>
+            <li>Joignez les documents originaux et copies demandés à votre dossier.</li>
             <li><strong>Envoyez vos documents originaux à notre agence</strong> (passeport, photo, justificatifs) — adresse communiquée par email.</li>
             <li>Notre équipe vous tiendra informé(e) à chaque étape (documents reçus, dépôt à l'ambassade, décision).</li>
           </ol>
+          {checklistDoc && (
+            <Button type="button" variant="outline" className="mb-3 mr-2 min-h-11" onClick={() => downloadDoc(checklistDoc)}>
+              <Download className="w-4 h-4" /> Télécharger la liste des documents
+            </Button>
+          )}
+          {procurationDoc && (
+            <Button type="button" variant="outline" className="mb-3 min-h-11" onClick={() => downloadDoc(procurationDoc)}>
+              <Download className="w-4 h-4" /> Télécharger la procuration
+            </Button>
+          )}
           <p className="text-xs text-muted-foreground">Statut actuel&nbsp;: <strong>{STATUS_LABEL[app.status]}</strong></p>
         </Card>
       )}
 
-      {/* Visa category + checklist */}
-      <Card className="p-6 mb-6">
-        <h2 className="font-display text-xl mb-3">Type de visa &amp; documents requis</h2>
-        <div className="grid md:grid-cols-3 gap-2 mb-4">
-          {checklists.map((c) => {
-            const selected = (app.category ?? "tourism") === c.category;
-            return (
-              <button
-                key={c.id}
-                type="button"
-                disabled={isReadOnly}
-                onClick={() => { upd({ category: c.category }); }}
-                className={`text-left p-3 border rounded-md transition-colors ${selected ? "border-accent bg-accent/10" : "border-border hover:border-accent/40"} disabled:opacity-60 disabled:cursor-not-allowed`}
-              >
-                <p className="text-sm font-semibold">{c.label}</p>
-                {c.description && <p className="text-xs text-muted-foreground mt-1">{c.description}</p>}
-              </button>
-            );
-          })}
-        </div>
-        {(() => {
-          const cur = checklists.find((c) => c.category === (app.category ?? "tourism"));
-          if (!cur || !Array.isArray(cur.items) || cur.items.length === 0) return null;
-          return (
-            <div className="bg-secondary/40 rounded-md p-4">
-              <p className="text-sm font-semibold mb-2">Documents à préparer</p>
-              <ul className="text-sm text-muted-foreground space-y-1 list-disc pl-5">
-                {cur.items.map((it: string, i: number) => <li key={i}>{it}</li>)}
-              </ul>
-              <p className="text-xs text-muted-foreground mt-3">Téléversez les copies dans la section « Documents » et envoyez les originaux à notre agence.</p>
-            </div>
-          );
-        })()}
-      </Card>
-
       {app.requested_documents && (
         <Card className="p-4 mb-6 border-accent/40 bg-accent/5">
-          <p className="text-sm font-semibold mb-1">📎 Documents demandés par notre équipe</p>
+          <p className="text-sm font-semibold mb-1">Documents attendus pour votre dossier</p>
           <p className="text-sm text-muted-foreground whitespace-pre-wrap">{app.requested_documents}</p>
           <p className="text-xs text-muted-foreground mt-2">Téléversez-les dans la section « Documents » ci-dessous.</p>
         </Card>
@@ -491,6 +674,19 @@ export default function VisaForm() {
           <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-accent" />
           Le passeport doit être <strong className="text-foreground mx-1">valide au moins 6 mois</strong> après la date de retour prévue.
         </p>
+        {!isReadOnly && (
+          <div className="mb-4 rounded-lg border border-accent/30 bg-accent/5 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold">Préremplissage par OCR</p>
+                <p className="text-xs text-muted-foreground">Uploadez une image ou un PDF du passeport, corrigez les champs détectés, puis appliquez-les au formulaire.</p>
+              </div>
+              <Button type="button" variant="outline" className="min-h-11" onClick={() => setPassportScannerOpen(true)}>
+                <FileScan className="w-4 h-4" /> Scanner passeport
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="grid md:grid-cols-2 gap-4">
           <F label={requiredLabel("Type de passeport")}>
             <RadioGroup disabled={isReadOnly} value={app.passport_type ?? "ordinary"} onValueChange={(v) => upd({ passport_type: v })} className="flex flex-wrap gap-3 mt-2">
@@ -499,7 +695,34 @@ export default function VisaForm() {
               ))}
             </RadioGroup>
           </F>
-          {T("passport_no", "Numéro de passeport *")}
+          <F label={requiredLabel("Numéro de passeport")}>
+            <div className="flex gap-2">
+              <Input
+                value={app.passport_no ?? ""}
+                disabled={isReadOnly}
+                autoCapitalize="characters"
+                onChange={(event) => upd({ passport_no: event.target.value })}
+                onBlur={() => lookupPassportFromForm(false)}
+              />
+              {!isReadOnly && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => lookupPassportFromForm(true)}
+                  disabled={passportLookupBusy || !app.passport_no}
+                  title="Rechercher dans le CRM"
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+            {!isReadOnly && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Recherche CRM automatique après saisie du numéro.
+              </p>
+            )}
+          </F>
           {T("passport_place_of_issue", "Lieu de délivrance *")}
           {T("passport_date_of_issue", "Date de délivrance *", "date")}
           {T("passport_issuing_authority", "Autorité de délivrance *")}
@@ -525,7 +748,7 @@ export default function VisaForm() {
               <SelectContent>
                 {tripOptions.map((trip) => (
                   <SelectItem key={trip.id} value={trip.id}>
-                    {[trip.title, trip.start_date, durationFromTrip(trip) ? `${durationFromTrip(trip)} jours` : null].filter(Boolean).join(" · ")}
+                    {[trip.title, formatVisaDate(trip.start_date), durationFromTrip(trip) ? `${durationFromTrip(trip)} jours` : null].filter(Boolean).join(" · ")}
                   </SelectItem>
                 ))}
                 <SelectItem value="other">Autre</SelectItem>
@@ -548,7 +771,38 @@ export default function VisaForm() {
               />
             </F>
           )}
-          {T("previous_stays", "Séjours précédents au Japon (Optionnel)")}
+          <F label={requiredLabel("Avez-vous déjà séjourné au Japon ?")}>
+            <RadioGroup
+              disabled={isReadOnly}
+              value={previousJapanStay.hasPrevious}
+              onValueChange={(value) => updatePreviousJapanStay({ hasPrevious: value as "yes" | "no" })}
+              className="flex gap-4 mt-2"
+            >
+              <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="yes" /> Oui</label>
+              <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="no" /> Non</label>
+            </RadioGroup>
+          </F>
+          {previousJapanStay.hasPrevious === "yes" && (
+            <>
+              <F label="Date du dernier séjour au Japon">
+                <Input
+                  type="date"
+                  disabled={isReadOnly}
+                  value={previousJapanStay.lastStayDate}
+                  onChange={(event) => updatePreviousJapanStay({ lastStayDate: event.target.value })}
+                />
+              </F>
+              <F label="Nombre de séjours précédents (Optionnel)">
+                <Input
+                  type="number"
+                  min="1"
+                  disabled={isReadOnly}
+                  value={previousJapanStay.stayCount}
+                  onChange={(event) => updatePreviousJapanStay({ stayCount: event.target.value })}
+                />
+              </F>
+            </>
+          )}
         </div>
       </Card>
 
@@ -560,12 +814,79 @@ export default function VisaForm() {
           {T("residential_tel", "Téléphone fixe *")}
           {T("residential_mobile", "Mobile *")}
           {T("residential_email", "Email *", "email")}
-          {T("profession", "Profession actuelle *")}
+          <F label={requiredLabel("Situation professionnelle")}>
+            <Select disabled={isReadOnly} value={app.category ?? ""} onValueChange={updateProfessionalSituation}>
+              <SelectTrigger className="min-h-11">
+                <SelectValue placeholder="Sélectionner votre situation" />
+              </SelectTrigger>
+              <SelectContent>
+                {PROFESSIONAL_SITUATIONS.map((situation) => (
+                  <SelectItem key={situation.value} value={situation.value}>{situation.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </F>
+          {T("profession", "Profession / activité exacte *")}
           {T("partner_profession", "Profession du conjoint / parents, si mineur (Optionnel)")}
-          {T("employer_name", "Nom de l'employeur ou de l'école si étudiant *")}
-          {T("employer_tel", "Téléphone de l'employeur ou de l'école si étudiant *")}
-          <div className="md:col-span-2">{T("employer_address", "Adresse de l'employeur ou de l'école si étudiant *")}</div>
+          {isRetiredApplicant && (
+            <Alert className="md:col-span-2">
+              <AlertTitle>Retraité</AlertTitle>
+              <AlertDescription>{RETIRED_NOT_APPLICABLE}</AlertDescription>
+            </Alert>
+          )}
+          <F label={isRetiredApplicant ? "Nom de l'employeur ou de l'école si étudiant" : requiredLabel("Nom de l'employeur ou de l'école si étudiant")}>
+            <Input
+              disabled={isReadOnly || isRetiredApplicant}
+              value={isRetiredApplicant ? RETIRED_NOT_APPLICABLE : app.employer_name ?? ""}
+              onChange={(event) => upd({ employer_name: event.target.value })}
+            />
+          </F>
+          <F label={isRetiredApplicant ? "Téléphone de l'employeur ou de l'école si étudiant" : requiredLabel("Téléphone de l'employeur ou de l'école si étudiant")}>
+            <Input
+              disabled={isReadOnly || isRetiredApplicant}
+              value={isRetiredApplicant ? RETIRED_NOT_APPLICABLE : app.employer_tel ?? ""}
+              onChange={(event) => upd({ employer_tel: event.target.value })}
+            />
+          </F>
+          <F label={isRetiredApplicant ? "Adresse de l'employeur ou de l'école si étudiant" : requiredLabel("Adresse de l'employeur ou de l'école si étudiant")}>
+            <Input
+              disabled={isReadOnly || isRetiredApplicant}
+              value={isRetiredApplicant ? RETIRED_NOT_APPLICABLE : app.employer_address ?? ""}
+              onChange={(event) => upd({ employer_address: event.target.value })}
+            />
+          </F>
         </div>
+      </Card>
+
+      <Card className="p-6 mb-6">
+        <h2 className="font-display text-xl mb-3">Documents à préparer selon votre situation</h2>
+        {!app.category ? (
+          <p className="text-sm text-muted-foreground">Sélectionnez votre situation professionnelle pour voir la liste des documents à préparer.</p>
+        ) : selectedChecklistItems.length === 0 ? (
+          <Alert>
+            <AlertTitle>Liste à confirmer</AlertTitle>
+            <AlertDescription>
+              Aucune règle active n'est configurée pour « {professionalSituationLabel(app.category)} ». Notre équipe vous confirmera les documents à fournir.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <div className="space-y-2">
+            {selectedChecklistItems.map((item, index) => (
+              <div key={item.id ?? index} className="rounded-lg border border-border p-3">
+                <p className="text-sm font-semibold">{item.title_fr}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {[
+                    item.required ? "Obligatoire" : "Le cas échéant",
+                    item.original_required ? "original requis" : null,
+                    item.copy_upload_required ? "copie / scan requis" : null,
+                  ].filter(Boolean).join(" · ")}
+                </p>
+                {item.notes && <p className="mt-2 text-xs text-muted-foreground">{item.notes}</p>}
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">Téléversez les copies dans la section « Documents » et envoyez les originaux à notre agence.</p>
+          </div>
+        )}
       </Card>
 
       {/* Declarations */}
@@ -618,7 +939,9 @@ export default function VisaForm() {
                 <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{d.file_name}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{d.doc_type}</p>
+                  <p className="text-xs text-muted-foreground capitalize">
+                    {isVisaChecklistDocument(d) ? "Liste des documents générée" : isVisaProcurationDocument(d) ? "Procuration générée · à signer et légaliser" : d.doc_type}
+                  </p>
                 </div>
               </div>
               <div className="flex gap-1 shrink-0">
@@ -732,6 +1055,14 @@ export default function VisaForm() {
         open={photoDialogOpen}
         onOpenChange={setPhotoDialogOpen}
         onConfirm={confirmPhotoUpload}
+      />
+      <PassportScannerDialog
+        open={passportScannerOpen}
+        onOpenChange={setPassportScannerOpen}
+        currentPath={passportScanPath}
+        bucket="visa-docs"
+        onStoredPathChange={setPassportScanPath}
+        onApply={applyPassportOcrToVisa}
       />
     </div>
   );

@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
-import { ArrowRight, Star, Check, Sparkles, Shield, Users, MapPin, Calendar, Plane, Heart, Zap } from "lucide-react";
+import { ArrowRight, Star, Check, Sparkles, Shield, Users, MapPin, Calendar, Plane, Heart, Zap, Languages, Headphones, Building2, Hotel, Route, Smile, PhoneCall, Award, CheckCircle } from "lucide-react";
 import { Seo } from "@/components/Seo";
 import { supabase } from "@/integrations/supabase/client";
 import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
@@ -43,6 +43,7 @@ type Trip = TripCardData & { is_featured?: boolean };
 const expImages = [tea, shibuya, ramen, kyoto, torii, tea];
 
 const whyIcons = [Shield, Users, Heart, Zap];
+const advantageIcons = [Plane, Languages, Headphones, Building2, Hotel, Route, Heart, Star, Award];
 
 const DEFAULT_TESTIMONIALS = [
   { name: "Kawtar B.", city: "Casablanca", quote: "Topissime ! Organisation juste parfaite. Une équipe passionnée, professionnelle et disponible. Je recommande vivement !" },
@@ -106,9 +107,133 @@ const HOME_DEFAULTS = {
   cta_secondary: "Parler à un conseiller",
 };
 
+const MARKETING_COPY = {
+  fr: {
+    advantagesTitle: "Pourquoi voyager au Japon avec LeJapon.ma ?",
+    advantagesIntro: "Un circuit pensé pour les voyageurs marocains: présence humaine, expertise Japon et assistance concrète avant, pendant et après le séjour.",
+    reserve: "Réserver mon voyage",
+    advisor: "Parler à un conseiller",
+    advantages: [
+      ["Accompagnement depuis Casablanca", "Vous partez avec un cadre clair dès l'aéroport, pas une simple convocation impersonnelle."],
+      ["Accompagnateur parlant japonais", "Un accompagnateur francophone qui parle japonais et comprend les codes culturels sur place."],
+      ["Présence pendant tout le voyage", "Le groupe est accompagné au quotidien pour limiter le stress et fluidifier les étapes."],
+      ["Bureau/partenaire au Japon", "Un relais maroco-japonais facilite l'aide locale et les ajustements de dernière minute."],
+      ["Hôtels bien placés", "Des adresses choisies pour simplifier les visites, les transports et les temps libres."],
+      ["Circuit plus long et plus complet", "Plus de jours pour découvrir le Japon sans transformer le voyage en course."],
+      ["Journées libres", "Du temps pour vivre votre propre Japon: shopping, cafés, temples, quartiers ou expériences."],
+      ["Avis clients vérifiés", "Des retours Google très positifs de voyageurs qui ont réellement vécu l'expérience."],
+      ["Prix compétitif", "Une proposition claire, dense et compétitive au regard de l'accompagnement inclus."],
+    ],
+    comparisonTitle: "Comparez avant de réserver votre voyage au Japon",
+    comparisonEyebrow: "Comparatif",
+    criteria: "Critères",
+    classic: "Voyage classique",
+    lejapon: "LeJapon.ma",
+    rows: [
+      ["Durée du circuit", "Souvent plus courte", "Circuit plus long et plus complet"],
+      ["Accompagnement depuis Casablanca", "Variable", "Inclus selon départ"],
+      ["Accompagnateur parlant japonais", "Rare", "Oui, francophone et japonisant"],
+      ["Assistance sur place au Japon", "Limitée", "Présence avec le groupe"],
+      ["Bureau/partenaire local", "Pas toujours visible", "Relais maroco-japonais"],
+      ["Hôtels bien placés", "Variable", "Sélection axée emplacement"],
+      ["Journées libres", "Peu ou mal intégrées", "Prévues pour l'immersion"],
+      ["Extras réservables sur place", "Souvent rigide", "Aide pour options de dernière minute"],
+      ["Avis clients vérifiés", "À vérifier", "Lien Google public"],
+      ["Prix compétitif", "Variable", "Positionnement clair et compétitif"],
+    ],
+    reviewsTitle: "Nos voyageurs parlent de nous",
+    reviewsText: "Consultez les avis Google et les retours de voyageurs accompagnés par LeJapon.ma.",
+    reviewsCta: "Voir les avis Google",
+    omotenashiTitle: "Notre approche Omotenashi",
+    omotenashiText: "L'Omotenashi, c'est l'attention portée aux détails: une présence humaine, une assistance avant, pendant et après le voyage, et un circuit pensé pour éviter le stress inutile.",
+    omotenashiSteps: [["Avant", "Conseils, préparation et réponses concrètes."], ["Pendant", "Présence humaine et aide sur place."], ["Après", "Suivi clair en cas de besoin."]],
+  },
+  en: {
+    advantagesTitle: "Why travel to Japan with LeJapon.ma?",
+    advantagesIntro: "A journey designed for Moroccan travelers: human support, Japan expertise and practical assistance before, during and after the trip.",
+    reserve: "Book my trip",
+    advisor: "Talk to an advisor",
+    advantages: [
+      ["Support from Casablanca", "A clear departure experience from the airport."],
+      ["Japanese-speaking tour leader", "A French-speaking leader who understands Japanese culture."],
+      ["Present throughout the trip", "Daily support to reduce stress and keep the journey smooth."],
+      ["Local partner in Japan", "A Morocco-Japan relay for local help and last-minute adjustments."],
+      ["Well-located hotels", "Hotels selected to simplify visits, transport and free time."],
+      ["Longer, fuller itinerary", "More days to discover Japan without rushing."],
+      ["Free days", "Time to experience your own Japan."],
+      ["Verified client reviews", "Positive public Google feedback from real travelers."],
+      ["Competitive price", "A clear, dense and competitive offer for the support included."],
+    ],
+    comparisonTitle: "Compare before booking your Japan trip",
+    comparisonEyebrow: "Comparison",
+    criteria: "Criteria",
+    classic: "Classic trip",
+    lejapon: "LeJapon.ma",
+    rows: [
+      ["Itinerary duration", "Often shorter", "Longer and fuller"],
+      ["Support from Casablanca", "Variable", "Included depending on departure"],
+      ["Japanese-speaking leader", "Rare", "Yes"],
+      ["On-site assistance in Japan", "Limited", "Present with the group"],
+      ["Local partner", "Not always visible", "Morocco-Japan relay"],
+      ["Well-located hotels", "Variable", "Location-focused selection"],
+      ["Free days", "Limited", "Planned for immersion"],
+      ["Bookable extras on site", "Often rigid", "Help with last-minute options"],
+      ["Verified reviews", "To be checked", "Public Google link"],
+      ["Competitive price", "Variable", "Clear competitive positioning"],
+    ],
+    reviewsTitle: "Our travelers talk about us",
+    reviewsText: "Read Google reviews from travelers supported by LeJapon.ma.",
+    reviewsCta: "See Google reviews",
+    omotenashiTitle: "Our Omotenashi approach",
+    omotenashiText: "Omotenashi means attention to detail: human presence, assistance before, during and after the trip, and a journey designed to reduce unnecessary stress.",
+    omotenashiSteps: [["Before", "Advice, preparation and clear answers."], ["During", "Human presence and help on site."], ["After", "Clear follow-up when needed."]],
+  },
+  ar: {
+    advantagesTitle: "لماذا تسافر إلى اليابان مع LeJapon.ma؟",
+    advantagesIntro: "رحلة مصممة للمسافرين من المغرب: مرافقة إنسانية، معرفة باليابان، ومساعدة قبل وأثناء وبعد السفر.",
+    reserve: "أحجز رحلتي",
+    advisor: "تحدث مع مستشار",
+    advantages: [
+      ["مرافقة من الدار البيضاء", "انطلاقة واضحة ومنظمة منذ المطار."],
+      ["مرافق يتحدث اليابانية", "مرافق فرنكوفوني يعرف اللغة والثقافة اليابانية."],
+      ["حضور طوال الرحلة", "مساعدة يومية لتقليل التوتر وتنظيم التنقلات."],
+      ["شريك محلي في اليابان", "دعم مغربي ياباني للمساعدة في عين المكان."],
+      ["فنادق بمواقع مناسبة", "اختيار فنادق يسهل الزيارات والتنقلات."],
+      ["برنامج أطول وأكمل", "أيام أكثر لاكتشاف اليابان بدون استعجال."],
+      ["أيام حرة", "وقت لتعيش اليابان بطريقتك الخاصة."],
+      ["آراء عملاء موثقة", "تقييمات Google إيجابية من مسافرين حقيقيين."],
+      ["سعر تنافسي", "عرض واضح ومتكامل مقارنة بالمرافقة المقدمة."],
+    ],
+    comparisonTitle: "قارن قبل حجز رحلتك إلى اليابان",
+    comparisonEyebrow: "مقارنة",
+    criteria: "المعايير",
+    classic: "رحلة كلاسيكية",
+    lejapon: "LeJapon.ma",
+    rows: [
+      ["مدة البرنامج", "غالبا أقصر", "أطول وأكثر اكتمالا"],
+      ["المرافقة من الدار البيضاء", "متغيرة", "متوفرة حسب الرحلة"],
+      ["مرافق يتحدث اليابانية", "نادر", "نعم"],
+      ["المساعدة في اليابان", "محدودة", "حضور مع المجموعة"],
+      ["شريك محلي", "غير واضح دائما", "دعم مغربي ياباني"],
+      ["فنادق بمواقع مناسبة", "متغيرة", "اختيار يركز على الموقع"],
+      ["أيام حرة", "قليلة", "مدمجة للاندماج الشخصي"],
+      ["إضافات في عين المكان", "غالبا جامدة", "مساعدة للحجوزات الأخيرة"],
+      ["آراء موثقة", "تحتاج تحقق", "رابط Google علني"],
+      ["سعر تنافسي", "متغير", "تموقع واضح وتنافسي"],
+    ],
+    reviewsTitle: "مسافرونا يتحدثون عنا",
+    reviewsText: "اطلع على آراء Google وتجارب المسافرين مع LeJapon.ma.",
+    reviewsCta: "مشاهدة آراء Google",
+    omotenashiTitle: "منهجية Omotenashi",
+    omotenashiText: "Omotenashi تعني الاهتمام بالتفاصيل: حضور إنساني، مساعدة قبل وأثناء وبعد الرحلة، وبرنامج مصمم لتجنب التوتر.",
+    omotenashiSteps: [["قبل السفر", "نصائح وتحضير وإجابات واضحة."], ["أثناء السفر", "حضور إنساني ومساعدة في عين المكان."], ["بعد السفر", "متابعة واضحة عند الحاجة."]],
+  },
+} as const;
+
 const Index = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const c = useSiteContent("site:home", HOME_DEFAULTS);
+  const m = MARKETING_COPY[(i18n.language as keyof typeof MARKETING_COPY) || "fr"] ?? MARKETING_COPY.fr;
   const [trips, setTrips] = useState<Trip[]>([]);
   const { extras } = useExtras();
 
@@ -145,7 +270,7 @@ const Index = () => {
         }}
       />
       {/* HERO */}
-      <section className="relative min-h-[88vh] flex items-center overflow-hidden">
+      <section className="relative min-h-[88vh] flex items-center overflow-hidden pb-14 sm:pb-20 md:pb-0">
         <div className="absolute inset-0">
           <img
             src={hero}
@@ -161,8 +286,8 @@ const Index = () => {
           <div className="absolute inset-0 bg-gradient-hero" />
         </div>
 
-        <div className="relative container-app z-10 py-20">
-          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }} className="max-w-3xl">
+        <div className="relative container-app z-10 py-16 sm:py-20 md:pb-48 lg:py-20 lg:pr-64 xl:pr-80">
+          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }} className="relative z-20 max-w-3xl lg:max-w-[46rem] xl:max-w-3xl">
             <span className="badge-pill bg-white/15 backdrop-blur-md text-white border border-white/20 mb-6">
               <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
               {c.hero_badge}
@@ -180,7 +305,7 @@ const Index = () => {
               {c.hero_subtitle}
             </p>
 
-            <div className="mt-10 flex flex-wrap items-center gap-4">
+            <div className="relative z-30 mt-10 flex flex-wrap items-center gap-4">
               <Link to="/reserver" className="btn-primary text-base">
                 {c.hero_cta_primary} <ArrowRight className="w-5 h-5" />
               </Link>
@@ -190,7 +315,7 @@ const Index = () => {
             </div>
 
             {/* trust badges */}
-            <div className="mt-12 flex flex-wrap items-center gap-6 text-white/80 text-sm">
+            <div className="relative z-30 mt-12 flex flex-wrap items-center gap-6 text-white/80 text-sm">
               <div className="flex items-center gap-2">
                 <div className="flex -space-x-2">
                   {[1,2,3,4].map(i => <div key={i} className="w-8 h-8 rounded-full bg-gradient-sunset border-2 border-white" />)}
@@ -216,7 +341,7 @@ const Index = () => {
             initial={{ opacity: 0, x: 60, y: 20 }}
             animate={{ opacity: 1, x: 0, y: 0 }}
             transition={{ duration: 0.8, delay: 0.4 }}
-            className="hidden lg:block absolute right-8 xl:right-20 bottom-8 w-64 xl:w-80 drop-shadow-2xl pointer-events-none"
+            className="relative z-10 mt-8 ml-auto block w-[110px] max-w-[120px] translate-x-1 drop-shadow-2xl pointer-events-none sm:w-[118px] md:absolute md:-right-2 md:bottom-0 md:mt-0 md:w-36 md:max-w-none md:translate-x-4 lg:right-4 lg:bottom-6 lg:w-52 xl:right-16 xl:w-72"
             style={{ animation: "fade-up 0.8s both, slow-zoom 6s ease-in-out infinite alternate" }}
             width={768} height={768}
           />
@@ -254,6 +379,39 @@ const Index = () => {
         </div>
       </section>
 
+      {/* COMPETITIVE ADVANTAGES */}
+      <section className="container-app py-20 md:py-28">
+        <div className="mb-12 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div className="max-w-3xl">
+            <span className="eyebrow mb-3">LeJapon.ma</span>
+            <h2 className="font-display text-3xl text-balance md:text-5xl">{m.advantagesTitle}</h2>
+            <p className="mt-5 max-w-2xl text-lg leading-relaxed text-foreground/70">{m.advantagesIntro}</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Link to="/reserver" className="btn-primary">
+              {m.reserve} <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link to="/contact" className="btn-ghost">
+              {m.advisor} <PhoneCall className="h-4 w-4" />
+            </Link>
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {m.advantages.map(([title, description], index) => {
+            const Icon = advantageIcons[index] ?? CheckCircle;
+            return (
+              <article key={title} className="rounded-2xl border border-border bg-background p-5 shadow-soft">
+                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-accent/12 text-accent">
+                  <Icon className="h-5 w-5" />
+                </div>
+                <h3 className="font-display text-xl">{title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
       {/* TRIPS — featured cards */}
       <section className="container-app py-24 md:py-32">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-14">
@@ -275,6 +433,41 @@ const Index = () => {
             ))}
           </div>
         )}
+      </section>
+
+      {/* COMPARISON */}
+      <section className="bg-foreground py-20 text-background md:py-28">
+        <div className="container-app">
+          <div className="mb-10 max-w-3xl">
+            <span className="eyebrow mb-3 !text-accent">{m.comparisonEyebrow}</span>
+            <h2 className="font-display text-3xl text-balance md:text-5xl">{m.comparisonTitle}</h2>
+          </div>
+          <div className="overflow-x-auto rounded-3xl border border-white/10 bg-white/[0.04]">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="border-b border-white/10 text-left text-background/70">
+                  <th className="p-4 font-medium">{m.criteria}</th>
+                  <th className="p-4 font-medium">{m.classic}</th>
+                  <th className="p-4 font-medium">{m.lejapon}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {m.rows.map(([criterion, classic, lejapon]) => (
+                  <tr key={criterion} className="border-b border-white/10 last:border-0">
+                    <td className="p-4 font-semibold">{criterion}</td>
+                    <td className="p-4 text-background/65">{classic}</td>
+                    <td className="p-4">
+                      <span className="inline-flex items-start gap-2 font-medium">
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+                        {lejapon}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       {/* WHY US */}
@@ -305,6 +498,27 @@ const Index = () => {
                 </motion.div>
               );
             })}
+          </div>
+        </div>
+      </section>
+
+      {/* OMOTENASHI */}
+      <section className="container-app py-20 md:py-28">
+        <div className="grid gap-8 rounded-3xl border border-border bg-secondary/45 p-8 md:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] md:p-12">
+          <div>
+            <span className="eyebrow mb-3">Omotenashi</span>
+            <h2 className="font-display text-3xl md:text-5xl">{m.omotenashiTitle}</h2>
+          </div>
+          <div className="space-y-5">
+            <p className="text-lg leading-relaxed text-foreground/75">{m.omotenashiText}</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {m.omotenashiSteps.map(([step, text]) => (
+                <div key={step} className="rounded-2xl bg-background p-4 text-sm shadow-soft">
+                  <p className="font-semibold">{step}</p>
+                  <p className="mt-1 text-muted-foreground">{text}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -395,6 +609,18 @@ const Index = () => {
               </figcaption>
             </motion.figure>
           ))}
+        </div>
+        <div className="mt-10 rounded-3xl border border-border bg-background p-6 text-center shadow-soft">
+          <h3 className="font-display text-2xl">{m.reviewsTitle}</h3>
+          <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{m.reviewsText}</p>
+          <a
+            href="https://maps.app.goo.gl/ineHnJq3o5DqGByH8"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-primary mt-5 inline-flex"
+          >
+            {m.reviewsCta} <Star className="h-4 w-4 fill-current" />
+          </a>
         </div>
       </section>
 

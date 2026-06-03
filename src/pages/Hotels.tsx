@@ -138,13 +138,13 @@ export default function HotelsPage() {
   return (
     <main className="min-h-screen bg-background">
       <Seo
-        title="Notre sélection d'hôtels par ville au Japon"
+        title="Notre sélection d’hôtels par ville au Japon"
         description="Découvrez les hôtels recommandés par LeJapon.ma à Tokyo, Kyoto, Osaka et dans les principales villes du Japon."
       />
       <section className="container py-14">
         <div className="max-w-3xl">
           <p className="text-sm font-medium uppercase tracking-[0.16em] text-accent">Hôtels au Japon</p>
-          <h1 className="mt-3 font-display text-4xl md:text-5xl">Notre sélection d'hôtels par ville au Japon</h1>
+          <h1 className="mt-3 font-display text-4xl md:text-5xl">Notre sélection d’hôtels par ville au Japon</h1>
           <p className="mt-4 text-lg text-muted-foreground">Des adresses soigneusement choisies pour préparer un séjour clair, confortable et cohérent avec chaque itinéraire.</p>
         </div>
 

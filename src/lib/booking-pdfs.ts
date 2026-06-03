@@ -4,6 +4,14 @@ import logoJaponUrl from "@/assets/logo-lejapon.png";
 import stampUrl from "@/assets/stamp-moroccan-express.png";
 import { agencyAddressLine, agencyIceLine, normalizeAgencySettings, type AgencySettings } from "@/lib/agency-settings";
 import { paymentMethodLabel } from "@/lib/payment-methods";
+import {
+  adjustmentAmount,
+  legacyDiscountToAdjustment,
+  normalizeQuoteAdjustments,
+  quoteAdjustmentsFromBooking,
+  summarizeQuoteAdjustments,
+  type QuoteAdjustment,
+} from "@/lib/quote-adjustments";
 
 const RED = rgb(0.78, 0.07, 0.10);
 const BLACK = rgb(0.07, 0.07, 0.07);
@@ -118,20 +126,33 @@ function drawText(p: PDFPage, t: string, x: number, y: number, font: PDFFont, si
 }
 
 async function header(pdf: PDFDocument, page: PDFPage, title: string, number: string, fontB: PDFFont, font: PDFFont, agency: AgencySettings) {
-  const logo = await loadLogo(pdf, agency);
+  const lejaponLogo = await loadJaponLogo(pdf);
+  const agencyLogo = await loadExternalImage(pdf, agency?.logo_url);
+  const logo = agencyLogo ?? await loadImage(pdf, logoUrl);
   const pw = page.getWidth();
-  // Logo top-left — preserve aspect ratio (contain in 130×60 box)
+  if (lejaponLogo) {
+    const maxW = 78;
+    const maxH = 36;
+    const ratio = lejaponLogo.width / lejaponLogo.height;
+    let w = maxW;
+    let h = w / ratio;
+    if (h > maxH) { h = maxH; w = h * ratio; }
+    page.drawImage(lejaponLogo, { x: 40, y: 800 - h / 2, width: w, height: h });
+  } else {
+    drawText(page, "LeJapon.ma", 40, 804, fontB, 13, RED);
+  }
+  // Agency/Moroccan Express logo beside LeJapon.ma — preserve aspect ratio.
   if (logo) {
-    const maxW = 130;
-    const maxH = 60;
+    const maxW = agencyLogo ? 92 : 118;
+    const maxH = 44;
     const ratio = logo.width / logo.height;
     let w = maxW;
     let h = w / ratio;
     if (h > maxH) { h = maxH; w = h * ratio; }
-    page.drawImage(logo, { x: 40, y: 800 - h / 2, width: w, height: h });
+    page.drawImage(logo, { x: 132, y: 800 - h / 2, width: w, height: h });
   } else {
-    drawText(page, "MOROCCAN EXPRESS", 40, 808, fontB, 14, BLACK);
-    drawText(page, "TRAVEL & EVENTS", 40, 793, font, 9, GREY);
+    drawText(page, "MOROCCAN EXPRESS", 132, 808, fontB, 12, BLACK);
+    drawText(page, "TRAVEL & EVENTS", 132, 793, font, 8, GREY);
   }
   // Title block top-right
   const titleSize = 26;
@@ -227,6 +248,7 @@ export type QuoteData = {
   trip?: { title?: string; season?: string | null; start_date?: string | null; end_date?: string | null } | null;
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
   discount?: { label?: string | null; amount?: number | null; type?: "fixed_amount" | "percentage" | string | null; reason?: string | null } | null;
+  quote_adjustments?: QuoteAdjustment[] | null;
   number: string;
   validUntil?: Date;
   agency?: Partial<AgencySettings> | null;
@@ -273,11 +295,15 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
   y -= Math.max(clientLines.length, tripLines.length) * 13 + 50;
   const pax = (b.num_adults || 0) + (b.num_children || 0);
   const extrasTotal = (d.extras ?? []).reduce((s, e) => s + e.qty * Number(e.unit_price_mad || 0), 0);
-  const rawDiscount = d.discount ?? b.quote_discount ?? null;
-  const discountAmount = rawDiscount?.type === "percentage"
-    ? Math.round(Number(b.total_amount_mad || 0) * Number(rawDiscount.amount || 0) / 100)
-    : Number(rawDiscount?.amount || 0);
-  const peopleTotal = Math.max(0, Number(b.total_amount_mad || 0) - extrasTotal + discountAmount);
+  const baseTotal = Number(b.total_amount_mad || 0);
+  const quoteAdjustments = normalizeQuoteAdjustments(d.quote_adjustments).length > 0
+    ? normalizeQuoteAdjustments(d.quote_adjustments)
+    : quoteAdjustmentsFromBooking(b).length > 0
+      ? quoteAdjustmentsFromBooking(b)
+      : legacyDiscountToAdjustment(d.discount);
+  const visibleAdjustments = quoteAdjustments.filter((adjustment) => adjustment.visible_on_quote !== false);
+  const adjustmentSummary = summarizeQuoteAdjustments(visibleAdjustments, baseTotal);
+  const peopleTotal = Math.max(0, baseTotal - extrasTotal);
   const perPax = pax > 0 ? peopleTotal / pax : peopleTotal;
   const rows = [
     {
@@ -292,23 +318,28 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
       unit: fmtMad(Number(e.unit_price_mad)),
       total: fmtMad(e.qty * Number(e.unit_price_mad)),
     })),
-    ...(discountAmount > 0 ? [{
-      label: rawDiscount?.label || "Réduction",
-      qty: rawDiscount?.type === "percentage" ? `${Number(rawDiscount.amount || 0)}%` : "1",
-      unit: `-${fmtMad(discountAmount)}`,
-      total: `-${fmtMad(discountAmount)}`,
-    }] : []),
+    ...visibleAdjustments.map((adjustment) => {
+      const value = adjustmentAmount(adjustment, baseTotal);
+      const sign = adjustment.type === "discount" ? "-" : "+";
+      return {
+        label: adjustment.label,
+        qty: adjustment.calculation_type === "percentage" ? `${Number(adjustment.amount || 0)}%` : "1",
+        unit: `${sign}${fmtMad(value)}`,
+        total: `${sign}${fmtMad(value)}`,
+      };
+    }),
   ];
   y = table(page, font, fontB, 40, y, 515, rows);
 
   // Totals
-  const total = Math.max(0, Number(b.total_amount_mad || 0) - discountAmount);
+  const total = adjustmentSummary.finalTotal;
   const paid = Number(b.paid_amount_mad || 0);
   const remaining = Math.max(0, total - paid);
   const paxCount = (b.num_adults || 0) + (b.num_children || 0);
   const deposit = paxCount * 25000;
   y = totalsBlock(page, font, fontB, 40, y, 515, [
-    ...(discountAmount > 0 ? [{ label: "Réduction", value: `-${fmtMad(discountAmount)}` }] : []),
+    ...(adjustmentSummary.supplementsTotal > 0 ? [{ label: "Suppléments", value: `+${fmtMad(adjustmentSummary.supplementsTotal)}` }] : []),
+    ...(adjustmentSummary.discountsTotal > 0 ? [{ label: "Réductions", value: `-${fmtMad(adjustmentSummary.discountsTotal)}` }] : []),
     { label: "Total HT", value: fmtMad(total) },
     { label: "Total TTC", value: fmtMad(total), bold: true },
     { label: `Acompte demandé (25 000 MAD × ${paxCount} pers.)`, value: fmtMad(deposit), accent: true },
@@ -335,6 +366,7 @@ export type ReceiptData = {
   payment: { amount_mad: number; method?: string | null; reference?: string | null; paid_at?: string | null };
   number: string;
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
+  quote_adjustments?: QuoteAdjustment[] | null;
   agency?: Partial<AgencySettings> | null;
 };
 
@@ -369,13 +401,19 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
 
   y -= Math.max(clientLines.length, tripLines.length) * 13 + 50;
 
-  const total = Number(b.total_amount_mad || 0);
+  const baseTotal = Number(b.total_amount_mad || 0);
+  const quoteAdjustments = normalizeQuoteAdjustments(d.quote_adjustments).length > 0
+    ? normalizeQuoteAdjustments(d.quote_adjustments)
+    : quoteAdjustmentsFromBooking(b);
+  const visibleAdjustments = quoteAdjustments.filter((adjustment) => adjustment.visible_on_quote !== false);
+  const adjustmentSummary = summarizeQuoteAdjustments(visibleAdjustments, baseTotal);
+  const total = adjustmentSummary.finalTotal;
   const paid = Number(b.paid_amount_mad || 0);
   const remaining = Math.max(0, total - paid);
   const pax = (b.num_adults || 0) + (b.num_children || 0);
   const extras = d.extras ?? [];
   const extrasTotal = extras.reduce((s, e) => s + e.qty * Number(e.unit_price_mad || 0), 0);
-  const peopleTotal = Math.max(0, total - extrasTotal);
+  const peopleTotal = Math.max(0, baseTotal - extrasTotal);
   const perPax = pax > 0 ? peopleTotal / pax : peopleTotal;
 
   // Detail of the booking (what the client is paying for)
@@ -393,6 +431,16 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
       unit: fmtMad(Number(e.unit_price_mad)),
       total: fmtMad(e.qty * Number(e.unit_price_mad)),
     })),
+    ...visibleAdjustments.map((adjustment) => {
+      const value = adjustmentAmount(adjustment, baseTotal);
+      const sign = adjustment.type === "discount" ? "-" : "+";
+      return {
+        label: adjustment.label,
+        qty: adjustment.calculation_type === "percentage" ? `${Number(adjustment.amount || 0)}%` : "1",
+        unit: `${sign}${fmtMad(value)}`,
+        total: `${sign}${fmtMad(value)}`,
+      };
+    }),
   ]);
 
   // Detail of this payment
@@ -408,6 +456,8 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   ]);
 
   y = totalsBlock(page, font, fontB, 40, y, 515, [
+    ...(adjustmentSummary.supplementsTotal > 0 ? [{ label: "Suppléments devis", value: `+${fmtMad(adjustmentSummary.supplementsTotal)}` }] : []),
+    ...(adjustmentSummary.discountsTotal > 0 ? [{ label: "Réductions devis", value: `-${fmtMad(adjustmentSummary.discountsTotal)}` }] : []),
     { label: "Total réservation", value: fmtMad(total) },
     { label: "Montant de ce paiement", value: fmtMad(Number(d.payment.amount_mad)), accent: true },
     { label: "Montant payé (cumul)", value: fmtMad(paid), bold: true },

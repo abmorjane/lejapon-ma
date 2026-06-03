@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Building2, KeyRound, Loader2, Save } from "lucide-react";
+import { Building2, KeyRound, Loader2, Save, Upload, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ const Field = ({ label, value }: { label: string; value: unknown }) => (
 
 export default function AgencyProfilePage() {
   const { user } = useAuth();
-  const { organization, currentMembership } = useAgencyContext();
+  const { organization, currentMembership, reload } = useAgencyContext();
   const [profile, setProfile] = useState<AgencyProfile | null>(null);
   const [account, setAccount] = useState({
     full_name: "",
@@ -56,6 +56,7 @@ export default function AgencyProfilePage() {
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingAccount, setSavingAccount] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [memberProfileRow, setMemberProfileRow] = useState<Record<string, any> | null>(null);
 
@@ -187,6 +188,46 @@ export default function AgencyProfilePage() {
     toast.success("Mot de passe mis à jour.");
   };
 
+  const agencyLogoUrl = typeof organization?.metadata?.agency_logo_url === "string"
+    ? organization.metadata.agency_logo_url
+    : "";
+
+  const saveAgencyLogoUrl = async (logoUrl: string | null) => {
+    if (!organization) return;
+    const metadata = {
+      ...(organization.metadata ?? {}),
+      agency_logo_url: logoUrl,
+    };
+    const { error } = await db.from("organizations").update({ metadata }).eq("id", organization.id);
+    if (error) throw error;
+    await reload();
+  };
+
+  const uploadAgencyLogo = async (file: File | undefined) => {
+    if (!file || !organization) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Choisissez une image JPG, PNG ou WebP.");
+      return;
+    }
+    setUploadingLogo(true);
+    try {
+      const safeName = file.name.replace(/[^\w.-]+/g, "_");
+      const path = `${organization.id}/branding/${Date.now()}-${safeName}`;
+      const { error } = await supabase.storage.from("media").upload(path, file, {
+        contentType: file.type,
+        upsert: true,
+      });
+      if (error) throw error;
+      const { data } = supabase.storage.from("media").getPublicUrl(path);
+      await saveAgencyLogoUrl(data.publicUrl);
+      toast.success("Logo agence enregistré.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Upload impossible. Vérifiez le bucket media.");
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -198,15 +239,45 @@ export default function AgencyProfilePage() {
       </div>
 
       <Card className="p-5">
-        <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-accent/10">
-            <Building2 className="h-6 w-6 text-accent" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-4">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-accent/10">
+              {agencyLogoUrl ? (
+                <img src={agencyLogoUrl} alt="Logo agence" className="h-full w-full object-contain p-1" />
+              ) : (
+                <Building2 className="h-6 w-6 text-accent" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-display text-2xl">{organization?.display_name}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Pour modifier les informations légales, contactez Moroccan Express Travel & Events / LeJapon.ma.
+              </p>
+            </div>
           </div>
           <div className="min-w-0">
-            <h2 className="font-display text-2xl">{organization?.display_name}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Pour modifier ces informations, contactez Moroccan Express Travel & Events / LeJapon.ma.
-            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" disabled={uploadingLogo}>
+                <label className="inline-flex cursor-pointer items-center gap-2">
+                  {uploadingLogo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  Uploader logo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => {
+                      void uploadAgencyLogo(event.target.files?.[0]);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              </Button>
+              {agencyLogoUrl && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => saveAgencyLogoUrl(null).then(() => toast.success("Logo retiré.")).catch((error) => toast.error(error.message))}>
+                  <X className="h-4 w-4" /> Retirer
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </Card>

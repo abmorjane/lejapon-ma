@@ -16,6 +16,7 @@ export type AgencyOrganization = {
   city: string | null;
   postal_code: string | null;
   country: string | null;
+  metadata?: Record<string, any> | null;
 };
 
 export type AgencyMembership = {

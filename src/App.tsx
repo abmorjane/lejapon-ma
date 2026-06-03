@@ -133,6 +133,8 @@ const AppRoutes = () => {
         <Route index element={<RequireActiveAgencyMember><AgencyDashboard /></RequireActiveAgencyMember>} />
         <Route path="bookings" element={<RequireActiveAgencyMember><AgencyBookings /></RequireActiveAgencyMember>} />
         <Route path="bookings/:id" element={<RequireActiveAgencyMember><AgencyBookingDetail /></RequireActiveAgencyMember>} />
+        <Route path="reservations" element={<RequireActiveAgencyMember><AgencyBookings /></RequireActiveAgencyMember>} />
+        <Route path="reservations/:id" element={<RequireActiveAgencyMember><AgencyBookingDetail /></RequireActiveAgencyMember>} />
         <Route path="trips" element={<RequireActiveAgencyMember><AgencyTripsLibrary /></RequireActiveAgencyMember>} />
         <Route path="programmes" element={<RequireActiveAgencyMember><AgencyProgrammesLibrary /></RequireActiveAgencyMember>} />
         <Route path="hotels" element={<RequireActiveAgencyMember><AgencyHotels /></RequireActiveAgencyMember>} />

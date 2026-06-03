@@ -5,6 +5,8 @@ export type Role =
   | "super_admin"
   | "admin"
   | "manager"
+  | "sales"
+  | "sales_user"
   | "agent"
   | "content_manager"
   | "supplier"
@@ -14,6 +16,8 @@ export const ROLE_LABELS: Record<Role, string> = {
   super_admin: "Super Admin",
   admin: "Admin",
   manager: "Sales Manager",
+  sales: "Commercial",
+  sales_user: "Commercial",
   agent: "Agent",
   content_manager: "Content Manager",
   supplier: "Fournisseur Japon",
@@ -24,6 +28,8 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   super_admin: "Accès complet — gère utilisateurs et rôles",
   admin: "Gère voyages et réservations",
   manager: "Accède aux leads et met à jour les clients",
+  sales: "Accède aux leads et met à jour les clients",
+  sales_user: "Accède aux leads et met à jour les clients",
   agent: "Suivi opérationnel des réservations",
   content_manager: "Gère le blog et les pages",
   supplier: "Saisie tarifs & logistique (Japon)",
@@ -32,10 +38,10 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
 
 // Permissions per module. A user has access if they hold ANY of the listed roles.
 export const MODULE_PERMISSIONS = {
-  dashboard: ["super_admin", "admin", "manager", "agent", "content_manager", "supplier"],
+  dashboard: ["super_admin", "admin", "manager", "sales", "sales_user", "agent", "content_manager", "supplier"],
   trips: ["super_admin", "admin", "manager", "supplier"],
-  bookings: ["super_admin", "admin", "manager", "agent"],
-  clients: ["super_admin", "admin", "manager", "agent"],
+  bookings: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],
+  clients: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],
   partner_requests: ["super_admin", "admin", "manager"],
   extras: ["super_admin", "admin", "supplier"],
   suppliers: ["super_admin", "admin"],
@@ -49,7 +55,7 @@ export const MODULE_PERMISSIONS = {
   email_settings: ["super_admin"],
   email_logs: ["super_admin", "admin"],
   backups: ["super_admin"],
-  visa: ["super_admin", "admin", "manager", "agent"],
+  visa: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],
   visa_settings: ["super_admin"],
   visa_checklists: ["super_admin", "admin"],
   programmes: ["super_admin", "admin", "content_manager"],

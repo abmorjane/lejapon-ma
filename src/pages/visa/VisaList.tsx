@@ -79,7 +79,7 @@ export default function VisaList() {
       });
       if (lookup.status === "matched") {
         prefillPatch = lookup.patch;
-        prefillMessage = `Passeport reconnu. Formulaire prérempli depuis: ${lookup.sourceLabel}.`;
+        prefillMessage = "Informations préremplies depuis votre dossier passeport. Merci de vérifier avant validation.";
       } else if (lookup.status === "multiple") {
         setBusy(false);
         toast.error(lookup.message);
@@ -93,7 +93,7 @@ export default function VisaList() {
       .from("visa_applications")
       .insert({
         user_id: user.id,
-        category: "tourism",
+        category: null,
         passport_type: "ordinary",
         purpose_of_visit: "Tourisme",
         date_of_application: todayISO(),
@@ -107,7 +107,7 @@ export default function VisaList() {
     setBusy(false);
     if (error) return toast.error(error.message);
     if (prefillMessage) {
-      if (prefillMessage.startsWith("Passeport reconnu")) toast.success(prefillMessage);
+      if (prefillMessage.startsWith("Informations préremplies")) toast.success(prefillMessage);
       else toast.info(prefillMessage);
     }
     nav(`${visaBase}/${data!.id}`);

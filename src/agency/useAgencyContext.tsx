@@ -25,7 +25,7 @@ type AgencyContextValue = {
 const AgencyContext = createContext<AgencyContextValue | null>(null);
 
 const MEMBER_COLUMNS = "id,organization_id,user_id,role,status,created_at";
-const ORG_COLUMNS = "id,type,status,display_name,legal_name,email,phone,website,address_line_1,address_line_2,city,postal_code,country";
+const ORG_COLUMNS = "id,type,status,display_name,legal_name,email,phone,website,address_line_1,address_line_2,city,postal_code,country,metadata";
 
 export function AgencyProvider({ children }: { children: ReactNode }) {
   const { user, loading: authLoading } = useAuth();

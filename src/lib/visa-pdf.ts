@@ -1,10 +1,20 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import {
+  cleanVisaText,
+  formatPreviousJapanStayForDisplay,
+  formatVisaDate,
+  isRetiredVisaCategory,
+  parsePreviousJapanStay,
+  parseVisaDateParts,
+  PDF_NOT_APPLICABLE,
+} from "@/lib/visa-format";
 
 /** Pen-blue ink color used to mimic a hand-filled form. */
 const PEN_BLUE = rgb(0.07, 0.13, 0.55);
 
 export type VisaApplicationData = {
   // Identity
+  category?: string | null;
   surname?: string | null;
   given_names?: string | null;
   other_names?: string | null;
@@ -87,31 +97,22 @@ export type VisaSettingsData = {
   inviter_nationality?: string | null;
 };
 
-const fmtDate = (s?: string | null) => {
-  if (!s) return "";
-  // input expected YYYY-MM-DD or ISO; output DD/MM/YYYY
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return s;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
-};
+const fmtDate = (s?: string | null) => formatVisaDate(s, cleanVisaText(s));
 
 /** Split a Date into D/M/YYYY chunks for the day/month/year cells of the form. */
 const splitDate = (s?: string | null): { d: string; m: string; y: string } => {
-  if (!s) return { d: "", m: "", y: "" };
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return { d: "", m: "", y: "" };
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return { d: pad(d.getDate()), m: pad(d.getMonth() + 1), y: String(d.getFullYear()) };
+  return parseVisaDateParts(s) ?? { d: "", m: "", y: "" };
 };
 
 /** Required-field validation. Returns a list of missing/invalid field labels. */
 export function validateVisaApplication(app: VisaApplicationData): string[] {
   const missing: string[] = [];
+  const isRetired = isRetiredVisaCategory((app as any).category);
+  const previousStay = parsePreviousJapanStay(app.previous_stays);
   const need = (v: unknown, label: string) => {
     if (v === undefined || v === null || (typeof v === "string" && !v.trim())) missing.push(label);
   };
-  need((app as any).category, "Type de visa");
+  need((app as any).category, "Situation professionnelle");
   need(app.surname, "Nom (Surname)");
   need(app.given_names, "Prénoms (Given names)");
   need(app.date_of_application, "Date de la demande");
@@ -136,9 +137,13 @@ export function validateVisaApplication(app: VisaApplicationData): string[] {
   need(app.residential_mobile, "Mobile");
   need(app.residential_email, "Email");
   need(app.profession, "Profession");
-  need(app.employer_name, "Nom de l'employeur ou de l'école");
-  need(app.employer_tel, "Téléphone de l'employeur ou de l'école");
-  need(app.employer_address, "Adresse de l'employeur ou de l'école");
+  if (!previousStay.hasPrevious) need(app.previous_stays, "Séjours précédents au Japon");
+  if (previousStay.hasPrevious === "yes") need(previousStay.lastStayDate, "Date du dernier séjour au Japon");
+  if (!isRetired) {
+    need(app.employer_name, "Nom de l'employeur ou de l'école");
+    need(app.employer_tel, "Téléphone de l'employeur ou de l'école");
+    need(app.employer_address, "Adresse de l'employeur ou de l'école");
+  }
   return missing;
 }
 
@@ -171,8 +176,8 @@ export async function generateVisaPdf(
     size = 9,
     opts: { bold?: boolean; maxWidth?: number; minSize?: number } = {}
   ) => {
-    if (text === null || text === undefined || text === "") return;
-    const str = String(text);
+    const str = cleanVisaText(text);
+    if (!str) return;
     const font = opts.bold ? helvBold : helv;
     let fontSize = size;
     if (opts.maxWidth) {
@@ -194,8 +199,9 @@ export async function generateVisaPdf(
     size = 9,
     lineGap = 11
   ) => {
-    if (!text) return;
-    const lines = wrapToWidth(String(text), maxWidth, helv, size);
+    const str = cleanVisaText(text);
+    if (!str) return;
+    const lines = wrapToWidth(str, maxWidth, helv, size);
     lines.slice(0, 2).forEach((ln, i) => {
       page.drawText(ln, { x, y: y - i * lineGap, size, font: helv, color: PEN_BLUE });
     });
@@ -225,6 +231,10 @@ export async function generateVisaPdf(
   // ===================== PAGE 1 =====================
   // Text is offset ~3pt above the printed underline so it sits ON TOP of the line, not over it.
   const Y_OFFSET = 3;
+  const isRetiredApplicant = isRetiredVisaCategory(application.category);
+  const employerName = isRetiredApplicant ? PDF_NOT_APPLICABLE : application.employer_name;
+  const employerTel = isRetiredApplicant ? PDF_NOT_APPLICABLE : application.employer_tel;
+  const employerAddress = isRetiredApplicant ? PDF_NOT_APPLICABLE : application.employer_address;
 
   // Identity
   draw(p1, application.surname?.toUpperCase(),       210, 621.3 + Y_OFFSET, 9, { maxWidth: 360 });
@@ -272,7 +282,7 @@ export async function generateVisaPdf(
   draw(p1, application.hotel_name,    127, 290.6 + Y_OFFSET, 9, { maxWidth: 280 });
   draw(p1, application.hotel_tel,     440, 290.6 + Y_OFFSET, 9, { maxWidth: 120 });
   drawWrapped(p1, application.hotel_address, 130, 258.7 + Y_OFFSET, 430, 9);
-  drawWrapped(p1, application.previous_stays, 275, 239.0 + Y_OFFSET, 285, 9);
+  drawWrapped(p1, formatPreviousJapanStayForDisplay(application.previous_stays), 275, 239.0 + Y_OFFSET, 285, 9);
 
   // Residence
   drawWrapped(p1, application.residential_address, 130, 187.9 + Y_OFFSET, 430, 9);
@@ -283,9 +293,9 @@ export async function generateVisaPdf(
   draw(p1, application.profession, 280, 129.8 + Y_OFFSET, 9, { maxWidth: 280 });
 
   // Employer
-  draw(p1, application.employer_name,    230, 109.9 + Y_OFFSET, 9, { maxWidth: 175 });
-  draw(p1, application.employer_tel,     440, 87.7  + Y_OFFSET, 9, { maxWidth: 120 });
-  drawWrapped(p1, application.employer_address, 130, 87.7 + Y_OFFSET, 280, 9);
+  draw(p1, employerName,    230, 109.9 + Y_OFFSET, 9, { maxWidth: 175 });
+  draw(p1, employerTel,     440, 87.7  + Y_OFFSET, 9, { maxWidth: 120 });
+  drawWrapped(p1, employerAddress, 130, 87.7 + Y_OFFSET, 280, 9);
 
   // ===================== PAGE 2 =====================
   draw(p2, application.partner_profession, 290, 792.0 + Y_OFFSET, 9, { maxWidth: 270 });
@@ -352,19 +362,21 @@ function wrapToWidth(
   font: { widthOfTextAtSize: (s: string, size: number) => number },
   size: number
 ): string[] {
-  const words = text.replace(/\s+/g, " ").trim().split(" ");
   const out: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    const candidate = cur ? `${cur} ${w}` : w;
-    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
-      cur = candidate;
-    } else {
-      if (cur) out.push(cur);
-      cur = w;
+  for (const paragraph of text.split(/\r?\n/)) {
+    const words = paragraph.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+    let cur = "";
+    for (const w of words) {
+      const candidate = cur ? `${cur} ${w}` : w;
+      if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+        cur = candidate;
+      } else {
+        if (cur) out.push(cur);
+        cur = w;
+      }
     }
+    if (cur) out.push(cur);
   }
-  if (cur) out.push(cur);
   return out;
 }
 

@@ -6,6 +6,9 @@ import { Card } from "@/components/ui/card";
 import { Img } from "@/components/ui/Img";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtDate, fmtMAD } from "@/lib/format";
+import { downloadBytes } from "@/lib/booking-pdfs";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { toast } from "sonner";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
@@ -60,6 +63,62 @@ const formatTripDates = (trip: AgencyTrip) => {
   if (trip.start_date && trip.end_date) return `${fmtDate(trip.start_date)} → ${fmtDate(trip.end_date)}`;
   if (trip.start_date || trip.end_date) return fmtDate(trip.start_date ?? trip.end_date);
   return trip.season || "—";
+};
+
+const wrapText = (text: string, maxChars = 82) => {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  words.forEach((word) => {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+};
+
+const generateTripPdf = async (trip: AgencyTrip) => {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const page = pdfDoc.addPage([595.28, 841.89]);
+  const margin = 48;
+  let y = 790;
+  const draw = (text: string, size = 10, fontFace = font, color = rgb(0.12, 0.12, 0.14)) => {
+    page.drawText(text, { x: margin, y, size, font: fontFace, color });
+    y -= size + 7;
+  };
+
+  draw("LeJapon.ma", 12, bold, rgb(0.9, 0.33, 0.08));
+  draw(trip.title || "Voyage", 22, bold);
+  if (trip.label || trip.season) draw(trip.label || trip.season || "", 11, bold);
+  y -= 8;
+  draw(`Destination: ${(trip.destinations?.length ? trip.destinations.join(", ") : trip.destination) || "À confirmer"}`);
+  draw(`Dates: ${formatTripDates(trip)}`);
+  draw(`Durée: ${trip.duration_days ? `${trip.duration_days} jours` : "À confirmer"}`);
+  draw(`Prix: ${trip.base_price_mad === null || trip.base_price_mad === undefined ? "Prix non renseigné" : fmtMAD(trip.base_price_mad)}`);
+  draw(`Places disponibles: ${trip.slots_left ?? "À confirmer"}`);
+  y -= 12;
+  draw("Points forts", 13, bold);
+  const highlights = (trip.highlights ?? []).filter(Boolean);
+  if (highlights.length === 0) {
+    draw("Programme détaillé disponible sur demande.", 10);
+  } else {
+    highlights.slice(0, 12).forEach((item) => {
+      wrapText(`- ${item}`, 92).forEach((line) => draw(line, 9));
+    });
+  }
+  y -= 10;
+  draw("Informations commerciales", 13, bold);
+  wrapText("Cette fiche est destinée aux partenaires agences. Les conditions, disponibilités et prestations exactes restent soumises à validation par LeJapon.ma.", 92)
+    .forEach((line) => draw(line, 9));
+  const bytes = await pdfDoc.save();
+  downloadBytes(bytes, `voyage-${trip.slug || trip.id.slice(0, 8)}.pdf`);
 };
 
 export default function AgencyTripsLibrary() {
@@ -127,7 +186,7 @@ export default function AgencyTripsLibrary() {
       ) : (
         <div className="grid gap-5 xl:grid-cols-2">
           {visibleTrips.map((trip) => {
-            const programmePdf = trip.programmes?.pdf_url || trip.program_link;
+            const programmePdf = trip.programmes?.pdf_url;
             return (
               <Card key={trip.id} className={`overflow-hidden ${highlightedTripId === trip.id ? "ring-2 ring-accent" : ""}`}>
                 <div className="grid gap-0 md:grid-cols-[240px_minmax(0,1fr)]">
@@ -163,20 +222,22 @@ export default function AgencyTripsLibrary() {
                           </Link>
                         </Button>
                       )}
-                      {trip.program_link && (
-                        <Button asChild size="sm">
-                          <a href={trip.program_link} target="_blank" rel="noreferrer">
-                            Télécharger PDF voyage <Download className="h-3.5 w-3.5" />
-                          </a>
-                        </Button>
-                      )}
-                      {programmePdf && (
-                        <Button asChild variant="outline" size="sm">
-                          <a href={programmePdf} target="_blank" rel="noreferrer">
-                            Télécharger PDF programme <Download className="h-3.5 w-3.5" />
-                          </a>
-                        </Button>
-                      )}
+                      <Button size="sm" onClick={() => generateTripPdf(trip)}>
+                        Télécharger PDF voyage <Download className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (!programmePdf) {
+                            toast.info("Aucun PDF programme n'est attaché à ce voyage.");
+                            return;
+                          }
+                          window.open(programmePdf, "_blank", "noopener,noreferrer");
+                        }}
+                      >
+                        Télécharger PDF programme <Download className="h-3.5 w-3.5" />
+                      </Button>
                       {trip.programme_id && (
                         <Button asChild variant="outline" size="sm">
                           <Link to={`/agency/programmes?programme=${trip.programme_id}`}>

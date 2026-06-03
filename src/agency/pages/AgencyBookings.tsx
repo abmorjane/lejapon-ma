@@ -541,7 +541,7 @@ export default function AgencyBookings() {
     };
 
     setRequestSaving(true);
-    const { error } = await db.from("agency_booking_requests").insert({
+    const { data: createdRequest, error } = await db.from("agency_booking_requests").insert({
       organization_id: organization.id,
       requested_by: user.id,
       client_full_name: requestForm.client_full_name.trim(),
@@ -553,7 +553,7 @@ export default function AgencyBookings() {
       message: requestForm.special_requests.trim() || null,
       metadata,
       status: "new",
-    });
+    }).select("id").maybeSingle();
 
     if (error) {
       toast.error(error.message ?? "Impossible d'envoyer la demande.");
@@ -562,6 +562,13 @@ export default function AgencyBookings() {
     }
 
     toast.success("Demande envoyée.");
+    if (createdRequest?.id) {
+      void supabase.functions.invoke("send-admin-notification", {
+        body: { type: "agency_booking", payload: { request_id: createdRequest.id } },
+      }).then(({ data, error }) => {
+        if (error || data?.ok === false) console.warn("agency booking notification failed", data ?? error);
+      });
+    }
     setRequestOpen(false);
     setRequestForm(emptyRequestForm());
     await loadRequests();

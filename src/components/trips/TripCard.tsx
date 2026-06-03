@@ -45,14 +45,17 @@ function formatDates(s?: string | null, e?: string | null) {
 }
 
 export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardData; index?: number; fallbackImage?: string }) {
-  const href = trip.program_link || `/programme?trip=${trip.slug}`;
   const bookingHref = `/reserver?trip=${encodeURIComponent(trip.slug)}`;
+  const programmeHref = trip.program_link || `/programme?trip=${trip.slug}`;
   const cover = trip.cover_url || fallbackImage;
   const dests = (trip.destinations && trip.destinations.length > 0 ? trip.destinations : trip.highlights) ?? [];
   const badgeKey = (trip.badge_type || "").toLowerCase();
   const badgeText = trip.badge_text || badgeLabels[badgeKey];
   const showBadge = !!badgeKey && !!badgeText;
   const currency = trip.currency || "MAD";
+  const hasPromo = typeof trip.promo_percent === "number" && trip.promo_percent > 0 && trip.promo_percent < 100;
+  const originalPrice = hasPromo ? Math.round(Number(trip.base_price_mad || 0) / (1 - Number(trip.promo_percent) / 100)) : null;
+  const priceLabel = hasPromo ? "Prix promotionnel" : "À partir de";
 
   return (
     <motion.div
@@ -64,7 +67,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
     >
       <div className="group flex flex-col h-full bg-background rounded-[20px] overflow-hidden border border-border shadow-soft hover:shadow-2xl hover:-translate-y-1 transition-all duration-500">
         {/* IMAGE */}
-        <Link to={href} className="relative aspect-[4/5] overflow-hidden block">
+        <Link to={bookingHref} className="relative aspect-[4/5] overflow-hidden block" aria-label={`Réserver ${trip.title}`}>
           {cover ? (
             <Img
               src={cover}
@@ -103,7 +106,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
           {typeof trip.promo_percent === "number" && trip.promo_percent > 0 && (
             <div className="absolute top-4 right-4">
               <span className="inline-flex items-center bg-accent text-accent-foreground text-xs font-bold px-3 py-1.5 rounded-full shadow-cta">
-                -{trip.promo_percent}%
+                Offre spéciale
               </span>
             </div>
           )}
@@ -136,7 +139,12 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
 
           <div className="flex items-end justify-between mt-auto pt-2">
             <div>
-              <p className="text-xs text-muted-foreground">À partir de</p>
+              <p className="text-xs text-muted-foreground">{priceLabel}</p>
+              {originalPrice && originalPrice > trip.base_price_mad && (
+                <p className="mt-1 text-sm font-semibold text-muted-foreground line-through">
+                  {new Intl.NumberFormat("fr-FR").format(originalPrice)} {currency}
+                </p>
+              )}
               <p className="font-display text-3xl font-bold text-accent leading-none mt-1">
                 {new Intl.NumberFormat("fr-FR").format(trip.base_price_mad)}{" "}
                 <span className="text-sm font-semibold text-accent/80">{currency}</span>
@@ -149,6 +157,20 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
             >
               <ArrowRight className="w-4 h-4" />
             </Link>
+          </div>
+          <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+            <Link to={bookingHref} className="btn-primary !px-4 !py-2 text-sm">
+              Réserver
+            </Link>
+            {programmeHref.startsWith("http") ? (
+              <a href={programmeHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !px-4 !py-2 text-sm">
+                Voir le programme
+              </a>
+            ) : (
+              <Link to={programmeHref} className="btn-ghost !px-4 !py-2 text-sm">
+                Voir le programme
+              </Link>
+            )}
           </div>
         </div>
       </div>

@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StatusBadge } from "../components/StatusBadge";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
@@ -21,6 +23,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, useReducedMotion } from "framer-motion";
 import { fetchAgencySettings, type AgencySettings } from "@/lib/agency-settings";
 import { PAYMENT_METHOD_OPTIONS, normalisePaymentMethod, paymentMethodLabel } from "@/lib/payment-methods";
+import {
+  adjustmentAmount,
+  draftFromQuoteAdjustment,
+  emptyQuoteAdjustmentDraft,
+  makeQuoteAdjustment,
+  quoteAdjustmentsFromBooking,
+  summarizeQuoteAdjustments,
+  type QuoteAdjustment,
+  type QuoteAdjustmentDraft,
+} from "@/lib/quote-adjustments";
 
 export default function BookingDetail() {
   const { id } = useParams();
@@ -31,7 +43,10 @@ export default function BookingDetail() {
   const [extras, setExtras] = useState<any[]>([]);
   const [docs, setDocs] = useState<any[]>([]);
   const [newPay, setNewPay] = useState({ amount_mad: "", method: "bank_transfer", status: "received", reference: "" });
-  const [quoteDiscount, setQuoteDiscount] = useState({ label: "", amount: "", type: "fixed_amount", reason: "" });
+  const [quoteAdjustments, setQuoteAdjustments] = useState<QuoteAdjustment[]>([]);
+  const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
+  const [editingAdjustmentId, setEditingAdjustmentId] = useState<string | null>(null);
+  const [adjustmentDraft, setAdjustmentDraft] = useState<QuoteAdjustmentDraft>(emptyQuoteAdjustmentDraft);
   const [preview, setPreview] = useState<null | { kind: "quote" | "receipt"; payment?: any }>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -56,13 +71,7 @@ export default function BookingDetail() {
       return;
     }
     setB(data);
-    const existingDiscount = (data as any)?.quote_discount ?? {};
-    setQuoteDiscount({
-      label: existingDiscount.label ?? "",
-      amount: existingDiscount.amount === undefined || existingDiscount.amount === null ? "" : String(existingDiscount.amount),
-      type: existingDiscount.type ?? "fixed_amount",
-      reason: existingDiscount.reason ?? "",
-    });
+    setQuoteAdjustments(quoteAdjustmentsFromBooking(data));
     setSelectedAgencyOrgId(data?.agency_organization_id ?? "");
     setSelectedAgencyUserId(data?.assigned_to ?? "");
     setAssignmentNotes(data?.agency_attribution_notes ?? "");
@@ -143,16 +152,11 @@ export default function BookingDetail() {
       booking: b,
       trip: b?.trips ?? null,
       extras: extras as any,
-      discount: quoteDiscount.amount ? {
-        label: quoteDiscount.label,
-        amount: Number(quoteDiscount.amount || 0),
-        type: quoteDiscount.type,
-        reason: quoteDiscount.reason,
-      } : null,
+      quote_adjustments: quoteAdjustments,
       agency,
       number: `DEV-${b?.reference ?? ""}-${String(docs.filter((x) => x.kind === "quote").length + 1).padStart(2, "0")}`,
     }),
-    [b, extras, docs, agency, quoteDiscount]
+    [b, extras, docs, agency, quoteAdjustments]
   );
 
   const buildReceipt = useCallback(
@@ -161,10 +165,11 @@ export default function BookingDetail() {
       trip: b?.trips ?? null,
       payment: preview?.payment ?? payments[0] ?? { amount_mad: 0 },
       extras: extras as any,
+      quote_adjustments: quoteAdjustments,
       agency,
       number: `REC-${b?.reference ?? ""}-${String(docs.filter((x) => x.kind === "receipt").length + 1).padStart(2, "0")}`,
     }),
-    [b, payments, preview, docs, extras, agency]
+    [b, payments, preview, docs, extras, agency, quoteAdjustments]
   );
 
   if (!b) return <p className="text-muted-foreground">Chargement…</p>;
@@ -305,14 +310,9 @@ export default function BookingDetail() {
             extras: extras as any,
             agency,
             number,
-            discount: quoteDiscount.amount ? {
-              label: quoteDiscount.label,
-              amount: Number(quoteDiscount.amount || 0),
-              type: quoteDiscount.type,
-              reason: quoteDiscount.reason,
-            } : null,
+            quote_adjustments: quoteAdjustments,
           })
-        : await generateReceiptPdf({ booking: b, trip: b.trips, payment: payment ?? payments[0] ?? { amount_mad: 0 }, extras: extras as any, agency, number });
+        : await generateReceiptPdf({ booking: b, trip: b.trips, payment: payment ?? payments[0] ?? { amount_mad: 0 }, extras: extras as any, quote_adjustments: quoteAdjustments, agency, number });
       const path = `${b.id}/${number}.pdf`;
       const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       const { error: upErr } = await supabase.storage.from("booking-docs").upload(path, new Blob([ab], { type: "application/pdf" }), { upsert: true, contentType: "application/pdf" });
@@ -332,22 +332,59 @@ export default function BookingDetail() {
     }
   };
 
-  const saveQuoteDiscount = async () => {
-    const amount = Number(quoteDiscount.amount || 0);
-    if (amount > 0 && !quoteDiscount.label.trim()) {
-      toast.error("Le libellé est obligatoire si un montant est renseigné.");
+  const saveQuoteAdjustments = async (nextAdjustments: QuoteAdjustment[]) => {
+    const cleaned = nextAdjustments.map((adjustment) => ({
+      ...adjustment,
+      amount: Number(adjustment.amount || 0),
+      visible_on_quote: adjustment.visible_on_quote !== false,
+    }));
+    const { error } = await (supabase as any)
+      .from("bookings")
+      .update({ quote_adjustments: cleaned })
+      .eq("id", b.id);
+    if (error) {
+      const missingColumn = error.code === "42703" || error.code === "PGRST204" || /quote_adjustments|schema cache|column/i.test(error.message ?? "");
+      if (missingColumn) {
+        toast.error("Colonne quote_adjustments manquante. Migration SQL requise pour enregistrer plusieurs lignes devis.");
+      } else {
+        toast.error(error.message);
+      }
+      return false;
+    }
+    setQuoteAdjustments(cleaned);
+    toast.success("Ajustements devis enregistrés");
+    load();
+    return true;
+  };
+
+  const openAdjustmentDialog = (adjustment?: QuoteAdjustment) => {
+    setEditingAdjustmentId(adjustment?.id ?? null);
+    setAdjustmentDraft(adjustment ? draftFromQuoteAdjustment(adjustment) : emptyQuoteAdjustmentDraft());
+    setAdjustmentDialogOpen(true);
+  };
+
+  const saveAdjustmentDraft = async () => {
+    const amount = Number(adjustmentDraft.amount || 0);
+    if (!adjustmentDraft.label.trim()) {
+      toast.error("Le libellé est obligatoire.");
       return;
     }
-    const payload = amount > 0 ? {
-      label: quoteDiscount.label.trim(),
-      amount,
-      type: quoteDiscount.type,
-      reason: quoteDiscount.reason.trim() || null,
-    } : null;
-    const { error } = await (supabase as any).from("bookings").update({ quote_discount: payload }).eq("id", b.id);
-    if (error) return toast.error(error.message);
-    toast.success("Ligne devis enregistrée");
-    load();
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Le montant doit être supérieur à 0.");
+      return;
+    }
+    const existing = quoteAdjustments.find((adjustment) => adjustment.id === editingAdjustmentId) ?? null;
+    const nextAdjustment = makeQuoteAdjustment(adjustmentDraft, user?.id, "admin", existing);
+    const nextAdjustments = existing
+      ? quoteAdjustments.map((adjustment) => adjustment.id === existing.id ? nextAdjustment : adjustment)
+      : [...quoteAdjustments, nextAdjustment];
+    const saved = await saveQuoteAdjustments(nextAdjustments);
+    if (saved) setAdjustmentDialogOpen(false);
+  };
+
+  const deleteAdjustment = async (adjustment: QuoteAdjustment) => {
+    if (!confirm(`Supprimer la ligne "${adjustment.label}" ?`)) return;
+    await saveQuoteAdjustments(quoteAdjustments.filter((item) => item.id !== adjustment.id));
   };
 
   const openDoc = async (doc: any) => {
@@ -357,16 +394,14 @@ export default function BookingDetail() {
   };
 
   const totalTravelers = Number(b.num_adults || 0) + Number(b.num_children || 0);
-  const remainingAmount = Math.max(0, Number(b.total_amount_mad || 0) - Number(b.paid_amount_mad || 0));
-  const paidPercent = Number(b.total_amount_mad || 0) > 0
-    ? Math.min(100, Math.round((Number(b.paid_amount_mad || 0) / Number(b.total_amount_mad || 0)) * 100))
+  const quoteSummary = summarizeQuoteAdjustments(quoteAdjustments, Number(b.total_amount_mad || 0));
+  const displayedQuoteTotal = quoteSummary.finalTotal;
+  const remainingAmount = Math.max(0, displayedQuoteTotal - Number(b.paid_amount_mad || 0));
+  const paidPercent = displayedQuoteTotal > 0
+    ? Math.min(100, Math.round((Number(b.paid_amount_mad || 0) / displayedQuoteTotal) * 100))
     : 0;
   const longMessage = String(b.message || "");
   const visibleMessage = !messageExpanded && longMessage.length > 150 ? `${longMessage.slice(0, 150)}…` : longMessage;
-  const quoteDiscountAmount = quoteDiscount.type === "percentage"
-    ? Math.round(Number(b.total_amount_mad || 0) * Number(quoteDiscount.amount || 0) / 100)
-    : Number(quoteDiscount.amount || 0);
-  const displayedQuoteTotal = Math.max(0, Number(b.total_amount_mad || 0) - quoteDiscountAmount);
 
   return (
     <motion.div
@@ -564,53 +599,75 @@ export default function BookingDetail() {
 
           <Card className="rounded-2xl shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="font-display text-lg">Réduction / ligne spéciale devis</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-3 p-4 pt-0 sm:p-6 sm:pt-0 md:grid-cols-4">
-              <div className="md:col-span-2">
-                <Label className="text-xs">Libellé</Label>
-                <Input
-                  value={quoteDiscount.label}
-                  onChange={(event) => setQuoteDiscount({ ...quoteDiscount, label: event.target.value })}
-                  placeholder="Réduction famille, Offre spéciale…"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Montant</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={quoteDiscount.amount}
-                  onChange={(event) => setQuoteDiscount({ ...quoteDiscount, amount: event.target.value })}
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Type</Label>
-                <Select value={quoteDiscount.type} onValueChange={(value) => setQuoteDiscount({ ...quoteDiscount, type: value })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="fixed_amount">Montant fixe</SelectItem>
-                    <SelectItem value="percentage">Pourcentage</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="md:col-span-4">
-                <Label className="text-xs">Raison / notes</Label>
-                <Textarea
-                  rows={2}
-                  value={quoteDiscount.reason}
-                  onChange={(event) => setQuoteDiscount({ ...quoteDiscount, reason: event.target.value })}
-                  placeholder="Note interne ou justification commerciale"
-                />
-              </div>
-              <div className="md:col-span-4 flex flex-col gap-3 rounded-xl bg-secondary/40 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-muted-foreground">
-                  Total devis après réduction: <strong className="text-foreground">{fmtMAD(displayedQuoteTotal)}</strong>
-                </span>
-                <Button type="button" onClick={saveQuoteDiscount} className="min-h-11">
-                  <Save className="h-4 w-4" />
-                  Enregistrer la ligne devis
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="font-display text-lg">Ajustements devis</CardTitle>
+                <Button type="button" size="sm" onClick={() => openAdjustmentDialog()} className="min-h-10">
+                  <Plus className="h-4 w-4" />
+                  Ajouter une ligne
                 </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
+              {quoteAdjustments.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+                  Aucune réduction ou supplément spécial ajouté au devis.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-border">
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead className="bg-secondary/60 text-xs text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">Type</th>
+                        <th className="px-3 py-2 text-left font-medium">Libellé</th>
+                        <th className="px-3 py-2 text-left font-medium">Calcul</th>
+                        <th className="px-3 py-2 text-right font-medium">Montant</th>
+                        <th className="px-3 py-2 text-left font-medium">Devis</th>
+                        <th className="px-3 py-2 text-right font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quoteAdjustments.map((adjustment) => {
+                        const value = adjustmentAmount(adjustment, Number(b.total_amount_mad || 0));
+                        return (
+                          <tr key={adjustment.id} className="border-t border-border">
+                            <td className="px-3 py-2">
+                              <span className={adjustment.type === "discount" ? "text-emerald-700" : "text-amber-700"}>
+                                {adjustment.type === "discount" ? "Réduction" : "Supplément"}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2">
+                              <p className="font-medium">{adjustment.label}</p>
+                              {adjustment.reason && <p className="text-xs text-muted-foreground">{adjustment.reason}</p>}
+                            </td>
+                            <td className="px-3 py-2 text-muted-foreground">
+                              {adjustment.calculation_type === "percentage" ? `${adjustment.amount}%` : "Fixe"}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium">
+                              {adjustment.type === "discount" ? "-" : "+"}{fmtMAD(value)}
+                            </td>
+                            <td className="px-3 py-2 text-muted-foreground">{adjustment.visible_on_quote === false ? "Masqué" : "Visible"}</td>
+                            <td className="px-3 py-2">
+                              <div className="flex justify-end gap-1">
+                                <Button type="button" size="sm" variant="ghost" onClick={() => openAdjustmentDialog(adjustment)} title="Modifier">
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button type="button" size="sm" variant="ghost" onClick={() => deleteAdjustment(adjustment)} title="Supprimer">
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="grid gap-2 rounded-xl bg-secondary/40 p-3 text-sm sm:grid-cols-4">
+                <div><span className="text-muted-foreground">Base</span><p className="font-semibold">{fmtMAD(b.total_amount_mad)}</p></div>
+                <div><span className="text-muted-foreground">Suppléments</span><p className="font-semibold">+{fmtMAD(quoteSummary.supplementsTotal)}</p></div>
+                <div><span className="text-muted-foreground">Réductions</span><p className="font-semibold">-{fmtMAD(quoteSummary.discountsTotal)}</p></div>
+                <div><span className="text-muted-foreground">Total devis</span><p className="font-display text-lg">{fmtMAD(displayedQuoteTotal)}</p></div>
               </div>
             </CardContent>
           </Card>
@@ -769,6 +826,84 @@ export default function BookingDetail() {
         filename={`devis-${b?.reference ?? ""}.pdf`}
         generate={buildQuote}
       />
+      <Dialog open={adjustmentDialogOpen} onOpenChange={setAdjustmentDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{editingAdjustmentId ? "Modifier une ligne devis" : "Ajouter une ligne devis"}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Type</Label>
+                <Select
+                  value={adjustmentDraft.type}
+                  onValueChange={(value) => setAdjustmentDraft((current) => ({ ...current, type: value as QuoteAdjustmentDraft["type"] }))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="discount">Réduction</SelectItem>
+                    <SelectItem value="supplement">Supplément</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Calcul</Label>
+                <Select
+                  value={adjustmentDraft.calculation_type}
+                  onValueChange={(value) => setAdjustmentDraft((current) => ({ ...current, calculation_type: value as QuoteAdjustmentDraft["calculation_type"] }))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fixed_amount">Montant fixe</SelectItem>
+                    <SelectItem value="percentage">Pourcentage</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Libellé</Label>
+              <Input
+                value={adjustmentDraft.label}
+                onChange={(event) => setAdjustmentDraft((current) => ({ ...current, label: event.target.value }))}
+                placeholder="Réduction famille, Deux sièges devant…"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Montant</Label>
+              <Input
+                type="number"
+                min={0}
+                inputMode="decimal"
+                value={adjustmentDraft.amount}
+                onChange={(event) => setAdjustmentDraft((current) => ({ ...current, amount: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Notes internes</Label>
+              <Textarea
+                rows={3}
+                value={adjustmentDraft.reason}
+                onChange={(event) => setAdjustmentDraft((current) => ({ ...current, reason: event.target.value }))}
+                placeholder="Raison commerciale, demande spéciale, contexte interne"
+              />
+            </div>
+            <label className="flex items-center gap-2 rounded-lg border border-border p-3 text-sm">
+              <Checkbox
+                checked={adjustmentDraft.visible_on_quote}
+                onCheckedChange={(checked) => setAdjustmentDraft((current) => ({ ...current, visible_on_quote: checked === true }))}
+              />
+              Visible sur le devis client
+            </label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setAdjustmentDialogOpen(false)}>Annuler</Button>
+            <Button type="button" onClick={saveAdjustmentDraft}>
+              <Save className="h-4 w-4" />
+              Enregistrer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <PdfPreviewDialog
         open={preview?.kind === "receipt"}
         onOpenChange={(v) => !v && setPreview(null)}

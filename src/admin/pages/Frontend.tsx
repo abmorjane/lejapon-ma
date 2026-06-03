@@ -175,6 +175,31 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    slug: "site:conversion-popups",
+    title: "Popups conversion / rappel",
+    shortTitle: "Popups",
+    description: "Messages de rappel affichés sur le site public. Pages: homepage, trip_pages, all_public.",
+    fields: [
+      { key: "enabled", label: "Activer les popups", type: "switch" },
+      { key: "frequency", label: "Fréquence", type: "text", placeholder: "session ou day" },
+      {
+        key: "items",
+        label: "Messages popup",
+        type: "list",
+        itemFields: [
+          { key: "id", label: "ID interne", noI18n: true },
+          { key: "title", label: "Titre" },
+          { key: "message", label: "Message", rows: 3 },
+          { key: "cta_label", label: "Bouton" },
+          { key: "active", label: "Actif (true/false)", noI18n: true },
+          { key: "priority", label: "Priorité", noI18n: true },
+          { key: "pages", label: "Pages (homepage, trip_pages, all_public)", noI18n: true },
+          { key: "delay_seconds", label: "Délai secondes", noI18n: true },
+        ],
+      },
+    ],
+  },
+  {
     slug: "site:contact",
     title: "Page Contact",
     shortTitle: "Contact",
@@ -253,7 +278,15 @@ export default function Frontend() {
 
   const save = async (slug: string) => {
     setSaving(slug);
-    const { error } = await supabase.from("pages").update({ content: data[slug] ?? {} }).eq("slug", slug);
+    const section = SECTIONS.find((item) => item.slug === slug);
+    const { error } = await supabase
+      .from("pages")
+      .upsert({
+        slug,
+        title: section?.title ?? slug,
+        content: data[slug] ?? {},
+        status: "published",
+      }, { onConflict: "slug" });
     setSaving(null);
     if (error) return toast.error("Erreur : " + error.message);
     toast.success("Modifications enregistrées — visibles immédiatement sur le site.");
