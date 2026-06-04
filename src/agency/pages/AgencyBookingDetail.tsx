@@ -771,14 +771,17 @@ export default function AgencyBookingDetail() {
     const agency = {
       agency_display_name: organization?.display_name ?? undefined,
       legal_company_name: organization?.legal_name ?? organization?.display_name ?? undefined,
+      brand_name: organization?.display_name ?? "Agence partenaire",
       email: organization?.email ?? undefined,
       phone: organization?.phone ?? undefined,
-      address_line1: organization?.address_line_1 ?? undefined,
-      address_line2: organization?.address_line_2 ?? undefined,
+      website: organization?.website ?? undefined,
+      address_line_1: organization?.address_line_1 ?? undefined,
+      address_line_2: organization?.address_line_2 ?? undefined,
       city: organization?.city ?? undefined,
       postal_code: organization?.postal_code ?? undefined,
       country: organization?.country ?? undefined,
       logo_url: typeof organization?.metadata?.agency_logo_url === "string" ? organization.metadata.agency_logo_url : undefined,
+      is_partner_agency: true,
     };
     return { bookingLike, tripLike, extras, agency, quoteAdjustments, adjustedTotal, requestPayments };
   };

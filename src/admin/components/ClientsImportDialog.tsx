@@ -332,7 +332,6 @@ export function ClientsImportDialog({
       registered_at: r.registered_at,
       source: "import",
     }));
-    console.log("CLIENT INSERT PAYLOAD", { table: "public.clients", payload });
     const { error } = await supabase.from("clients").insert(payload as any);
     setImporting(false);
     if (error) {

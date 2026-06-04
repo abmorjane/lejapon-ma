@@ -589,9 +589,6 @@ export default function PartnerRequestsAdmin() {
                           <span className="font-mono font-semibold">{temporaryPassword}</span>
                         </div>
                       )}
-                      <pre className="mt-4 max-h-72 overflow-auto rounded-md bg-secondary p-3 text-xs text-muted-foreground">
-                        {JSON.stringify(conversionResponse, null, 2)}
-                      </pre>
                     </div>
                   </div>
                 </Card>

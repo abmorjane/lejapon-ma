@@ -133,14 +133,12 @@ async function directStorageUpload(file: File, ext: string, contentType: string,
   if (!userId) throw new Error("missing_auth");
   const id = crypto.randomUUID();
   const path = bucket === "visa-docs" ? `${userId}/passport-scans/${id}.${ext}` : `original/${id}.${ext}`;
-  console.info("[passport-ocr] direct storage upload started", { bucket, path, type: contentType, size: file.size });
   const { error: uploadError } = await supabase.storage.from(bucket).upload(path, file, {
     contentType,
     upsert: false,
   });
   if (uploadError) throw new Error(storageErrorMessage(uploadError));
 
-  console.info("[passport-ocr] direct storage upload succeeded", { bucket, path });
   return { path };
 }
 
@@ -184,16 +182,16 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket 
         return;
       }
 
+      const ocrPayload = { storage_path: path, path, bucket };
       const { data, error: invokeError } = await supabase.functions.invoke("passport-ocr", {
-        body: { storage_path: path, path, bucket },
+        body: ocrPayload,
       });
       if (invokeError) {
         console.error("[passport-ocr] OCR function failed", {
           status: (invokeError as any)?.status,
           name: invokeError.name,
           message: invokeError.message,
-          contextBucket: bucket,
-          path,
+          error_code: (invokeError as any)?.context?.error_code || (invokeError as any)?.context?.error,
         });
         const message = passportOcrErrorMessage((invokeError as any)?.context?.error || (invokeError as any)?.message, bucket === "visa-docs" ? "visa" : "admin");
         setError(message);
@@ -201,39 +199,24 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket 
         return;
       }
       if (!data?.ok) {
-        const fallbackFields = pickDetectedFields(data?.debug?.parsed_fields ?? {});
+        const fallbackFields = pickDetectedFields(data?.fields ?? {});
         const hasFallbackFields = Boolean(fallbackFields.passport_no && (fallbackFields.last_name || fallbackFields.full_name));
         if (hasFallbackFields) {
-          console.warn("[passport-ocr] OCR returned fallback but parsed usable fields", {
-            error: data?.error,
-            fields: fallbackFields,
-            debug: data?.debug,
-          });
           setFields(fallbackFields);
           setError("Lecture partielle: vérifiez les champs détectés avant de les appliquer.");
           toast.warning("Lecture partielle. Vérifiez les champs détectés avant validation.");
           return;
         }
-        const message = passportOcrErrorMessage(data?.error, bucket === "visa-docs" ? "visa" : "admin");
+        const message = passportOcrErrorMessage(data?.error_code || data?.error, bucket === "visa-docs" ? "visa" : "admin");
         console.warn("[passport-ocr] OCR returned an error", {
-          error: data?.error,
-          detail: data?.detail,
-          status: data?.status,
-          debug: data?.debug,
-          receivedKeys: data?.debug_echo?.received_keys,
-          bucket,
-          storagePath: path,
+          errorCode: data?.error_code,
+          message: data?.message,
         });
         setError(message);
         toast.error(message);
         return;
       }
       const detectedFields = pickDetectedFields(data.fields ?? {});
-      console.info("[passport-ocr] OCR parsed fields", {
-        fields: detectedFields,
-        bucket: data.bucket,
-        path: data.path,
-      });
       setFields(detectedFields);
       toast.success("Informations détectées. Veuillez vérifier avant validation.");
     } catch (e: any) {
@@ -393,26 +376,6 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket 
                   />
                 </div>
               </div>
-
-              {(fields.mrz_raw || fields.raw_text) && (
-                <details className="mt-4 rounded-xl border border-border bg-secondary/30 p-3 text-xs">
-                  <summary className="cursor-pointer font-medium">Détails OCR admin</summary>
-                  <div className="mt-3 space-y-3">
-                    {fields.mrz_raw && (
-                      <div>
-                        <p className="mb-1 font-medium text-muted-foreground">MRZ brute</p>
-                        <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded-lg bg-background p-2 font-mono">{fields.mrz_raw}</pre>
-                      </div>
-                    )}
-                    {fields.raw_text && (
-                      <div>
-                        <p className="mb-1 font-medium text-muted-foreground">Texte OCR brut</p>
-                        <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded-lg bg-background p-2 font-mono">{fields.raw_text}</pre>
-                      </div>
-                    )}
-                  </div>
-                </details>
-              )}
             </section>
           )}
         </div>

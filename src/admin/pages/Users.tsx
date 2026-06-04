@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -66,9 +65,6 @@ type ExternalMemberRow = {
   role: string;
   status: string;
   created_at: string | null;
-  raw_member?: Record<string, any> | null;
-  raw_profile?: Record<string, any> | null;
-  raw_organization?: Record<string, any> | null;
 };
 
 type VisaClientRow = {
@@ -89,7 +85,6 @@ type ResetResult = {
   email: string | null;
   temporary_password: string | null;
   email_sent: boolean | null;
-  raw: unknown;
 };
 
 type ProfileEditState = {
@@ -210,11 +205,6 @@ export default function UsersAdmin() {
   const [deleteAction, setDeleteAction] = useState<DeleteAction | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [rawError, setRawError] = useState<string | null>(null);
-  const [externalRawResponse, setExternalRawResponse] = useState<string | null>(null);
-  const [externalRequestPayload, setExternalRequestPayload] = useState<string | null>(null);
-  const [externalDebugResponse, setExternalDebugResponse] = useState<string | null>(null);
-  const [externalDebugOpen, setExternalDebugOpen] = useState(false);
-  const [adminUsersFunctionVersion, setAdminUsersFunctionVersion] = useState<string | null>(null);
   const [visaFilter, setVisaFilter] = useState<VisaFilter>("hide_staff");
   const [form, setForm] = useState({ email: "", password: "", full_name: "", roles: [] as Role[] });
 
@@ -229,15 +219,6 @@ export default function UsersAdmin() {
   );
 
   const loadExternalMembersDirect = async (authUserMap: Map<string, any>) => {
-    const queries = {
-      organization_members:
-        "organization_members.select(id, organization_id, user_id, role, status, created_at).order(created_at desc)",
-      organization_member_profiles:
-        "organization_member_profiles.select(id, organization_member_id, user_id, organization_id, full_name, email, phone, secondary_phone, secondary_email, position_title, point_of_sale, notes).in(organization_member_id)",
-      organizations:
-        "organizations.select(id, display_name, legal_name, type, status, email, phone, website).in(id)",
-    };
-
     const membersResult = await db
       .from("organization_members")
       .select("id,organization_id,user_id,role,status,created_at")
@@ -245,7 +226,6 @@ export default function UsersAdmin() {
 
     if (membersResult.error) {
       setExternalMembers([]);
-      setExternalRawResponse(JSON.stringify({ queries, organization_members_error: membersResult.error }, null, 2));
       toast.error(`Utilisateurs externes: ${membersResult.error.message}`);
       return;
     }
@@ -299,45 +279,14 @@ export default function UsersAdmin() {
         role: member.role ?? "viewer",
         status: member.status ?? "suspended",
         created_at: member.created_at ?? null,
-        raw_member: member,
-        raw_profile: memberProfile,
-        raw_organization: organization,
       } as ExternalMemberRow;
     });
-
-    const debugPayload = {
-      queries,
-      organization_members: memberRows,
-      organization_member_profiles: profileRows,
-      organizations: organizationRows,
-      errors: {
-        organization_member_profiles: profilesResult.error ?? null,
-        organizations: organizationsResult.error ?? null,
-      },
-      merged_rows: rows,
-    };
-    console.log("[admin/users external diagnostic]", debugPayload);
-    setExternalRawResponse(JSON.stringify(debugPayload, null, 2));
     setExternalMembers(rows);
   };
 
   const loadUsers = async () => {
     setLoading(true);
     setRawError(null);
-    setExternalRequestPayload(null);
-    setExternalDebugResponse(null);
-    setAdminUsersFunctionVersion(null);
-
-    setExternalRequestPayload(
-      JSON.stringify(
-        {
-          source: "direct Supabase reads",
-          tables: ["organization_members", "organization_member_profiles", "organizations"],
-        },
-        null,
-        2
-      )
-    );
 
     const [usersResult, visaResult] = await Promise.all([
       supabase.functions.invoke("admin-users", { body: { action: "list" } }),
@@ -352,11 +301,10 @@ export default function UsersAdmin() {
       const body = await readFunctionError(usersResult.error);
       const message = await functionErrorMessage(usersResult.error);
       toast.error(message);
-      setRawError(JSON.stringify(body ?? { error: message }, null, 2));
+      setRawError(message);
       setUsers([]);
     } else {
       const payload = (usersResult.data as any) ?? {};
-      setAdminUsersFunctionVersion(payload.function_version ?? null);
       setUsers((payload.users ?? []) as UserRow[]);
     }
 
@@ -442,23 +390,20 @@ export default function UsersAdmin() {
     });
     setBusy(false);
     if (error) {
-      const body = await readFunctionError(error);
       const message = await functionErrorMessage(error);
-      setRawError(JSON.stringify(body ?? { error: message }, null, 2));
+      setRawError(message);
       toast.error(message);
       return;
     }
     const payload = (data ?? {}) as any;
     const temporaryPassword = payload.temporary_password || payload.password || null;
-    if (payload.function_version) setAdminUsersFunctionVersion(payload.function_version);
     setResetResult({
       user_id: userId,
       email,
       temporary_password: temporaryPassword,
       email_sent: payload.email_sent ?? null,
-      raw: payload,
     });
-    setRawError(JSON.stringify(payload, null, 2));
+    setRawError(null);
     if (temporaryPassword) toast.warning("Mot de passe provisoire généré. Copiez-le depuis la fenêtre.");
     else toast.success("Mot de passe réinitialisé.");
   };
@@ -514,7 +459,7 @@ export default function UsersAdmin() {
       const { data: savedProfile, error: profileError } = await profileRequest;
       if (profileError) {
         setBusy(false);
-        setRawError(JSON.stringify({ table: "organization_member_profiles", payload: profilePayload, error: profileError }, null, 2));
+        setRawError(profileError.message);
         toast.error(profileError.message);
         return;
       }
@@ -526,13 +471,13 @@ export default function UsersAdmin() {
         const { error: memberError } = await db.from("organization_members").update(memberPatch).eq("id", profileEdit.member_id);
         if (memberError) {
           setBusy(false);
-          setRawError(JSON.stringify({ saved_profile: savedProfile, organization_members_error: memberError }, null, 2));
+          setRawError(memberError.message);
           toast.error(memberError.message);
           return;
         }
       }
 
-      setRawError(JSON.stringify({ saved_organization_member_profile: savedProfile }, null, 2));
+      setRawError(null);
     } else {
       const { data: profileData, error } = await supabase.functions.invoke("admin-users", {
         body: {
@@ -549,8 +494,8 @@ export default function UsersAdmin() {
       }
       const payload = (profileData ?? {}) as any;
       if (payload.warnings?.length) {
-        setRawError(JSON.stringify(payload, null, 2));
-        toast.warning("Profil mis à jour avec avertissement. Vérifiez la réponse brute.");
+        setRawError("Profil mis à jour avec avertissement.");
+        toast.warning("Profil mis à jour avec avertissement.");
       }
     }
 
@@ -594,15 +539,14 @@ export default function UsersAdmin() {
     setBusy(false);
 
     if (error) {
-      const body = await readFunctionError(error);
       const message = await functionErrorMessage(error);
-      setRawError(JSON.stringify({ request: requestPayload, response: body ?? { error: message } }, null, 2));
+      setRawError(message);
       toast.error(message);
       return;
     }
 
     const payload = (data ?? {}) as any;
-    setRawError(JSON.stringify({ request: requestPayload, response: payload }, null, 2));
+    setRawError(null);
 
     if (payload.success === false) {
       const reasons = (payload.blocked_reasons ?? []).join(", ") || payload.error || "Action bloquée.";
@@ -690,16 +634,7 @@ export default function UsersAdmin() {
 
       {rawError && (
         <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          <details>
-            <summary className="cursor-pointer font-semibold">Debug</summary>
-            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs">{rawError}</pre>
-          </details>
-        </Card>
-      )}
-
-      {!adminUsersFunctionVersion && !loading && (
-        <Card className="border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-          admin-users Edge Function is not deployed or old version is running.
+          {rawError}
         </Card>
       )}
 
@@ -796,42 +731,6 @@ export default function UsersAdmin() {
         </TabsContent>
 
         <TabsContent value="external" className="mt-0">
-          <Collapsible open={externalDebugOpen} onOpenChange={setExternalDebugOpen} className="mb-3">
-            <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/30 px-4 py-3 text-sm">
-              <p className="text-muted-foreground">
-                Profils externes fusionnés: <span className="font-semibold text-foreground">{externalMembers.length}</span>
-              </p>
-              <CollapsibleTrigger asChild>
-                <Button variant="outline" size="sm">Debug</Button>
-              </CollapsibleTrigger>
-            </div>
-            <CollapsibleContent className="space-y-3 rounded-b-lg border-x border-b border-border bg-secondary/20 px-4 py-3 text-sm text-muted-foreground">
-              {externalRequestPayload && (
-                <div>
-                  <p className="font-medium text-foreground">Payload envoyé à admin-users</p>
-                  <pre className="mt-1 max-h-40 overflow-auto rounded-md bg-background p-3 text-xs text-muted-foreground">
-                    {externalRequestPayload}
-                  </pre>
-                </div>
-              )}
-              {externalDebugResponse && (
-                <div>
-                  <p className="font-medium text-foreground">Réponse debug_echo</p>
-                  <pre className="mt-1 max-h-56 overflow-auto rounded-md bg-background p-3 text-xs text-muted-foreground">
-                    {externalDebugResponse}
-                  </pre>
-                </div>
-              )}
-              {externalRawResponse && (
-                <div>
-                  <p className="font-medium text-foreground">Rows brutes stable V2</p>
-                  <pre className="mt-1 max-h-64 overflow-auto rounded-md bg-background p-3 text-xs text-muted-foreground">
-                    {externalRawResponse}
-                  </pre>
-                </div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
           <Card className="overflow-hidden">
             <table className="w-full min-w-[980px] text-sm">
               <thead className="bg-secondary/50">
@@ -1222,13 +1121,6 @@ export default function UsersAdmin() {
                   </p>
                 )}
               </div>
-
-              <details className="rounded-lg border border-border p-3 text-xs">
-                <summary className="cursor-pointer font-semibold text-muted-foreground hover:text-foreground">Debug</summary>
-                <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-muted p-3 text-muted-foreground">
-                  {JSON.stringify(resetResult.raw, null, 2)}
-                </pre>
-              </details>
             </div>
           )}
           <DialogFooter>

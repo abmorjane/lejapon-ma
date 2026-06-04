@@ -6,6 +6,7 @@ const corsHeaders = {
 };
 
 const PASSPORT_BUCKET = "passports";
+const function_version = "passport-ocr-v2";
 const MISSING_BUCKET_ERROR = "Storage bucket ‘passports’ does not exist. Please create it in Supabase Storage.";
 const MANUAL_ENTRY_MESSAGE = "Passeport uploadé avec succès, mais lecture automatique impossible. Merci de saisir les données manuellement.";
 
@@ -34,12 +35,8 @@ type PassportFields = {
 
 const compact = (value: string) => value.replace(/\s+/g, " ").trim();
 const onlyMrz = (value: string) => value.toUpperCase().replace(/[«‹<]/g, "<").replace(/[^A-Z0-9<\n]/g, "");
-const logPreview = (value: string) => {
-  if (Deno.env.get("OCR_DEBUG_RAW_TEXT") === "true") return value;
-  return value.slice(0, 300);
-};
 
-type OcrDebugAttempt = {
+type OcrAttempt = {
   path: string;
   mode: "mrz" | "full";
   signed_url_ok?: boolean;
@@ -52,21 +49,13 @@ type OcrDebugAttempt = {
   text_length?: number;
 };
 
-type OcrDebug = {
+type OcrRun = {
   bucket?: string;
   storage_path?: string;
   ocr_storage_path?: string | null;
   engine: "external";
   ocr_api_configured: boolean;
-  attempts: OcrDebugAttempt[];
-  raw_text_length?: number;
-  raw_text_preview?: string;
-  mrz_detected?: boolean;
-  mrz_detection_source?: string;
-  mrz_lines?: string[];
-  parsed_fields?: PassportFields;
-  failure_stage?: string;
-  failure_reason?: string;
+  attempts: OcrAttempt[];
 };
 
 function parseMrzDate(value: string, expiry = false) {
@@ -317,10 +306,9 @@ async function runExternalOcr(file: Blob, fileName: string, mode: "mrz" | "full"
 }
 
 async function downloadPassportFile(admin: any, bucket: string, path: string) {
-  console.info("[passport-ocr] downloading file", { bucket, path });
   const { data: file, error } = await admin.storage.from(bucket).download(path);
   if (error || !file) {
-    console.error("[passport-ocr] download failed", { bucket, path, error });
+    console.error("[passport-ocr] download failed", { bucket, error: error?.message ?? "Passport image not found" });
     const message = String(error?.message ?? "Passport image not found");
     if (/bucket not found|not found/i.test(message) && /bucket|storage/i.test(message)) {
       throw new Error(MISSING_BUCKET_ERROR);
@@ -330,26 +318,26 @@ async function downloadPassportFile(admin: any, bucket: string, path: string) {
   return file;
 }
 
-async function logSignedUrl(admin: any, bucket: string, path: string, attempt: OcrDebugAttempt) {
+async function logSignedUrl(admin: any, bucket: string, path: string, attempt: OcrAttempt) {
   const { data, error } = await admin.storage.from(bucket).createSignedUrl(path, 300);
   if (error || !data?.signedUrl) {
     attempt.signed_url_ok = false;
     attempt.signed_url_error = error?.message ?? "Signed URL missing";
-    console.warn("[passport-ocr] signed URL generation failed", { bucket, path, error });
+    console.warn("[passport-ocr] signed URL generation failed", { bucket, error: error?.message ?? "Signed URL missing" });
     return;
   }
   attempt.signed_url_ok = true;
-  console.info("[passport-ocr] signed URL generated", { bucket, path, expiresInSeconds: 300 });
 }
 
-function failureResponse(debug: OcrDebug, reason: string, stage: string) {
-  debug.failure_stage = stage;
-  debug.failure_reason = reason;
-  console.warn("[passport-ocr] returning manual-entry fallback", debug);
+function failureResponse(reason: string, stage: string) {
+  console.warn("[passport-ocr] returning manual-entry fallback", { stage, reason });
   return new Response(JSON.stringify({
     ok: false,
+    success: false,
+    function_version,
+    error_code: stage,
+    message: reason,
     error: MANUAL_ENTRY_MESSAGE,
-    debug,
   }), {
     status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -360,6 +348,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    const body = await req.json().catch(() => ({}));
     const authHeader = req.headers.get("Authorization") ?? "";
     const jwt = authHeader.replace(/^Bearer\s+/i, "");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -377,7 +366,6 @@ Deno.serve(async (req) => {
       ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent"].includes(r.role)
     );
 
-    const body = await req.json();
     const { storage_path, path, ocr_storage_path } = body;
     const requestedBucket = typeof body.bucket === "string" && body.bucket ? body.bucket : PASSPORT_BUCKET;
     if (!["passports", "visa-docs"].includes(requestedBucket)) throw new Error("forbidden_bucket");
@@ -389,7 +377,7 @@ Deno.serve(async (req) => {
     if (requestedBucket === "visa-docs" && !isStaff && !ownsEveryRequestedPath) throw new Error("forbidden_path");
 
     let ocrText = "";
-    const debug: OcrDebug = {
+    const run: OcrRun = {
       bucket: requestedBucket,
       storage_path: sourcePath,
       ocr_storage_path: typeof ocr_storage_path === "string" ? ocr_storage_path : null,
@@ -397,7 +385,6 @@ Deno.serve(async (req) => {
       ocr_api_configured: !!Deno.env.get("OCR_API_URL"),
       attempts: [],
     };
-    console.info("[passport-ocr] request received", debug);
 
     const attemptPaths = [
       typeof ocr_storage_path === "string" && ocr_storage_path ? { path: ocr_storage_path, mode: "mrz" as const } : null,
@@ -406,8 +393,8 @@ Deno.serve(async (req) => {
 
     const texts: string[] = [];
     for (const attemptPath of attemptPaths) {
-      const attempt: OcrDebugAttempt = { path: attemptPath.path, mode: attemptPath.mode };
-      debug.attempts.push(attempt);
+      const attempt: OcrAttempt = { path: attemptPath.path, mode: attemptPath.mode };
+      run.attempts.push(attempt);
       await logSignedUrl(admin, requestedBucket, attemptPath.path, attempt);
 
       let file: Blob;
@@ -418,69 +405,59 @@ Deno.serve(async (req) => {
       } catch (downloadError) {
         attempt.download_ok = false;
         attempt.download_error = downloadError instanceof Error ? downloadError.message : String(downloadError);
-        console.warn("[passport-ocr] download failed for attempt", attempt);
+        console.warn("[passport-ocr] passport file download failed", { mode: attempt.mode, error: attempt.download_error });
         continue;
       }
 
       try {
-        if (!debug.ocr_api_configured) {
+        if (!run.ocr_api_configured) {
           attempt.engine_called = false;
           attempt.engine_error = "OCR_API_URL is not configured";
-          console.warn("[passport-ocr] OCR engine not called", { path: attempt.path, reason: attempt.engine_error });
+          console.warn("[passport-ocr] OCR engine not called", { reason: attempt.engine_error });
           continue;
         }
         const fileName = attempt.path.split("/").pop() ?? "passport";
-        console.info("[passport-ocr] OCR attempt started", { path: attempt.path, mode: attempt.mode, size: file.size });
         const text = await runExternalOcr(file, fileName, attempt.mode);
         attempt.engine_called = true;
         attempt.text_length = text.length;
-        console.info("[passport-ocr] OCR attempt succeeded", { path: attempt.path, mode: attempt.mode, textLength: text.length });
-        console.info("[passport-ocr] OCR raw text result", { path: attempt.path, mode: attempt.mode, text: logPreview(text), rawTextLoggingEnabled: Deno.env.get("OCR_DEBUG_RAW_TEXT") === "true" });
         texts.push(text);
       } catch (ocrError) {
         attempt.engine_called = true;
         attempt.engine_error = ocrError instanceof Error ? ocrError.message : String(ocrError);
-        console.warn("[passport-ocr] OCR provider failed for attempt", attempt);
+        console.warn("[passport-ocr] OCR provider failed", { mode: attempt.mode, error: attempt.engine_error });
       }
     }
 
     ocrText = texts.join("\n");
-    debug.raw_text_length = ocrText.length;
-    debug.raw_text_preview = logPreview(ocrText);
-    if (!ocrText.trim()) return failureResponse(debug, "OCR returned no text", "ocr_text");
+    if (!ocrText.trim()) return failureResponse("OCR returned no text", "ocr_text");
 
     const jsonFields = (() => {
       try { return parseJsonFields(JSON.parse(ocrText)); } catch { return null; }
     })();
-    const mrzDetection = detectMrzLines(jsonFields?.mrz ?? ocrText);
-    debug.mrz_detected = !!mrzDetection;
-    debug.mrz_detection_source = mrzDetection?.source;
-    debug.mrz_lines = mrzDetection?.lines;
-    console.info("[passport-ocr] MRZ detection result", {
-      detected: debug.mrz_detected,
-      source: debug.mrz_detection_source,
-      lines: debug.mrz_lines,
-    });
-
     const mrzFields = parseMrz(jsonFields?.mrz ?? ocrText);
     const textFields = parseTextFields(ocrText);
     const fields = mergePassportFields(mrzFields, jsonFields, textFields);
-    debug.parsed_fields = fields;
-    console.info("[passport-ocr] parsed fields", fields);
 
     if (!fields.passport_no && !fields.full_name && !fields.first_name && !fields.last_name) {
       console.warn("[passport-ocr] no usable fields parsed", { textLength: ocrText.length });
-      return failureResponse(debug, "No usable passport fields parsed", "parse");
+      return failureResponse("No usable passport fields parsed", "parse");
     }
 
-    return new Response(JSON.stringify({ ok: true, fields, debug, bucket: requestedBucket, path: sourcePath }), {
+    return new Response(JSON.stringify({ ok: true, success: true, function_version, fields, bucket: requestedBucket, path: sourcePath }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = ["Forbidden", "not_staff", "forbidden_path", "forbidden_bucket"].includes(message) ? 403 : message === "Unauthorized" ? 401 : 500;
-    return new Response(JSON.stringify({ ok: false, error: message, debug_echo: { received_keys: [] } }), {
+    return new Response(JSON.stringify({
+      ok: false,
+      success: false,
+      function_version,
+      error_code: message,
+      message,
+      error: message,
+    }), {
       status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

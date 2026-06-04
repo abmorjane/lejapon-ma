@@ -18,6 +18,7 @@ export type AgencySettings = {
   stamp_signature_url?: string | null;
   manager_name: string;
   manager_title?: string | null;
+  is_partner_agency?: boolean;
 };
 
 export const DEFAULT_AGENCY_SETTINGS: AgencySettings = {
@@ -37,6 +38,7 @@ export const DEFAULT_AGENCY_SETTINGS: AgencySettings = {
   stamp_signature_url: null,
   manager_name: "Abderrahman MORJANE",
   manager_title: null,
+  is_partner_agency: false,
 };
 
 export function normalizeAgencySettings(row?: Partial<AgencySettings> | null): AgencySettings {

@@ -6,10 +6,6 @@ import {
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
-const debugPrefill = (level: "info" | "warn", message: string, payload?: unknown) => {
-  if (!import.meta.env.DEV) return;
-  console[level](message, payload);
-};
 
 export type VisaPrefillResult =
   | { status: "none"; message: string }
@@ -170,15 +166,6 @@ const tryRpcPrefill = async (passportNo: string, lastName: string, email: string
       p_last_name: lastName || null,
       p_email: email || null,
     });
-    debugPrefill("info", "[visa-prefill] passport RPC result", {
-      normalized: passportNo,
-      status: data?.status,
-      hasPrefill: Boolean(data?.prefill),
-      source: data?.source,
-      participantId: data?.participant_id ?? null,
-      clientId: data?.client_id ?? null,
-      error,
-    });
     if (error) return null;
     if (data?.status === "multiple_matches") {
       return { status: "multiple", message: "Plusieurs dossiers correspondent. Merci de contacter l'agence." };
@@ -194,8 +181,40 @@ const tryRpcPrefill = async (passportNo: string, lastName: string, email: string
       };
     }
     return null;
-  } catch (error) {
-    debugPrefill("warn", "[visa-prefill] passport RPC unavailable", { normalized: passportNo, error });
+  } catch {
+    return null;
+  }
+};
+
+const tryEdgePrefill = async (passportNo: string, lastName: string, email: string): Promise<VisaPrefillResult | null> => {
+  try {
+    const payload = {
+      passport_no: passportNo,
+      last_name: lastName || null,
+      email: email || null,
+    };
+    const { data, error } = await supabase.functions.invoke("lookup-visa-prefill", {
+      body: payload,
+    });
+    if (error) return null;
+    if (data?.status === "multiple_matches") {
+      return { status: "multiple", message: "Plusieurs dossiers correspondent. Merci de contacter l'agence." };
+    }
+    if (data?.status === "needs_verification") {
+      return { status: "none", message: "Nous n’avons pas trouvé de fiche client avec ce numéro de passeport. Vérifiez le numéro ou complétez le formulaire manuellement." };
+    }
+    if (data?.status === "not_found") return null;
+    if (data?.status === "found" && data.prefill) {
+      return {
+        status: "matched",
+        source: data.participant_id ? "booking_participant" : "client",
+        sourceId: data.participant_id || data.client_id || "lookup-visa-prefill",
+        sourceLabel: data.source || "Dossier passeport",
+        patch: rpcPrefillPatch(asRecord(data.prefill), passportNo),
+      };
+    }
+    return null;
+  } catch {
     return null;
   }
 };
@@ -238,11 +257,6 @@ export async function lookupVisaPrefillByPassport(params: {
   email: string;
 }): Promise<VisaPrefillResult> {
   const passportNo = normalizePassportNo(params.passportNo);
-  debugPrefill("info", "[visa-prefill] passport lookup started", {
-    input: params.passportNo,
-    normalized: passportNo,
-    tables: ["booking_participants.passport_no", "clients.passport_number", "clients.passport_no"],
-  });
   if (!passportNo) {
     return { status: "none", message: "Nous n’avons pas trouvé de fiche client avec ce numéro de passeport. Vérifiez le numéro ou complétez le formulaire manuellement." };
   }
@@ -252,6 +266,9 @@ export async function lookupVisaPrefillByPassport(params: {
   const searchFragment = passportNo.slice(0, Math.min(2, passportNo.length));
 
   try {
+    const edgeResult = await tryEdgePrefill(passportNo, lastName, email);
+    if (edgeResult?.status === "matched" || edgeResult?.status === "multiple") return edgeResult;
+
     const rpcResult = await tryRpcPrefill(passportNo, lastName, email);
     if (rpcResult?.status === "matched" || rpcResult?.status === "multiple") return rpcResult;
 
@@ -278,19 +295,7 @@ export async function lookupVisaPrefillByPassport(params: {
     }
     const clients = Array.from(clientsById.values());
 
-    debugPrefill("info", "[visa-prefill] passport lookup raw result", {
-      normalized: passportNo,
-      participantError,
-      directClientError,
-      metadataClientError,
-      participantRows: participants?.length ?? 0,
-      directClientRows: directClients?.length ?? 0,
-      metadataClientRows: metadataClients?.length ?? 0,
-      clientRows: clients?.length ?? 0,
-    });
-
     if (participantError && directClientError && metadataClientError) {
-      debugPrefill("warn", "[visa-prefill] all passport lookup queries failed", { participantError, directClientError, metadataClientError });
       return { status: "error", message: "Nous n’avons pas trouvé de fiche client avec ce numéro de passeport. Vérifiez le numéro ou complétez le formulaire manuellement." };
     }
 
@@ -302,16 +307,6 @@ export async function lookupVisaPrefillByPassport(params: {
     const safeClients = matchingClients.filter((client: any) => isSafeClientMatch(client, lastName, email));
     const effectiveParticipants = safeParticipants.length ? safeParticipants : matchingParticipants.length === 1 ? matchingParticipants : [];
     const effectiveClients = safeClients.length ? safeClients : matchingClients.length === 1 ? matchingClients : [];
-
-    debugPrefill("info", "[visa-prefill] passport lookup normalized matches", {
-      normalized: passportNo,
-      matchingParticipants: matchingParticipants.length,
-      matchingClients: matchingClients.length,
-      safeParticipants: safeParticipants.length,
-      safeClients: safeClients.length,
-      fallbackUniqueParticipant: !safeParticipants.length && matchingParticipants.length === 1,
-      fallbackUniqueClient: !safeClients.length && matchingClients.length === 1,
-    });
 
     if ((matchingParticipants.length > 1 && !safeParticipants.length) || (matchingClients.length > 1 && !safeClients.length)) {
       return { status: "multiple", message: "Plusieurs dossiers correspondent. Merci de contacter l'agence." };
@@ -387,10 +382,8 @@ export async function lookupVisaPrefillByPassport(params: {
       };
     }
 
-    debugPrefill("info", "[visa-prefill] passport lookup no normalized match", { normalized: passportNo });
     return { status: "none", message: "Nous n’avons pas trouvé de fiche client avec ce numéro de passeport. Vérifiez le numéro ou complétez le formulaire manuellement." };
   } catch {
-    debugPrefill("warn", "[visa-prefill] passport lookup crashed", { normalized: passportNo });
     return { status: "error", message: "Nous n’avons pas trouvé de fiche client avec ce numéro de passeport. Vérifiez le numéro ou complétez le formulaire manuellement." };
   }
 }

@@ -740,11 +740,6 @@ export default function OrganizationsAdmin() {
   const [commissionRules, setCommissionRules] = useState<CommissionRuleRow[]>([]);
   const [commissionRulesLoading, setCommissionRulesLoading] = useState(false);
   const [commissionRulesError, setCommissionRulesError] = useState<string | null>(null);
-  const [commissionRulesDebug, setCommissionRulesDebug] = useState<{
-    code: string | null;
-    message: string | null;
-    rowsLength: number;
-  }>({ code: null, message: null, rowsLength: 0 });
   const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<CommissionRuleRow | null>(null);
   const [ruleForm, setRuleForm] = useState<CommissionRuleForm>(defaultRuleForm);
@@ -1108,21 +1103,6 @@ export default function OrganizationsAdmin() {
       }
     }
 
-    console.log("[admin/onboarding validation diagnostic]", {
-      query: {
-        case:
-          "partner_onboarding_cases.select(*).eq(organization_id).order(created_at desc).limit(1).maybeSingle()",
-        form_data: "partner_onboarding_cases.form_data",
-        documents: "partner_onboarding_documents.select(*).eq(onboarding_case_id).order(created_at desc)",
-      },
-      onboarding_case: data ?? null,
-      form_data: data?.form_data ?? null,
-      partner_onboarding_documents: documents,
-      agency_profile: profileResult.error ? null : profileResult.data ?? null,
-      organization,
-      error: error ?? null,
-    });
-
     const nextReview = {
       organization,
       caseRow: (data ?? null) as Record<string, any> | null,
@@ -1354,20 +1334,9 @@ export default function OrganizationsAdmin() {
         if (!createProfilesError) {
           profileRows = [...profileRows, ...((createdProfiles ?? []) as OrganizationMemberProfileRow[])];
         } else {
-          console.warn("[admin/organizations members diagnostic] missing profile rows were not created", createProfilesError);
+          console.warn("[admin/organizations] missing member profile rows were not created", createProfilesError.message);
         }
       }
-
-      console.log("[admin/organizations members diagnostic]", {
-        query: {
-          organization_members: "organization_members.select(id, organization_id, user_id, role, status, created_at).eq(organization_id)",
-          organization_member_profiles:
-            "organization_member_profiles.select(id, organization_member_id, user_id, organization_id, full_name, email, phone, secondary_phone, secondary_email, position_title, point_of_sale, notes).in(organization_member_id)",
-        },
-        organization_members: memberRows,
-        organization_member_profiles: profileRows,
-        missing_profile_rows_created: missingProfileRows.map((member) => member.id),
-      });
 
       const profileByMemberId = new Map(profileRows.map((profile) => [profile.organization_member_id, profile]));
       setMembers(memberRows.map((member) => ({ ...member, profile: profileByMemberId.get(member.id) ?? null })));
@@ -1591,7 +1560,6 @@ export default function OrganizationsAdmin() {
   const loadCommissionRules = async (organization: OrganizationRow) => {
     setCommissionRulesLoading(true);
     setCommissionRulesError(null);
-    setCommissionRulesDebug({ code: null, message: null, rowsLength: 0 });
 
     const { data, error } = await db
       .from("commission_engine_rules")
@@ -1601,11 +1569,6 @@ export default function OrganizationsAdmin() {
 
     if (error) {
       const message = error.message ?? "Impossible de charger les règles de commission.";
-      setCommissionRulesDebug({
-        code: error.code ?? null,
-        message,
-        rowsLength: 0,
-      });
       setCommissionRulesError(
         isMissingCommissionRulesTableError(error)
           ? "La table public.commission_engine_rules est introuvable ou non accessible. Vérifiez que la migration V2 Commission Engine V1 est appliquée dans Lovable/Supabase."
@@ -1614,11 +1577,6 @@ export default function OrganizationsAdmin() {
       setCommissionRules([]);
     } else {
       const rows = (data ?? []) as CommissionRuleRow[];
-      setCommissionRulesDebug({
-        code: null,
-        message: null,
-        rowsLength: rows.length,
-      });
       setCommissionRulesError(null);
       setCommissionRules(rows);
     }
@@ -1634,7 +1592,6 @@ export default function OrganizationsAdmin() {
     setAgencyProfileError(null);
     setCommissionRules([]);
     setCommissionRulesError(null);
-    setCommissionRulesDebug({ code: null, message: null, rowsLength: 0 });
     loadAgencyProfile(organization);
     loadCommissionRules(organization);
     loadTrips();
@@ -2632,7 +2589,20 @@ export default function OrganizationsAdmin() {
                 placeholder="URL du logo agence"
               />
               {form.agency_logo_url && (
-                <img src={form.agency_logo_url} alt="Logo agence" className="mt-2 max-h-20 max-w-[220px] rounded border border-border object-contain p-2" />
+                <div className="mt-2 flex flex-wrap items-center gap-3 rounded border border-border p-3">
+                  <img src={form.agency_logo_url} alt="Logo agence" className="max-h-20 max-w-[220px] object-contain" />
+                  <div className="min-w-0 text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground">Logo agence enregistré</p>
+                    {typeof editing?.metadata?.agency_logo_filename === "string" && (
+                      <p className="mt-1 break-all">{editing.metadata.agency_logo_filename}</p>
+                    )}
+                    {typeof editing?.metadata?.agency_logo_updated_at === "string" && (
+                      <p className="mt-1">
+                        Uploadé le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(editing.metadata.agency_logo_updated_at))}
+                      </p>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -2872,15 +2842,6 @@ export default function OrganizationsAdmin() {
             </TabsContent>
 
             <TabsContent value="commissions" className="space-y-4">
-              <Card className="p-3 text-xs text-muted-foreground">
-                <details>
-                  <summary className="cursor-pointer font-mono font-semibold text-foreground">Debug</summary>
-                  <pre className="mt-2 overflow-auto rounded bg-muted p-2 font-mono">
-                    {JSON.stringify(commissionRulesDebug, null, 2)}
-                  </pre>
-                </details>
-              </Card>
-
               {commissionRulesError && (
                 <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
                   {commissionRulesError}
@@ -3357,32 +3318,6 @@ export default function OrganizationsAdmin() {
                 )}
               </Card>
             </div>
-          )}
-
-          {onboardingReview?.caseRow && (
-            <details className="rounded-lg border border-border p-4 text-xs">
-              <summary className="cursor-pointer font-mono font-semibold text-muted-foreground hover:text-foreground">
-                Debug
-              </summary>
-              <div className="mt-3 grid gap-4 md:grid-cols-3">
-                <div>
-                  <p className="mb-2 font-semibold text-muted-foreground">onboarding_case</p>
-                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.caseRow, null, 2)}</pre>
-                  <p className="mb-2 mt-4 font-semibold text-muted-foreground">form_data</p>
-                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.caseRow.form_data ?? null, null, 2)}</pre>
-                </div>
-                <div>
-                  <p className="mb-2 font-semibold text-muted-foreground">agency_profile</p>
-                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.agencyProfile, null, 2)}</pre>
-                  <p className="mb-2 mt-4 font-semibold text-muted-foreground">partner_onboarding_documents</p>
-                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.documents, null, 2)}</pre>
-                </div>
-                <div>
-                  <p className="mb-2 font-semibold text-muted-foreground">organization</p>
-                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(onboardingReview.organization, null, 2)}</pre>
-                </div>
-              </div>
-            </details>
           )}
 
           <DialogFooter>

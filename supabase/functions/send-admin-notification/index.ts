@@ -272,15 +272,6 @@ async function smtpConfig(admin: any) {
     throw new Error(`Missing SMTP settings: ${missing.join(", ")}. Configure Admin > Paramètres email or Supabase Edge Function secrets.`);
   }
 
-  console.info("[admin-email] SMTP config", {
-    source: config.source,
-    SMTP_HOST: config.hostname,
-    SMTP_PORT: config.port,
-    SMTP_FROM: config.from,
-    SMTP_USER: config.username,
-    SMTP_SECURE: config.secure,
-  });
-
   return {
     connection: {
       hostname: config.hostname,
@@ -400,7 +391,6 @@ async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: stri
     return { ok: true, log_id: logId, skipped: "missing_or_invalid_recipient" };
   }
   try {
-    console.info("[admin-email] sending", { eventType: payload.eventType, recipient: payload.recipient, subject: payload.subject });
     const smtp = await smtpConfig(admin);
     const client = new SMTPClient({ connection: smtp.connection });
     await client.send({
@@ -413,7 +403,6 @@ async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: stri
     });
     await client.close();
     await updateLog(admin, logId, "sent");
-    console.info("[admin-email] sent", { function_version, eventType: payload.eventType, logId, email_send_success: true });
     return { ok: true, log_id: logId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1165,18 +1154,6 @@ Deno.serve(async (req) => {
     body = {};
   }
 
-  if (body?.action === "debug_echo") {
-    return new Response(JSON.stringify({
-      success: true,
-      ok: true,
-      function_version,
-      received_keys: Object.keys(body ?? {}),
-    }), {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {
@@ -1195,16 +1172,6 @@ Deno.serve(async (req) => {
   let failureLogId: string | undefined;
 
   try {
-    const requestSummary = sanitizeRequestBody(body);
-    console.info("[admin-email] request", {
-      function_version,
-      function: "send-admin-notification",
-      has_auth: Boolean(req.headers.get("Authorization")),
-      has_booking_id: Boolean(requestSummary.booking_id),
-      has_payment_id: Boolean(requestSummary.payment_id),
-      ...requestSummary,
-    });
-
     const payloads = await payloadFromBody(admin, body, req);
     const results = [];
     for (const payload of payloads) {
@@ -1219,13 +1186,6 @@ Deno.serve(async (req) => {
       error: failed.length ? "one_or_more_emails_failed" : undefined,
       detail: failed.length ? failed.map((item) => item.detail || item.error).filter(Boolean).join(" | ") : undefined,
     };
-    console.info("[admin-email] response", {
-      function_version,
-      ok: result.ok,
-      log_ids: result.log_ids,
-      error: result.error ?? null,
-      detail: result.detail ?? null,
-    });
     return new Response(JSON.stringify(result), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

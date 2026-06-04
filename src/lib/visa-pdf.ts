@@ -5,7 +5,6 @@ import {
   formatVisaDate,
   isRetiredVisaCategory,
   parsePreviousJapanStay,
-  parseVisaDateParts,
   PDF_NOT_APPLICABLE,
 } from "@/lib/visa-format";
 
@@ -97,12 +96,38 @@ export type VisaSettingsData = {
   inviter_nationality?: string | null;
 };
 
-const fmtDate = (s?: string | null) => formatVisaDate(s, cleanVisaText(s));
+export function formatVisaPdfDate(value?: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    const d = String(value.getDate()).padStart(2, "0");
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const y = String(value.getFullYear());
+    return `${d}/${m}/${y}`;
+  }
 
-/** Split a Date into D/M/YYYY chunks for the day/month/year cells of the form. */
-const splitDate = (s?: string | null): { d: string; m: string; y: string } => {
-  return parseVisaDateParts(s) ?? { d: "", m: "", y: "" };
-};
+  const raw = cleanVisaText(value);
+  if (!raw) return "";
+
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:T.*)?$/);
+  if (iso) {
+    return `${iso[3].padStart(2, "0")}/${iso[2].padStart(2, "0")}/${iso[1]}`;
+  }
+
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    return `${slash[1].padStart(2, "0")}/${slash[2].padStart(2, "0")}/${slash[3]}`;
+  }
+
+  const spaced = raw.match(/^(\d{1,2})\s+(\d{1,2})\s+(\d{4})$/);
+  if (spaced) {
+    return `${spaced[1].padStart(2, "0")}/${spaced[2].padStart(2, "0")}/${spaced[3]}`;
+  }
+
+  return formatVisaDate(raw, "");
+}
+
+const fmtDate = (s?: string | null) => formatVisaPdfDate(s);
 
 /** Required-field validation. Returns a list of missing/invalid field labels. */
 export function validateVisaApplication(app: VisaApplicationData): string[] {
@@ -217,24 +242,51 @@ export async function generateVisaPdf(
     page: typeof p1,
     s: string | null | undefined,
     xDay: number,
-    xMonth: number,
-    xYear: number,
+    _xMonth: number,
+    _xYear: number,
     y: number,
     size = 9
   ) => {
-    const { d, m, y: yr } = splitDate(s);
-    if (d) draw(page, d, xDay, y, size);
-    if (m) draw(page, m, xMonth, y, size);
-    if (yr) draw(page, yr, xYear, y, size);
+    const fullDate = formatVisaPdfDate(s);
+    const parts = fullDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!parts) return;
+
+    // Official template prints Day/Month/Year hints under separate blanks.
+    // We intentionally draw the date as one contiguous visual value with
+    // explicit slash glyphs, so it never renders as "15 01 1968".
+    let cursor = xDay;
+    const drawSegment = (value: string, maxWidth: number) => {
+      draw(page, value, cursor, y, size, { maxWidth, minSize: 7 });
+      cursor += helv.widthOfTextAtSize(value, size) + 2;
+    };
+    drawSegment(parts[1], 16);
+    drawSegment("/", 6);
+    drawSegment(parts[2], 16);
+    drawSegment("/", 6);
+    drawSegment(parts[3], 34);
   };
 
   // ===================== PAGE 1 =====================
   // Text is offset ~3pt above the printed underline so it sits ON TOP of the line, not over it.
   const Y_OFFSET = 3;
+  // Page 1 calibrated layout constants.
+  // These are deliberately named because the official template has dense labels
+  // around these fields and future micro-adjustments should not be archaeology.
+  const purposeOfVisitX = 305;
+  const purposeOfVisitY = 371.9 + Y_OFFSET;
+  const employerNameX = 170;
+  const employerNameY = 96.5 + Y_OFFSET;
+  const employerAddressX = 170;
+  const employerAddressY = 76.5 + Y_OFFSET;
+  const employerPhoneX = 440;
+  const employerPhoneY = 96.5 + Y_OFFSET;
   const isRetiredApplicant = isRetiredVisaCategory(application.category);
   const employerName = isRetiredApplicant ? PDF_NOT_APPLICABLE : application.employer_name;
   const employerTel = isRetiredApplicant ? PDF_NOT_APPLICABLE : application.employer_tel;
   const employerAddress = isRetiredApplicant ? PDF_NOT_APPLICABLE : application.employer_address;
+  const purposeOfVisit = cleanVisaText(application.purpose_of_visit).toLowerCase() === "tourisme"
+    ? "Tourisme"
+    : application.purpose_of_visit;
 
   // Identity
   draw(p1, application.surname?.toUpperCase(),       210, 621.3 + Y_OFFSET, 9, { maxWidth: 360 });
@@ -271,8 +323,9 @@ export async function generateVisaPdf(
   drawDateCells(p1, application.passport_date_of_expiry, 478, 502, 524, 410.5 + Y_OFFSET);
   draw(p1, application.certificate_of_eligibility_no,    200, 390.8 + Y_OFFSET, 9, { maxWidth: 360 });
 
-  // Travel
-  draw(p1, application.purpose_of_visit,         260, 371.9 + Y_OFFSET, 9, { maxWidth: 300 });
+  // Travel. Purpose starts after the long printed label
+  // "Purpose of visit to Japan/Status of residence" to avoid label overlap.
+  draw(p1, purposeOfVisit, purposeOfVisitX, purposeOfVisitY, 9, { maxWidth: 255 });
   draw(p1, application.intended_length_of_stay,  215, 350.5 + Y_OFFSET, 9, { maxWidth: 80 });
   draw(p1, fmtDate(application.date_of_arrival), 425, 350.5 + Y_OFFSET, 9, { maxWidth: 130 });
   draw(p1, application.port_of_entry,            180, 331.1 + Y_OFFSET, 9, { maxWidth: 110 });
@@ -292,10 +345,12 @@ export async function generateVisaPdf(
 
   draw(p1, application.profession, 280, 129.8 + Y_OFFSET, 9, { maxWidth: 280 });
 
-  // Employer
-  draw(p1, employerName,    230, 109.9 + Y_OFFSET, 9, { maxWidth: 175 });
-  draw(p1, employerTel,     440, 87.7  + Y_OFFSET, 9, { maxWidth: 120 });
-  drawWrapped(p1, employerAddress, 130, 87.7 + Y_OFFSET, 280, 9);
+  // Employer. The printed heading says "Name and address of employer";
+  // values must sit on the sub-lines, not on the heading baseline.
+  // Name line: left side under "Name"; Tel line: right side; Address line below.
+  draw(p1, employerName, employerNameX, employerNameY, 9, { maxWidth: 220 });
+  draw(p1, employerTel, employerPhoneX, employerPhoneY, 9, { maxWidth: 120 });
+  drawWrapped(p1, employerAddress, employerAddressX, employerAddressY, 280, 9);
 
   // ===================== PAGE 2 =====================
   draw(p2, application.partner_profession, 290, 792.0 + Y_OFFSET, 9, { maxWidth: 270 });

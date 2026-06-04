@@ -54,15 +54,9 @@ export default function OpsPayments({ trip }: { trip: any }) {
     await supabase.from("bookings").update({ paid_amount_mad: sum }).eq("id", patch.booking_id);
     if (notifyPaymentId) {
       const notificationPayload = { type: "payment", payload: { payment_id: notifyPaymentId } };
-      if (import.meta.env.DEV) {
-        console.info("[admin-email] invoke", { function: "send-admin-notification", payload: notificationPayload });
-      }
       void supabase.functions.invoke("send-admin-notification", {
         body: notificationPayload,
       }).then(({ data, error }) => {
-        if (import.meta.env.DEV) {
-          console.info("[admin-email] invoke response", { function: "send-admin-notification", data, error });
-        }
         if (error || data?.ok === false) console.warn("admin payment notification failed", data ?? error);
       });
     }

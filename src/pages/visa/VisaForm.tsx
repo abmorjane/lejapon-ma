@@ -160,16 +160,6 @@ export default function VisaForm() {
         clientPassportOcr.passport_no,
       ));
       const passportForAutoPrefill = metadataPassportNo || profilePassportNo;
-      if (import.meta.env.DEV) {
-        console.info("[visa-form] initial passport prefill diagnostics", {
-          userId: user.id,
-          metadataPassportNo: firstString(metadata.passport_no, metadata.passport_number) || null,
-          normalizedMetadataPassportNo: metadataPassportNo || null,
-          clientProfileQueryError: userClientProfile.error,
-          clientProfileFound: Boolean(userClientProfile.data),
-          normalizedClientProfilePassportNo: profilePassportNo || null,
-        });
-      }
       const metadataPatch = applyEmptyFieldPatch(hydratedApp, {
         surname: metadata.last_name,
         given_names: metadata.first_name,
@@ -183,15 +173,6 @@ export default function VisaForm() {
           lastName: String(metadata.last_name ?? hydratedApp.surname ?? ""),
           email: user.email ?? "",
         });
-        if (import.meta.env.DEV) {
-          console.info("[visa-form] initial passport prefill lookup result", {
-            normalizedPassportNo: passportForAutoPrefill,
-            status: lookup.status,
-            source: lookup.status === "matched" ? lookup.source : null,
-            sourceId: lookup.status === "matched" ? lookup.sourceId : null,
-            finalPrefillKeysApplied: lookup.status === "matched" ? Object.keys(applyEmptyFieldPatch(hydratedApp, lookup.patch)) : [],
-          });
-        }
         if (lookup.status === "matched") {
           const safePatch = applyEmptyFieldPatch(hydratedApp, lookup.patch);
           hydratedApp = { ...hydratedApp, ...safePatch };
@@ -261,15 +242,6 @@ export default function VisaForm() {
   const lookupPassportFromForm = async (force = false) => {
     if (!app?.passport_no || isReadOnly) return;
     const normalized = normalizePassportNo(app.passport_no);
-    if (import.meta.env.DEV) {
-      console.info("[visa-form] passport CRM lookup requested", {
-        userId: user?.id,
-        input: app.passport_no,
-        normalized,
-        tables: ["clients", "booking_participants"],
-        fields: ["passport_number", "passport_no", "metadata.passport_ocr.passport_number", "metadata.passport_ocr.passport_no"],
-      });
-    }
     if (!normalized) return;
     if (!force && normalized === lastPassportLookup) return;
     setLastPassportLookup(normalized);
@@ -280,15 +252,6 @@ export default function VisaForm() {
       email: String(app.residential_email ?? user?.email ?? ""),
     });
     setPassportLookupBusy(false);
-    if (import.meta.env.DEV) {
-      console.info("[visa-form] passport CRM lookup result", {
-        normalized,
-        status: lookup.status,
-        source: lookup.status === "matched" ? lookup.source : null,
-        sourceId: lookup.status === "matched" ? lookup.sourceId : null,
-        finalPrefillKeysApplied: lookup.status === "matched" ? Object.keys(applyEmptyFieldPatch(app, lookup.patch)) : [],
-      });
-    }
     if (lookup.status === "matched") {
       const safePatch = applyEmptyFieldPatch(app, lookup.patch);
       const patch = { ...safePatch, passport_no: normalized };

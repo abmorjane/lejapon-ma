@@ -95,16 +95,10 @@ export default function EmailLogs() {
   const sendTest = async () => {
     setTesting(true);
     const requestPayload = { type: "test", payload: {} };
-    if (isDev) {
-      console.info("[admin-email] invoke", { function: "send-admin-notification", payload: requestPayload });
-    }
     const { data, error } = await supabase.functions.invoke("send-admin-notification", {
       body: requestPayload,
     });
     setTesting(false);
-    if (isDev) {
-      console.info("[admin-email] invoke response", { function: "send-admin-notification", data, error });
-    }
     if (error || data?.ok === false) {
       const backendError = error ? await readFunctionError(error) : null;
       if (isDev && backendError) {
@@ -124,16 +118,10 @@ export default function EmailLogs() {
   const resend = async (id: string) => {
     setBusyId(id);
     const requestPayload = { type: "resend", payload: { log_id: id } };
-    if (isDev) {
-      console.info("[admin-email] invoke", { function: "send-admin-notification", payload: requestPayload });
-    }
     const { data, error } = await supabase.functions.invoke("send-admin-notification", {
       body: requestPayload,
     });
     setBusyId(null);
-    if (isDev) {
-      console.info("[admin-email] invoke response", { function: "send-admin-notification", data, error });
-    }
     if (error || data?.ok === false) {
       const backendError = error ? await readFunctionError(error) : null;
       toast.error(formatBackendError(backendError ?? data, error?.message) || "Réenvoi impossible");

@@ -25,7 +25,6 @@ const SUPPORTED_ACTIONS = [
   "remove_organization_member",
   "delete_external_user_safely",
   "deactivate_user",
-  "debug_echo",
 ];
 const EXTERNAL_MEMBER_LIST_ACTIONS = new Set([
   "list_external_members",
@@ -183,16 +182,6 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const action = (body.action || body.type || body.operation || body.name || body.actionName) as string | undefined;
-
-    if (action === "debug_echo") {
-      return json({
-        action: "debug_echo",
-        success: true,
-        received_body: body,
-        normalized_action: action,
-        supported_actions: SUPPORTED_ACTIONS,
-      });
-    }
 
     if (action === "list") {
       const usersList = await listAllAuthUsers(admin);
@@ -396,7 +385,6 @@ Deno.serve(async (req) => {
             role: member.role,
             status: member.status,
             created_at: member.created_at,
-            raw_member: member,
           };
         });
 
@@ -410,16 +398,6 @@ Deno.serve(async (req) => {
           items: rows,
           organization_members: rows,
           warnings: [...new Set(warnings)],
-          debug: {
-            step,
-            organization_members_count: rows.length,
-            user_ids_count: userIds.length,
-            organization_ids_count: organizationIds.length,
-            organizations_resolved: organizationsById.size,
-            auth_users_resolved: authUsersById.size,
-            profiles_resolved: profilesById.size,
-            organization_member_profiles_resolved: memberProfilesByMemberId.size,
-          },
         });
       } catch (error) {
         return json({

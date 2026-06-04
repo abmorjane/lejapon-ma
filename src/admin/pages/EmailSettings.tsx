@@ -133,12 +133,6 @@ const EmailSettingsPage = () => {
     if (!saved) return;
     setTesting(true);
     const requestPayload = { type: "test", payload: {} };
-    if (isDev) {
-      console.info("[admin-email] invoke", {
-        function: "send-admin-notification",
-        payload: requestPayload,
-      });
-    }
     const { data, error } = await supabase.functions.invoke("send-admin-notification", {
       body: requestPayload,
     });
@@ -159,12 +153,6 @@ const EmailSettingsPage = () => {
         variant: "destructive",
       });
       return;
-    }
-    if (isDev) {
-      console.info("[admin-email] invoke response", {
-        function: "send-admin-notification",
-        data,
-      });
     }
     if (data?.ok === false) {
       toast({

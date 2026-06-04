@@ -90,6 +90,7 @@ async function loadJaponLogo(pdf: PDFDocument) {
 async function loadStamp(pdf: PDFDocument, agency?: AgencySettings) {
   const configured = await loadExternalImage(pdf, agency?.stamp_signature_url);
   if (configured) return configured;
+  if (agency?.is_partner_agency) return null;
   try {
     const res = await fetch(stampUrl);
     const buf = new Uint8Array(await res.arrayBuffer());
@@ -128,7 +129,7 @@ function drawText(p: PDFPage, t: string, x: number, y: number, font: PDFFont, si
 async function header(pdf: PDFDocument, page: PDFPage, title: string, number: string, fontB: PDFFont, font: PDFFont, agency: AgencySettings) {
   const lejaponLogo = await loadJaponLogo(pdf);
   const agencyLogo = await loadExternalImage(pdf, agency?.logo_url);
-  const logo = agencyLogo ?? await loadImage(pdf, logoUrl);
+  const logo = agencyLogo ?? (agency.is_partner_agency ? null : await loadImage(pdf, logoUrl));
   const pw = page.getWidth();
   if (lejaponLogo) {
     const maxW = 78;
@@ -141,7 +142,7 @@ async function header(pdf: PDFDocument, page: PDFPage, title: string, number: st
   } else {
     drawText(page, "LeJapon.ma", 40, 804, fontB, 13, RED);
   }
-  // Agency/Moroccan Express logo beside LeJapon.ma — preserve aspect ratio.
+  // Partner agency logo or Moroccan Express logo beside LeJapon.ma — preserve aspect ratio.
   if (logo) {
     const maxW = agencyLogo ? 92 : 118;
     const maxH = 44;
@@ -150,9 +151,12 @@ async function header(pdf: PDFDocument, page: PDFPage, title: string, number: st
     let h = w / ratio;
     if (h > maxH) { h = maxH; w = h * ratio; }
     page.drawImage(logo, { x: 132, y: 800 - h / 2, width: w, height: h });
-  } else {
+  } else if (!agency.is_partner_agency) {
     drawText(page, "MOROCCAN EXPRESS", 132, 808, fontB, 12, BLACK);
     drawText(page, "TRAVEL & EVENTS", 132, 793, font, 8, GREY);
+  } else {
+    drawText(page, agency.agency_display_name || agency.legal_company_name, 132, 808, fontB, 11, BLACK);
+    drawText(page, "Agence partenaire LeJapon.ma", 132, 793, font, 8, GREY);
   }
   // Title block top-right
   const titleSize = 26;
@@ -166,10 +170,16 @@ async function header(pdf: PDFDocument, page: PDFPage, title: string, number: st
 
   // Company info under accent line
   let y = 758;
-  drawText(page, agency.legal_company_name, 40, y, fontB, 9.5, BLACK);
+  const issuerName = agency.is_partner_agency
+    ? (agency.agency_display_name || agency.legal_company_name)
+    : agency.legal_company_name;
+  drawText(page, issuerName, 40, y, fontB, 9.5, BLACK);
   y -= 12;
   drawText(page, agencyAddressLine(agency), 40, y, font, 8.5, GREY); y -= 11;
-  drawText(page, `${agencyIceLine(agency)}  ·  ${agency.email}  ·  ${agency.phone}`, 40, y, font, 8.5, GREY);
+  drawText(page, [agencyIceLine(agency), agency.email, agency.phone].filter(Boolean).join("  ·  "), 40, y, font, 8.5, GREY);
+  if (agency.is_partner_agency) {
+    drawText(page, "Réservation réalisée par une agence partenaire LeJapon.ma", 355, y, font, 8, GREY);
+  }
 }
 
 function infoBlock(page: PDFPage, font: PDFFont, fontB: PDFFont, x: number, y: number, w: number, label: string, lines: string[]) {
@@ -238,9 +248,16 @@ async function footer(pdf: PDFDocument, page: PDFPage, font: PDFFont, agency: Ag
     page.drawImage(japon, { x: 40, y: 22, width: w, height: h });
     textX = 40 + w + 12;
   }
-  drawText(page, agency.legal_company_name, textX, 42, font, 7.5, GREY);
-  drawText(page, agencyAddressLine(agency), textX, 32, font, 7.5, GREY);
-  drawText(page, `${agencyIceLine(agency)}  ·  ${agency.email}  ·  ${agency.phone}`, textX, 22, font, 7.5, GREY);
+  if (agency.is_partner_agency) {
+    const issuerName = agency.agency_display_name || agency.legal_company_name;
+    drawText(page, `Réservation réalisée par ${issuerName}, partenaire LeJapon.ma`, textX, 42, font, 7.5, GREY);
+    drawText(page, [agencyAddressLine(agency), agency.email, agency.phone].filter(Boolean).join("  ·  "), textX, 32, font, 7.5, GREY);
+    drawText(page, "Plateforme et organisation voyage: LeJapon.ma / Moroccan Express Travel & Events", textX, 22, font, 7.5, GREY);
+  } else {
+    drawText(page, agency.legal_company_name, textX, 42, font, 7.5, GREY);
+    drawText(page, agencyAddressLine(agency), textX, 32, font, 7.5, GREY);
+    drawText(page, `${agencyIceLine(agency)}  ·  ${agency.email}  ·  ${agency.phone}`, textX, 22, font, 7.5, GREY);
+  }
 }
 
 export type QuoteData = {

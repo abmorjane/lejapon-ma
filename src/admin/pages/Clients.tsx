@@ -185,14 +185,11 @@ export default function Clients() {
   const [history, setHistory] = useState<any[]>([]);
 
   const fetchClients = async () => {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    console.log("[CRM Clients] Supabase URL utilisée", supabaseUrl);
     const { data, error } = await supabase
       .from("clients")
       .select(CLIENT_SELECT)
       .order("created_at", { ascending: false })
       .limit(150);
-    console.log("[CRM Clients] fetchClients result", { data, error, count: data?.length ?? 0, query: q, professionFilter, maritalFilter, cityFilter, ageFilter });
     if (error) {
       toast.error(error.message);
       setRows([]);
@@ -216,7 +213,6 @@ export default function Clients() {
         (age == null || clientAge === age)
       );
     });
-    console.log("[CRM Clients] clients après filtre", { filteredCount: filtered.length, rawCount: data?.length ?? 0, query: q, professionFilter, maritalFilter, cityFilter, ageFilter });
     setRows(filtered);
   };
   useEffect(() => { fetchClients(); }, [q, professionFilter, maritalFilter, cityFilter, ageFilter]);
@@ -363,12 +359,9 @@ export default function Clients() {
       ...edit,
       metadata: asRecord(edit.metadata),
     });
-    console.log("CLIENT INSERT PAYLOAD", { table: "public.clients", payload });
-    console.log("[CRM Clients] save client payload", { table: "public.clients", payload });
     const result = payload.id
       ? await supabase.from("clients").update(payload).eq("id", payload.id).select("*").single()
       : await supabase.from("clients").insert(payload).select("*").single();
-    console.log("[CRM Clients] save client result", result);
     if (result.error) {
       toast.error(result.error.message);
       return;

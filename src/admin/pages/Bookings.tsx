@@ -113,6 +113,11 @@ type OrganizationSummary = {
   email?: string | null;
   phone?: string | null;
   website?: string | null;
+  address_line_1?: string | null;
+  address_line_2?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
   status?: string | null;
   metadata?: Record<string, any> | null;
 };
@@ -147,8 +152,6 @@ type NormalBookingRow = {
   paid_amount_mad: number | null;
   created_at: string;
   source?: string | null;
-  created_by?: string | null;
-  metadata?: Record<string, any> | null;
   trips?: { title?: string | null } | null;
   clients?: { loyalty_tier?: string | null; is_returning?: boolean | null; trips_completed?: number | null } | null;
 };
@@ -283,7 +286,7 @@ const makeAgencyAuditEntry = (
 });
 
 const bookingSourceLabel = (booking: NormalBookingRow) =>
-  normalize(booking.source || booking.metadata?.source).includes("admin") || booking.created_by
+  normalize(booking.source).includes("admin")
     ? "Admin"
     : "Site LeJapon.ma";
 
@@ -311,6 +314,8 @@ const getBookingSearchText = (booking: NormalBookingRow) =>
 
 export default function Bookings() {
   const [rows, setRows] = useState<NormalBookingRow[]>([]);
+  const [bookingsLoading, setBookingsLoading] = useState(true);
+  const [bookingsError, setBookingsError] = useState<string | null>(null);
   const [agencyRequests, setAgencyRequests] = useState<AgencyBookingRequest[]>([]);
   const [agencyRequestsLoading, setAgencyRequestsLoading] = useState(true);
   const [agencyRequestsError, setAgencyRequestsError] = useState<string | null>(null);
@@ -355,18 +360,28 @@ export default function Bookings() {
   const [originFilter, setOriginFilter] = useState<ReservationOrigin>("all");
   const [agencyFilter, setAgencyFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
-  const { roles } = useAuth();
+  const { roles, user } = useAuth();
   const canCreate = hasAnyRole(roles, ["super_admin", "admin", "manager"]);
   const canManageAgencyReservations = hasAnyRole(roles, ["super_admin", "admin"]);
   const reduceMotion = useReducedMotion();
 
   const load = async () => {
-    const { data } = await supabase
+    setBookingsLoading(true);
+    setBookingsError(null);
+    const { data, error } = await supabase
       .from("bookings")
-      .select("id, reference, contact_name, contact_email, contact_phone, status, num_adults, num_children, total_amount_mad, paid_amount_mad, created_at, source, created_by, metadata, trips(title), clients(loyalty_tier, is_returning, trips_completed)")
+      .select("id, reference, contact_name, contact_email, contact_phone, status, num_adults, num_children, total_amount_mad, paid_amount_mad, created_at, source, trips(title), clients(loyalty_tier, is_returning, trips_completed)")
       .order("created_at", { ascending: false })
       .limit(160);
+    if (error) {
+      console.warn("[admin-reservations] bookings load failed", error);
+      setRows([]);
+      setBookingsError(error.message ?? "Impossible de charger les réservations LeJapon.ma.");
+      setBookingsLoading(false);
+      return;
+    }
     setRows((data ?? []) as NormalBookingRow[]);
+    setBookingsLoading(false);
   };
 
   const loadAgencyRequests = async () => {
@@ -392,7 +407,7 @@ export default function Bookings() {
     if (organizationIds.length) {
       const { data: organizations } = await db
         .from("organizations")
-        .select("id,display_name,legal_name,email,phone,website,status,metadata")
+        .select("id,display_name,legal_name,email,phone,website,address_line_1,address_line_2,city,postal_code,country,status,metadata")
         .in("id", organizationIds);
       ((organizations ?? []) as OrganizationSummary[]).forEach((organization) => {
         organizationById.set(organization.id, organization);
@@ -879,6 +894,9 @@ export default function Bookings() {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [agencyFilter, agencyRequests, originFilter, q, rows, status]);
 
+  const displayedNormalCount = unifiedReservations.filter((item) => item.kind === "booking").length;
+  const displayedAgencyCount = unifiedReservations.filter((item) => item.kind === "agency_request").length;
+
   const openAgencyRequest = async (request: AgencyBookingRequest) => {
     setSelectedAgencyRequest(request);
     const { data, error } = await db
@@ -928,9 +946,17 @@ export default function Bookings() {
     const agency = {
       agency_display_name: request.agency_name ?? request.agency?.display_name ?? undefined,
       legal_company_name: request.agency?.legal_name ?? request.agency_name ?? undefined,
+      brand_name: request.agency_name ?? request.agency?.display_name ?? "Agence partenaire",
       email: request.agency?.email ?? undefined,
       phone: request.agency?.phone ?? undefined,
+      website: request.agency?.website ?? undefined,
+      address_line_1: (request.agency as any)?.address_line_1 ?? undefined,
+      address_line_2: (request.agency as any)?.address_line_2 ?? undefined,
+      city: (request.agency as any)?.city ?? undefined,
+      postal_code: (request.agency as any)?.postal_code ?? undefined,
+      country: (request.agency as any)?.country ?? undefined,
       logo_url: typeof request.agency?.metadata?.agency_logo_url === "string" ? request.agency.metadata.agency_logo_url : undefined,
+      is_partner_agency: true,
     };
     return { bookingLike, tripLike, extras, agency, requestAdjustments, requestPayments };
   };
@@ -1076,21 +1102,32 @@ export default function Bookings() {
             </Select>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            {unifiedReservations.length} reservation(s) affichée(s) · {rows.length} LeJapon.ma · {agencyRequests.length} agences
+            {unifiedReservations.length} reservation(s) affichée(s) · {displayedNormalCount} LeJapon.ma · {displayedAgencyCount} agences
           </p>
         </CardContent>
       </Card>
 
       {canCreate && <CreateBookingDialog open={createOpen} onOpenChange={setCreateOpen} />}
 
+      {bookingsError ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          Réservations LeJapon.ma: {bookingsError}
+        </div>
+      ) : null}
+
       {agencyRequestsError ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          {agencyRequestsError}
+          Réservations agences: {agencyRequestsError}
         </div>
       ) : null}
 
       <div className="space-y-3 md:hidden">
-        {unifiedReservations.length === 0 && (
+        {(bookingsLoading || agencyRequestsLoading) && unifiedReservations.length === 0 && (
+          <p className="p-6 text-center text-sm text-muted-foreground bg-background rounded-2xl border border-border">
+            Chargement des réservations…
+          </p>
+        )}
+        {unifiedReservations.length === 0 && !bookingsLoading && !agencyRequestsLoading && (
           <p className="p-6 text-center text-sm text-muted-foreground bg-background rounded-2xl border border-border">
             Aucune réservation.
           </p>
@@ -1213,10 +1250,10 @@ export default function Bookings() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {agencyRequestsLoading && rows.length === 0 && (
+              {(bookingsLoading || agencyRequestsLoading) && unifiedReservations.length === 0 && (
                 <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Chargement des réservations…</td></tr>
               )}
-              {unifiedReservations.length === 0 && !agencyRequestsLoading && (
+              {unifiedReservations.length === 0 && !bookingsLoading && !agencyRequestsLoading && (
                 <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Aucune réservation.</td></tr>
               )}
               {unifiedReservations.map((item) => {

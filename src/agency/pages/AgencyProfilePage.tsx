@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Building2, KeyRound, Loader2, Save, Upload, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Building2, ImageUp, KeyRound, Loader2, Save, Trash2, Upload } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import type { AgencyProfile } from "../agencyTypes";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
+const LOGO_ORG_COLUMNS = "id,metadata";
 
 const profileColumns = [
   "organization_id",
@@ -59,6 +60,8 @@ export default function AgencyProfilePage() {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [memberProfileRow, setMemberProfileRow] = useState<Record<string, any> | null>(null);
+  const [logoMetadataOverride, setLogoMetadataOverride] = useState<Record<string, any> | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   const loadMemberProfile = async () => {
     if (!user || !organization || !currentMembership?.id) return null;
@@ -103,6 +106,10 @@ export default function AgencyProfilePage() {
     };
     load();
   }, [organization?.id, currentMembership?.id, user?.id]);
+
+  useEffect(() => {
+    setLogoMetadataOverride(null);
+  }, [organization?.id, organization?.metadata?.agency_logo_url, organization?.metadata?.agency_logo_path]);
 
   const saveAccount = async () => {
     if (!user || !organization || !currentMembership?.id) {
@@ -188,19 +195,43 @@ export default function AgencyProfilePage() {
     toast.success("Mot de passe mis à jour.");
   };
 
-  const agencyLogoUrl = typeof organization?.metadata?.agency_logo_url === "string"
-    ? organization.metadata.agency_logo_url
+  const effectiveLogoMetadata = logoMetadataOverride ?? organization?.metadata ?? {};
+  const agencyLogoUrl = typeof effectiveLogoMetadata.agency_logo_url === "string"
+    ? effectiveLogoMetadata.agency_logo_url
+    : "";
+  const agencyLogoPath = typeof effectiveLogoMetadata.agency_logo_path === "string"
+    ? effectiveLogoMetadata.agency_logo_path
+    : "";
+  const agencyLogoFilename = typeof effectiveLogoMetadata.agency_logo_filename === "string"
+    ? effectiveLogoMetadata.agency_logo_filename
+    : agencyLogoPath.split("/").pop() || "";
+  const agencyLogoUpdatedAt = typeof effectiveLogoMetadata.agency_logo_updated_at === "string"
+    ? effectiveLogoMetadata.agency_logo_updated_at
     : "";
 
-  const saveAgencyLogoUrl = async (logoUrl: string | null) => {
-    if (!organization) return;
+  const saveAgencyLogoMetadata = async (logo: { url: string | null; path?: string | null; filename?: string | null }) => {
+    if (!organization) throw new Error("Organisation agence introuvable.");
     const metadata = {
       ...(organization.metadata ?? {}),
-      agency_logo_url: logoUrl,
+      agency_logo_url: logo.url,
+      agency_logo_path: logo.path ?? null,
+      agency_logo_filename: logo.filename ?? null,
+      agency_logo_updated_at: logo.url ? new Date().toISOString() : null,
     };
-    const { error } = await db.from("organizations").update({ metadata }).eq("id", organization.id);
+    const { data, error } = await db
+      .from("organizations")
+      .update({ metadata })
+      .eq("id", organization.id)
+      .select(LOGO_ORG_COLUMNS)
+      .maybeSingle();
     if (error) throw error;
+    if (!data) {
+      throw new Error("Aucune organisation mise à jour. Vérifiez les droits RLS sur organizations.metadata.");
+    }
+    const savedMetadata = data.metadata && typeof data.metadata === "object" ? data.metadata : metadata;
+    setLogoMetadataOverride(savedMetadata);
     await reload();
+    return savedMetadata;
   };
 
   const uploadAgencyLogo = async (file: File | undefined) => {
@@ -218,11 +249,40 @@ export default function AgencyProfilePage() {
         upsert: true,
       });
       if (error) throw error;
+      const savedFileName = path.split("/").pop() || safeName;
+      const listResult = await supabase.storage.from("media").list(`${organization.id}/branding`, {
+        search: savedFileName,
+      });
+      if (listResult.error) {
+        console.warn("[agency-logo] storage verification list failed", listResult.error);
+      } else if (!listResult.data?.some((item) => item.name === savedFileName)) {
+        throw new Error("Upload logo non vérifié dans le bucket media.");
+      }
       const { data } = supabase.storage.from("media").getPublicUrl(path);
-      await saveAgencyLogoUrl(data.publicUrl);
+      const savedMetadata = await saveAgencyLogoMetadata({ url: data.publicUrl, path, filename: file.name });
+      if (!savedMetadata?.agency_logo_url) {
+        throw new Error("Logo uploadé mais URL non persistée dans organizations.metadata.");
+      }
       toast.success("Logo agence enregistré.");
     } catch (error: any) {
       toast.error(error?.message ?? "Upload impossible. Vérifiez le bucket media.");
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const deleteAgencyLogo = async () => {
+    if (!organization) return;
+    setUploadingLogo(true);
+    try {
+      await saveAgencyLogoMetadata({ url: null, path: null, filename: null });
+      if (agencyLogoPath) {
+        const { error: removeError } = await supabase.storage.from("media").remove([agencyLogoPath]);
+        if (removeError) console.warn("[agency-logo] remove failed", removeError);
+      }
+      toast.success("Logo agence supprimé.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Impossible de supprimer le logo.");
     } finally {
       setUploadingLogo(false);
     }
@@ -241,9 +301,9 @@ export default function AgencyProfilePage() {
       <Card className="p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-4">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-accent/10">
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-accent/10">
               {agencyLogoUrl ? (
-                <img src={agencyLogoUrl} alt="Logo agence" className="h-full w-full object-contain p-1" />
+                <img src={agencyLogoUrl} alt="Logo agence enregistré" className="h-full w-full object-contain p-2" />
               ) : (
                 <Building2 className="h-6 w-6 text-accent" />
               )}
@@ -253,28 +313,45 @@ export default function AgencyProfilePage() {
               <p className="mt-1 text-sm text-muted-foreground">
                 Pour modifier les informations légales, contactez Moroccan Express Travel & Events / LeJapon.ma.
               </p>
+              <div className="mt-3 rounded-xl border border-border bg-secondary/40 p-3 text-sm">
+                <p className="font-medium">{agencyLogoUrl ? "Logo enregistré" : "Aucun logo enregistré"}</p>
+                {agencyLogoUrl ? (
+                  <>
+                    <p className="mt-1 break-all text-xs text-muted-foreground">{agencyLogoFilename || "Fichier logo agence"}</p>
+                    {agencyLogoUpdatedAt && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Uploadé le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(agencyLogoUpdatedAt))}
+                      </p>
+                    )}
+                    <a href={agencyLogoUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-accent underline-offset-2 hover:underline">
+                      Voir le logo sauvegardé
+                    </a>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">Le devis et les reçus afficheront seulement LeJapon.ma tant qu'aucun logo n'est enregistré.</p>
+                )}
+              </div>
             </div>
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" disabled={uploadingLogo}>
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  {uploadingLogo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  Uploader logo
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(event) => {
-                      void uploadAgencyLogo(event.target.files?.[0]);
-                      event.currentTarget.value = "";
-                    }}
-                  />
-                </label>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                  void uploadAgencyLogo(event.target.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <Button type="button" variant="outline" size="sm" disabled={uploadingLogo} onClick={() => logoInputRef.current?.click()}>
+                {uploadingLogo ? <Loader2 className="h-4 w-4 animate-spin" /> : agencyLogoUrl ? <ImageUp className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
+                {agencyLogoUrl ? "Remplacer le logo" : "Uploader logo"}
               </Button>
               {agencyLogoUrl && (
-                <Button type="button" variant="ghost" size="sm" onClick={() => saveAgencyLogoUrl(null).then(() => toast.success("Logo retiré.")).catch((error) => toast.error(error.message))}>
-                  <X className="h-4 w-4" /> Retirer
+                <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={uploadingLogo} onClick={deleteAgencyLogo}>
+                  <Trash2 className="h-4 w-4" /> Supprimer le logo
                 </Button>
               )}
             </div>

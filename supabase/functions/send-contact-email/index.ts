@@ -170,7 +170,6 @@ Deno.serve(async (req) => {
       });
       await client.close();
       await updateLog(admin, logId, "sent");
-      console.info("[contact-email] sent", { contactId: contact.id, logId });
       return new Response(JSON.stringify({ ok: true, contact_id: contact.id, notification_sent: true }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

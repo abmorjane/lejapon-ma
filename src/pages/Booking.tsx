@@ -263,24 +263,24 @@ const Booking = () => {
   }
 
   return (
-    <div className="container-app py-12 md:py-20">
+    <div className="container-app max-w-full overflow-x-hidden py-8 sm:py-12 md:py-20">
       <Seo
         title="Réserver mon voyage au Japon — Composer votre séjour | lejapon.ma"
         description="Composez votre voyage au Japon en 2 minutes : dates, formule, chambre et options. Prix instantané, paiement sécurisé, départs depuis Casablanca."
         canonical="/reserver"
       />
-      <div className="grid lg:grid-cols-12 gap-12 lg:items-start lg:pb-60">
+      <div className="grid max-w-full gap-8 lg:grid-cols-12 lg:items-start lg:gap-12 lg:pb-60">
         {/* FORM */}
-        <div className="lg:col-span-7 xl:col-span-8">
+        <div className="min-w-0 lg:col-span-7 xl:col-span-8">
           <p className="eyebrow mb-3">{t("booking.step")} {visibleStep} {t("booking.of")} {visibleTotal}</p>
-          <h1 className="font-display text-4xl md:text-5xl mb-3">{t("booking.title")}</h1>
-          <p className="text-foreground/70 mb-10">{t("booking.subtitle")}</p>
+          <h1 className="font-display mb-3 text-3xl leading-tight sm:text-4xl md:text-5xl">{t("booking.title")}</h1>
+          <p className="mb-8 text-foreground/70 sm:mb-10">{t("booking.subtitle")}</p>
 
           {tripLocked && selectedTrip && (
-            <div className="mb-8 flex items-center justify-between gap-3 border border-accent/40 bg-accent-soft/30 p-4">
-              <div className="text-sm">
+            <div className="mb-8 flex flex-col gap-3 border border-accent/40 bg-accent-soft/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 text-sm">
                 <p className="eyebrow text-accent mb-1">Voyage sélectionné</p>
-                <p className="font-medium">{selectedTrip.title}</p>
+                <p className="break-words font-medium">{selectedTrip.title}</p>
                 <p className="text-foreground/70 text-xs mt-0.5">
                   {selectedTrip.season || formatDates(selectedTrip.start_date, selectedTrip.end_date)}
                 </p>
@@ -288,7 +288,7 @@ const Booking = () => {
               <button
                 type="button"
                 onClick={unlockTrip}
-                className="text-sm underline hover:text-accent shrink-0"
+                className="self-start text-sm underline hover:text-accent sm:shrink-0"
               >
                 Modifier le voyage
               </button>
@@ -310,27 +310,27 @@ const Booking = () => {
           )}
 
           {/* progress */}
-          <div className="flex gap-2 mb-12">
+          <div className="mb-8 flex gap-2 sm:mb-12">
             {Array.from({ length: visibleTotal }).map((_, i) => (
               <div key={i} className={cn("h-0.5 flex-1 transition-all duration-500", i < visibleStep ? "bg-accent" : "bg-border")} />
             ))}
           </div>
 
           {/* top actions */}
-          <div className="flex justify-between items-center mb-8">
+          <div className="mb-8 flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
             <button onClick={prev} disabled={step === minStep} className={cn(
-              "inline-flex items-center gap-2 text-sm",
+              "inline-flex min-h-11 items-center justify-center gap-2 text-sm sm:min-h-0 sm:justify-start",
               step === minStep ? "opacity-30 cursor-not-allowed" : "hover:text-accent"
             )}>
               <ArrowLeft className="w-4 h-4" /> {t("cta.back")}
             </button>
             {step < TOTAL_STEPS ? (
-              <button onClick={next} className="inline-flex items-center gap-2 bg-foreground text-background px-6 py-3 hover:bg-accent transition-all">
+              <button onClick={next} className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-foreground px-5 py-3 text-background transition-all hover:bg-accent sm:w-auto sm:px-6">
                 {t("cta.continue")} <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
               <button onClick={submit} disabled={!info.name || !info.email || submitting || !captchaReady}
-                className="inline-flex items-center gap-2 bg-accent text-accent-foreground px-6 py-3 hover:bg-foreground transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-accent px-5 py-3 text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-6">
                 {submitting ? "…" : t("cta.confirm")} <Check className="w-4 h-4" />
               </button>
             )}
@@ -350,17 +350,17 @@ const Booking = () => {
                         const originalPrice = hasPromo ? Math.round(Number(tr.base_price_mad || 0) / (1 - Number(tr.promo_percent) / 100)) : null;
                         return (
                         <button key={tr.id} onClick={() => setTripId(tr.id)} className={cn(
-                          "text-start p-5 sm:p-6 border transition-all duration-300",
+                          "w-full max-w-full text-start p-4 sm:p-6 border transition-all duration-300",
                           tripId === tr.id ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40"
                         )}>
-                          <div className="flex items-start justify-between gap-3 mb-1">
-                            <h3 className="font-display text-lg sm:text-xl leading-tight">{tr.title}</h3>
-                            <div className="text-right">
+                          <div className="mb-1 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <h3 className="font-display min-w-0 break-words text-lg leading-tight sm:text-xl">{tr.title}</h3>
+                            <div className="min-w-0 text-left sm:shrink-0 sm:text-right">
                               {originalPrice && originalPrice > tr.base_price_mad && (
                                 <div className="text-sm font-semibold text-muted-foreground line-through">{fmt(originalPrice)}</div>
                               )}
                               {hasPromo && <div className="mb-1 text-xs font-bold uppercase tracking-wide text-accent">Offre spéciale</div>}
-                              <span className="text-accent whitespace-nowrap shrink-0 sm:text-base font-bold text-3xl">{fmt(tr.base_price_mad)}</span>
+                              <span className="break-words text-2xl font-bold text-accent sm:whitespace-nowrap sm:text-3xl">{fmt(tr.base_price_mad)}</span>
                             </div>
                           </div>
                           <p className="text-xs eyebrow text-muted-foreground mb-2">
@@ -394,13 +394,13 @@ const Booking = () => {
                 <div>
                   <h2 className="font-display text-2xl mb-2">Quel hôtel à Kyoto ?</h2>
                   <p className="text-sm text-foreground/70 mb-6">Choisissez votre hébergement pour l'étape de Kyoto.</p>
-                  <div className="grid md:grid-cols-2 gap-3">
+                  <div className="grid gap-3 md:grid-cols-2">
                     {(Object.keys(hotels) as HotelKey[]).map((k) => (
                       <button key={k} onClick={() => setHotel(k)} className={cn(
-                        "text-start p-6 border transition-all min-h-[180px] flex flex-col",
+                        "flex min-h-[160px] w-full max-w-full flex-col border p-4 text-start transition-all sm:min-h-[180px] sm:p-6",
                         hotel === k ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40"
                       )}>
-                        <h3 className="font-display text-xl mb-2">{hotels[k].name}</h3>
+                        <h3 className="font-display mb-2 break-words text-lg leading-tight sm:text-xl">{hotels[k].name}</h3>
                         <p className="text-sm text-foreground/70 flex-1">{hotels[k].desc}</p>
                         <p className="text-xs eyebrow mt-4 text-accent">
                           {hotels[k].supplement === 0 ? "Sans supplément" : `+${fmt(hotels[k].supplement)} / pers.`}
@@ -414,13 +414,13 @@ const Booking = () => {
               {step === 3 && (
                 <div>
                   <h2 className="font-display text-2xl mb-6">{t("booking.s3.title")}</h2>
-                  <div className="grid sm:grid-cols-2 gap-4 mb-8">
+                  <div className="mb-8 grid gap-4 sm:grid-cols-2">
                     <Counter label={t("booking.s3.adults")} value={adults} onChange={setAdults} min={1} />
                     <Counter label={t("booking.s3.children")} value={children} onChange={setChildren} min={0} />
                   </div>
                   <p className="text-xs text-foreground/60 mb-4">Réduction de {fmt(CHILD_DISCOUNT_MAD)} par enfant (3 à 11 ans).</p>
                   <p className="eyebrow mb-3">{t("booking.s3.room")}</p>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-3">
                     {(["single", "double", "triple"] as RoomKey[]).map((r) => {
                       const totalPeople = adults + children;
                       const tripleDisabled = r === "triple" && (totalPeople < 3 || totalPeople % 3 !== 0);
@@ -431,7 +431,7 @@ const Booking = () => {
                           disabled={tripleDisabled}
                           title={tripleDisabled ? "Le nombre total de voyageurs doit être un multiple de 3" : undefined}
                           className={cn(
-                            "py-4 px-2 border text-sm transition-all flex flex-col items-center gap-1",
+                            "flex min-h-14 flex-col items-center justify-center gap-1 border px-2 py-3 text-sm transition-all sm:py-4",
                             room === r ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40",
                             tripleDisabled && "opacity-40 cursor-not-allowed hover:border-border"
                           )}
@@ -460,11 +460,11 @@ const Booking = () => {
                       <p className="bg-background p-4 text-sm text-foreground/60">Aucune activité disponible.</p>
                     )}
                     {extrasList.map((e) => (
-                      <div key={e.id} className="bg-background p-4 sm:p-5 flex items-start gap-3 sm:gap-4">
+                      <div key={e.id} className="flex flex-col gap-3 bg-background p-4 sm:flex-row sm:items-start sm:gap-4 sm:p-5">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline justify-between gap-3">
-                            <h3 className="font-display text-base sm:text-lg leading-tight">{e.name}</h3>
-                            <span className="text-accent text-xs sm:text-sm whitespace-nowrap shrink-0">{fmtExtraPrice(e.price_mad)}</span>
+                          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
+                            <h3 className="font-display min-w-0 break-words text-base leading-tight sm:text-lg">{e.name}</h3>
+                            <span className="text-xs text-accent sm:shrink-0 sm:whitespace-nowrap sm:text-sm">{fmtExtraPrice(e.price_mad)}</span>
                           </div>
                           {e.description && <p className="text-xs text-foreground/60 mt-1">{e.description}</p>}
                           {(() => {
@@ -480,7 +480,7 @@ const Booking = () => {
                             return null;
                           })()}
                         </div>
-                        <div className="shrink-0 pt-0.5">
+                        <div className="self-start pt-0.5 sm:shrink-0">
                           <Counter mini value={extras[e.id] || 0} onChange={(v) => setExtras({ ...extras, [e.id]: v })} min={0} />
                         </div>
                       </div>
@@ -504,20 +504,20 @@ const Booking = () => {
             </motion.div>
           </AnimatePresence>
 
-          <div className="flex justify-between items-center mt-12 pt-6 border-t border-border">
+          <div className="mt-10 flex flex-col-reverse items-stretch gap-3 border-t border-border pt-6 sm:mt-12 sm:flex-row sm:items-center sm:justify-between">
             <button onClick={prev} disabled={step === minStep} className={cn(
-              "inline-flex items-center gap-2 text-sm",
+              "inline-flex min-h-11 items-center justify-center gap-2 text-sm sm:min-h-0 sm:justify-start",
               step === minStep ? "opacity-30 cursor-not-allowed" : "hover:text-accent"
             )}>
               <ArrowLeft className="w-4 h-4" /> {t("cta.back")}
             </button>
             {step < TOTAL_STEPS ? (
-              <button onClick={next} className="inline-flex items-center gap-2 bg-foreground text-background px-6 py-3 hover:bg-accent transition-all">
+              <button onClick={next} className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-foreground px-5 py-3 text-background transition-all hover:bg-accent sm:w-auto sm:px-6">
                 {t("cta.continue")} <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
               <button onClick={submit} disabled={!info.name || !info.email || submitting || !captchaReady}
-                className="inline-flex items-center gap-2 bg-accent text-accent-foreground px-6 py-3 hover:bg-foreground transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-accent px-5 py-3 text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-6">
                 {submitting ? "…" : t("cta.confirm")} <Check className="w-4 h-4" />
               </button>
             )}
@@ -534,14 +534,14 @@ const Booking = () => {
         </div>
 
         {/* SUMMARY */}
-        <aside className="booking-summary-sticky lg:col-span-5 xl:col-span-4">
-          <div>
+        <aside className="booking-summary-sticky min-w-0 lg:col-span-5 xl:col-span-4">
+          <div className="min-w-0">
             <div className="relative overflow-hidden bg-gradient-to-br from-secondary via-secondary to-background border border-border/60 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.25)]">
               {/* Decorative accent bar */}
               <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-accent via-accent/70 to-accent" />
               <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-accent/10 blur-3xl pointer-events-none" />
 
-              <div className="relative p-8">
+              <div className="relative min-w-0 p-4 sm:p-6 lg:p-8">
                 <div className="flex items-center gap-2 mb-6">
                   <Sparkles className="w-3.5 h-3.5 text-accent" />
                   <p className="eyebrow !mb-0 font-bold">{t("booking.summary.title")}</p>
@@ -559,12 +559,12 @@ const Booking = () => {
                   <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
                 </div>
 
-                <div className="bg-background/60 backdrop-blur-sm border border-accent/20 p-5">
-                  <div className="flex items-center justify-between mb-2">
+                <div className="border border-accent/20 bg-background/60 p-4 backdrop-blur-sm sm:p-5">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="eyebrow text-accent">{t("booking.summary.total")}</span>
                     <span className="text-[10px] uppercase tracking-widest text-muted-foreground">TTC</span>
                   </div>
-                  <div className="font-display text-4xl text-accent leading-none tabular-nums font-bold">
+                  <div className="font-display break-words text-3xl font-bold leading-none text-accent tabular-nums sm:text-4xl">
                     {fmt(pricing.total)}
                   </div>
                   <p className="text-xs text-muted-foreground mt-2">
@@ -572,12 +572,12 @@ const Booking = () => {
                   </p>
                 </div>
 
-                <div className="mt-5 flex items-center justify-between gap-3 text-sm p-4 border border-dashed border-border/70">
+                <div className="mt-5 flex flex-col gap-2 border border-dashed border-border/70 p-4 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   <div className="flex items-center gap-2 text-foreground/70">
                     <Wallet className="w-4 h-4 text-accent" />
                     <span>{t("booking.summary.deposit")}</span>
                   </div>
-                  <span className="font-display text-lg tabular-nums">{fmt(pricing.deposit)}</span>
+                  <span className="font-display break-words text-lg tabular-nums">{fmt(pricing.deposit)}</span>
                 </div>
               </div>
             </div>
@@ -589,14 +589,14 @@ const Booking = () => {
 };
 
 const Counter = ({ label, value, onChange, min = 0, mini }: { label?: string; value: number; onChange: (v: number) => void; min?: number; mini?: boolean }) => (
-  <div className={cn(!mini && "border border-border p-4")}>
-    {label && <p className="eyebrow mb-3">{label}</p>}
-    <div className="flex items-center gap-3">
-      <button onClick={() => onChange(Math.max(min, value - 1))} className="w-8 h-8 border border-border flex items-center justify-center hover:border-accent hover:text-accent transition-colors">
+  <div className={cn("max-w-full min-w-0", !mini && "border border-border p-4")}>
+    {label && <p className="eyebrow mb-3 max-w-full whitespace-normal break-words">{label}</p>}
+    <div className="flex max-w-full items-center gap-3">
+      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} className="flex h-8 w-8 shrink-0 items-center justify-center border border-border transition-colors hover:border-accent hover:text-accent">
         <Minus className="w-3 h-3" />
       </button>
-      <span className="w-6 text-center font-display text-lg">{value}</span>
-      <button onClick={() => onChange(value + 1)} className="w-8 h-8 border border-border flex items-center justify-center hover:border-accent hover:text-accent transition-colors">
+      <span className="w-6 shrink-0 text-center font-display text-lg">{value}</span>
+      <button type="button" onClick={() => onChange(value + 1)} className="flex h-8 w-8 shrink-0 items-center justify-center border border-border transition-colors hover:border-accent hover:text-accent">
         <Plus className="w-3 h-3" />
       </button>
     </div>
@@ -604,14 +604,14 @@ const Counter = ({ label, value, onChange, min = 0, mini }: { label?: string; va
 );
 
 const Field = ({ label, value, onChange, type = "text", multiline, className }: { label: string; value: string; onChange: (v: string) => void; type?: string; multiline?: boolean; className?: string }) => (
-  <label className={cn("block", className)}>
-    <span className="eyebrow block mb-2">{label}</span>
+  <label className={cn("block max-w-full min-w-0", className)}>
+    <span className="eyebrow mb-2 block max-w-full whitespace-normal break-words">{label}</span>
     {multiline ? (
       <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3}
-        className="w-full bg-background border border-border px-4 py-3 focus:outline-none focus:border-accent transition-colors resize-none" />
+        className="w-full max-w-full resize-none border border-border bg-background px-4 py-3 transition-colors focus:border-accent focus:outline-none" />
     ) : (
       <input type={type} value={value} onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-background border border-border px-4 py-3 focus:outline-none focus:border-accent transition-colors" />
+        className="w-full max-w-full border border-border bg-background px-4 py-3 transition-colors focus:border-accent focus:outline-none" />
     )}
   </label>
 );
@@ -624,12 +624,12 @@ const Row = ({ label, value }: { label: string; value: string }) => (
 );
 
 const SummaryItem = ({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) => (
-  <li className="flex items-start justify-between gap-4">
-    <div className="flex items-center gap-2.5 text-foreground/60 min-w-0">
+  <li className="flex min-w-0 items-start justify-between gap-3">
+    <div className="flex min-w-0 items-center gap-2.5 text-foreground/60">
       <span className="text-accent/80 shrink-0">{icon}</span>
-      <span className="truncate">{label}</span>
+      <span className="min-w-0 break-words">{label}</span>
     </div>
-    <span className="text-end font-medium text-foreground truncate max-w-[60%]">{value}</span>
+    <span className="max-w-[56%] min-w-0 break-words text-end font-medium text-foreground">{value}</span>
   </li>
 );
 

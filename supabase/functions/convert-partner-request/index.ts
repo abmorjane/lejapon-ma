@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
-const function_version = "convert-partner-request-v2-debug";
+const function_version = "convert-partner-request-v2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -369,7 +369,6 @@ async function markRequestConverted(admin: any, requestId: string, callerId: str
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  console.info(`[${function_version}] invoked`);
 
   const warnings: Warning[] = [];
 
