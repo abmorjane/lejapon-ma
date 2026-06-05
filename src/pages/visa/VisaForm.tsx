@@ -35,6 +35,7 @@ import {
   parsePreviousJapanStay,
   RETIRED_NOT_APPLICABLE,
 } from "@/lib/visa-format";
+import { trackEvent } from "@/lib/analytics";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Brouillon",
@@ -458,6 +459,7 @@ export default function VisaForm() {
     }
     toast.success("Demande soumise. Notre équipe va l'examiner.");
     setApp(submittedApp);
+    trackEvent("visa_application_submitted", { source: "visa_client_form" });
     supabase.functions.invoke("send-visa-email", {
       body: { application_id: app.id, status: "submitted" },
     }).then(({ error: e }) => { if (e) console.warn("notification email failed", e); });

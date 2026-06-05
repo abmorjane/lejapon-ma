@@ -38,12 +38,12 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
 
 // Permissions per module. A user has access if they hold ANY of the listed roles.
 export const MODULE_PERMISSIONS = {
-  dashboard: ["super_admin", "admin", "manager", "sales", "sales_user", "agent", "content_manager", "supplier"],
-  trips: ["super_admin", "admin", "manager", "supplier"],
+  dashboard: ["super_admin", "admin", "manager", "sales", "sales_user", "agent", "content_manager"],
+  trips: ["super_admin", "admin", "manager"],
   bookings: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],
   clients: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],
   partner_requests: ["super_admin", "admin", "manager"],
-  extras: ["super_admin", "admin", "supplier"],
+  extras: ["super_admin", "admin"],
   suppliers: ["super_admin", "admin"],
   supplier_costs: ["super_admin", "admin"],
   articles: ["super_admin", "content_manager"],

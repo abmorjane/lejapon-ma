@@ -1,5 +1,5 @@
 import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
-import { LogOut, Plane } from "lucide-react";
+import { ClipboardList, LogOut, Plane } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/logo-lejapon.png";
@@ -9,7 +9,7 @@ export const SupplierLayout = () => {
   const loc = useLocation();
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Chargement…</div>;
-  if (!user) return <Navigate to="/admin/login" state={{ from: loc.pathname }} replace />;
+  if (!user) return <Navigate to="/supplier/login" state={{ from: loc.pathname }} replace />;
 
   const isSupplier = roles.includes("supplier") || roles.includes("super_admin") || roles.includes("admin");
   if (!isSupplier) {
@@ -28,14 +28,17 @@ export const SupplierLayout = () => {
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <NavLink to="/supplier" className="flex items-center gap-2">
             <img src={logo} alt="lejapon.ma" className="h-8 w-auto" />
-            <span className="text-xs text-muted-foreground font-medium">/ partenaire</span>
+            <span className="text-xs text-muted-foreground font-medium">/ Japan office</span>
           </NavLink>
           <div className="flex items-center gap-3">
             <NavLink to="/supplier" className={({ isActive }) =>
               `flex items-center gap-1.5 text-sm font-medium ${isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"}`
             }>
-              <Plane className="w-4 h-4" /> Voyages assignés
+              <Plane className="w-4 h-4" /> Voyages
             </NavLink>
+            <span className="hidden items-center gap-1.5 text-sm font-medium text-muted-foreground md:flex">
+              <ClipboardList className="h-4 w-4" /> Devis fournisseurs
+            </span>
             <div className="text-right hidden sm:block">
               <p className="text-xs text-muted-foreground leading-tight">{user.email}</p>
               <p className="text-[10px] text-accent leading-tight">Fournisseur Japon</p>

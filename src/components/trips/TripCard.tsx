@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { ArrowRight, Sparkles, MapPin } from "lucide-react";
 import { fmtDate } from "@/lib/format";
 import { Img } from "@/components/ui/Img";
+import { trackEvent } from "@/lib/analytics";
 
 export type TripCardData = {
   id: string;
@@ -56,6 +57,13 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
   const hasPromo = typeof trip.promo_percent === "number" && trip.promo_percent > 0 && trip.promo_percent < 100;
   const originalPrice = hasPromo ? Math.round(Number(trip.base_price_mad || 0) / (1 - Number(trip.promo_percent) / 100)) : null;
   const priceLabel = hasPromo ? "Prix promotionnel" : "À partir de";
+  const trackReservationClick = (placement: string) => {
+    trackEvent("click_reservation_cta", {
+      placement,
+      trip_id: trip.id,
+      has_promo: hasPromo,
+    });
+  };
 
   return (
     <motion.div
@@ -67,7 +75,12 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
     >
       <div className="group flex flex-col h-full bg-background rounded-[20px] overflow-hidden border border-border shadow-soft hover:shadow-2xl hover:-translate-y-1 transition-all duration-500">
         {/* IMAGE */}
-        <Link to={bookingHref} className="relative aspect-[4/5] overflow-hidden block" aria-label={`Réserver ${trip.title}`}>
+        <Link
+          to={bookingHref}
+          className="relative aspect-[4/5] overflow-hidden block"
+          aria-label={`Réserver ${trip.title}`}
+          onClick={() => trackReservationClick("trip_card_image")}
+        >
           {cover ? (
             <Img
               src={cover}
@@ -154,12 +167,13 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
               to={bookingHref}
               aria-label={`S'inscrire au voyage ${trip.title}`}
               className="w-11 h-11 rounded-full bg-foreground text-background flex items-center justify-center group-hover:bg-accent group-hover:rotate-[-45deg] transition-all duration-300"
+              onClick={() => trackReservationClick("trip_card_arrow")}
             >
               <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
           <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-            <Link to={bookingHref} className="btn-primary !px-4 !py-2 text-sm">
+            <Link to={bookingHref} className="btn-primary !px-4 !py-2 text-sm" onClick={() => trackReservationClick("trip_card_button")}>
               Réserver
             </Link>
             {programmeHref.startsWith("http") ? (

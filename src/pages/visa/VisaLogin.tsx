@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Seo } from "@/components/Seo";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
 import { supabase } from "@/integrations/supabase/client";
+import { trackEvent } from "@/lib/analytics";
 
 export default function VisaLogin() {
   const { user, signIn, loading } = useAuth();
@@ -62,6 +63,7 @@ export default function VisaLogin() {
           throw new Error("Le mot de passe doit contenir au moins 8 caractères.");
         }
 
+        trackEvent("visa_signup_started", { source: "visa_login" });
         const { data, error } = await supabase.functions.invoke("visa-client-signup", {
           body: {
             first_name: cleanFirstName,

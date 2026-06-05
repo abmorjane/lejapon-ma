@@ -9,6 +9,7 @@ import { fmtDate, fmtMAD } from "@/lib/format";
 import { downloadBytes } from "@/lib/booking-pdfs";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { toast } from "sonner";
+import { trackEvent } from "@/lib/analytics";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
@@ -222,7 +223,13 @@ export default function AgencyTripsLibrary() {
                           </Link>
                         </Button>
                       )}
-                      <Button size="sm" onClick={() => generateTripPdf(trip)}>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          trackEvent("download_trip_pdf", { source: "agency_trips_library", trip_id: trip.id });
+                          void generateTripPdf(trip);
+                        }}
+                      >
                         Télécharger PDF voyage <Download className="h-3.5 w-3.5" />
                       </Button>
                       <Button
@@ -233,6 +240,11 @@ export default function AgencyTripsLibrary() {
                             toast.info("Aucun PDF programme n'est attaché à ce voyage.");
                             return;
                           }
+                          trackEvent("download_programme_pdf", {
+                            source: "agency_trips_library",
+                            trip_id: trip.id,
+                            programme_id: trip.programme_id ?? null,
+                          });
                           window.open(programmePdf, "_blank", "noopener,noreferrer");
                         }}
                       >

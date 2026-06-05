@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "../components/PageHeader";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ClipboardList } from "lucide-react";
 
 export default function SupplierCosts() {
   const [trips, setTrips] = useState<any[]>([]);
@@ -44,13 +47,23 @@ export default function SupplierCosts() {
   return (
     <div>
       <PageHeader title="Coûts fournisseurs" description="Synthèse des coûts logistiques saisis par les partenaires japonais." />
-      <div className="mb-6 max-w-md">
-        <Select value={tripId} onValueChange={setTripId}>
-          <SelectTrigger><SelectValue placeholder="Choisir un voyage…" /></SelectTrigger>
-          <SelectContent>
-            {trips.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}
-          </SelectContent>
-        </Select>
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="max-w-md flex-1">
+          <Select value={tripId} onValueChange={setTripId}>
+            <SelectTrigger><SelectValue placeholder="Choisir un voyage…" /></SelectTrigger>
+            <SelectContent>
+              {trips.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        {tripId && (
+          <Button asChild>
+            <Link to={`/supplier/trips/${tripId}/quote`}>
+              <ClipboardList className="h-4 w-4" />
+              Ouvrir quote engine
+            </Link>
+          </Button>
+        )}
       </div>
 
       {!tripId && <p className="text-muted-foreground">Sélectionnez un voyage pour afficher les coûts soumis.</p>}

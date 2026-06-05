@@ -24,6 +24,7 @@ import {
   type PublicHotelKey,
   type PublicRoomKey,
 } from "@/lib/booking-options";
+import { trackEvent } from "@/lib/analytics";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
@@ -561,6 +562,13 @@ export default function AgencyBookings() {
       return;
     }
 
+    trackEvent("agency_booking_created", {
+      source: "agency_portal",
+      trip_id: selectedTrip.id,
+      travelers_count: travelersCount,
+      extras_count: selectedExtras.length,
+      has_commission_rule: Boolean(applicableCommissionRule),
+    });
     toast.success("Demande envoyée.");
     if (createdRequest?.id) {
       void supabase.functions.invoke("send-admin-notification", {

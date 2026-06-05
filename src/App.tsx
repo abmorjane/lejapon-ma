@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -15,6 +15,7 @@ import { RequireActiveAgencyMember, RequireAgencyMember, RequireAgencyOnboarding
 import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from "@/components/LegacyRedirects";
 import { useRouteSlugs, DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
 import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
+import { initAnalytics, trackPageView } from "@/lib/analytics";
 
 const queryClient = new QueryClient();
 
@@ -97,6 +98,21 @@ const RouteFallback = () => (
 const PreservingRedirect = ({ to }: { to: string }) => {
   const { search, hash } = useLocation();
   return <Navigate to={`${to}${search}${hash}`} replace />;
+};
+
+const AnalyticsRouteTracker = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    initAnalytics();
+  }, []);
+
+  useEffect(() => {
+    const path = `${location.pathname}${location.search}`;
+    window.setTimeout(() => trackPageView(path, document.title), 0);
+  }, [location.pathname, location.search]);
+
+  return null;
 };
 
 const AppRoutes = () => {
@@ -211,9 +227,12 @@ const AppRoutes = () => {
       </Route>
       <Route path="/admin/login" element={<AdminLogin />} />
       <Route path="/unsubscribe/:token" element={<Unsubscribe />} />
+      <Route path="/supplier/login" element={<AdminLogin />} />
       <Route path="/supplier" element={<SupplierLayout />}>
         <Route index element={<SupplierTrips />} />
+        <Route path="trips" element={<SupplierTrips />} />
         <Route path="trips/:tripId" element={<SupplierTripCosts />} />
+        <Route path="trips/:tripId/quote" element={<SupplierTripCosts />} />
       </Route>
       <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<AdminDashboard />} />
@@ -268,6 +287,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <AnalyticsRouteTracker />
           <AppRoutes />
         </AuthProvider>
       </BrowserRouter>

@@ -10,6 +10,7 @@ import { Seo } from "@/components/Seo";
 import { fmtDate } from "@/lib/format";
 import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
 import { useRecaptcha } from "@/hooks/useRecaptcha";
+import { trackEvent } from "@/lib/analytics";
 import {
   CHILD_DISCOUNT_MAD,
   HOTEL_SUPPLEMENT,
@@ -56,6 +57,10 @@ const Booking = () => {
   const [returning, setReturning] = useState<{ trips: number; tier: string; reward?: string } | null>(null);
   const { ready: captchaReady, executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha();
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    trackEvent("booking_form_started", { source: "public_booking" });
+  }, []);
 
   // Load trips from admin (open or completed) — runs once
   useEffect(() => {
@@ -239,6 +244,12 @@ const Booking = () => {
           console.info("[admin-email] invoke response", { function: "send-admin-notification", data, error });
         }
         if (error || data?.ok === false) console.warn("admin booking notification failed", data ?? error);
+      });
+      trackEvent("booking_submitted", {
+        source: "public_site",
+        trip_id: tripMeta?.id ?? null,
+        travelers_count: adults + children,
+        extras_count: chosenExtras.length,
       });
       setDone(true);
       window.scrollTo({ top: 0, behavior: "smooth" });

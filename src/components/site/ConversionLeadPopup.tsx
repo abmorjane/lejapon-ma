@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { supabase } from "@/integrations/supabase/client";
+import { trackEvent } from "@/lib/analytics";
 
 type PopupConfig = {
   enabled: boolean;
@@ -127,6 +128,11 @@ export function ConversionLeadPopup() {
           })
           .eq("id", clientId as string);
       }
+      trackEvent("popup_lead_submitted", {
+        popup_id: activePopup?.id ?? null,
+        page: location.pathname,
+        has_preferred_date: Boolean(preferredDate),
+      });
       toast.success("Merci, un conseiller vous recontactera.");
       close();
     } catch (error: any) {

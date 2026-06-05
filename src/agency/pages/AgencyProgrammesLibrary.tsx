@@ -8,6 +8,7 @@ import { fmtDateTime } from "@/lib/format";
 import { downloadBytes } from "@/lib/booking-pdfs";
 import { compactProgrammeSummary, normalizeProgrammeContentList } from "@/lib/programme-content";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { trackEvent } from "@/lib/analytics";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
@@ -115,6 +116,10 @@ export default function AgencyProgrammesLibrary() {
 
   const downloadSummaryPdf = async () => {
     if (!activeProgramme) return;
+    trackEvent("download_programme_pdf", {
+      source: "agency_programmes_library_summary",
+      programme_id: activeProgramme.id,
+    });
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -197,7 +202,15 @@ export default function AgencyProgrammesLibrary() {
           </Button>
           {activeProgramme?.pdf_url && (
             <Button asChild>
-              <a href={activeProgramme.pdf_url} target="_blank" rel="noreferrer">
+              <a
+                href={activeProgramme.pdf_url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => trackEvent("download_programme_pdf", {
+                  source: "agency_programmes_library_attached",
+                  programme_id: activeProgramme.id,
+                })}
+              >
                 Télécharger PDF programme <Download className="h-4 w-4" />
               </a>
             </Button>
