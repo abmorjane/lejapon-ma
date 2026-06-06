@@ -53,6 +53,7 @@ export const MODULE_PERMISSIONS = {
   organizations: ["super_admin"],
   agency_settings: ["super_admin", "admin"],
   email_settings: ["super_admin"],
+  email_templates: ["super_admin", "admin", "marketing_manager"],
   email_logs: ["super_admin", "admin"],
   backups: ["super_admin"],
   visa: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],

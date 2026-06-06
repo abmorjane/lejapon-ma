@@ -135,7 +135,10 @@ export default function TripsCatalog() {
       const { error } = hotel.isNew
         ? await supabase.from("trip_hotels").insert(payload)
         : await supabase.from("trip_hotels").update(payload).eq("id", hotel.id);
-      if (error) throw error;
+      if (error) {
+        const hotelLabel = payload.name || hotel.name || `hôtel ${index + 1}`;
+        throw new Error(`Impossible d'enregistrer "${hotelLabel}" dans les hôtels du voyage: ${error.message}`);
+      }
     }
   };
 

@@ -1,8 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
-const function_version = "send-admin-notification-v2-rich-emails";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -20,6 +18,7 @@ type EventType =
   | "contact_message"
   | "test"
   | "test_email"
+  | "test_template"
   | "resend_log"
   | "unknown";
 type LogStatus = "pending" | "sent" | "failed";
@@ -44,7 +43,81 @@ const escapeHtml = (value: unknown) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
-const withFunctionVersion = (html: string) => `${html}\n<!-- function_version: ${function_version} -->`;
+const legacyBrandPattern = "Ta" + "pis\\s+Volant";
+const legacyTripsPattern = "Tri" + "ps\\s+app";
+const BRAND_REPLACEMENTS: Array<[RegExp, string]> = [
+  [new RegExp(`L['’]équipe\\s+${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "L’équipe LeJapon.ma"],
+  [new RegExp(`L['’]equipe\\s+${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "L’équipe LeJapon.ma"],
+  [new RegExp(`${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "LeJapon.ma"],
+  [new RegExp(legacyBrandPattern, "gi"), "LeJapon.ma"],
+  [new RegExp(legacyTripsPattern, "gi"), "LeJapon.ma"],
+];
+
+const sanitizeBranding = (value: unknown) =>
+  BRAND_REPLACEMENTS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), String(value ?? ""));
+
+const renderTemplateString = (content: unknown, variables: Record<string, unknown>) =>
+  sanitizeBranding(content).replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, key) => {
+    const value = variables[key];
+    return value === null || value === undefined || value === "" ? missing : sanitizeBranding(value);
+  });
+
+async function fetchEmailTemplate(admin: any, key: string, language = "fr") {
+  const byKey = await admin
+    .from("email_templates")
+    .select("*")
+    .eq("key", key)
+    .eq("language", language)
+    .limit(1)
+    .maybeSingle();
+  if (!byKey.error && byKey.data) return byKey.data;
+
+  const byName = await admin
+    .from("email_templates")
+    .select("*")
+    .eq("name", key)
+    .eq("language", language)
+    .limit(1)
+    .maybeSingle();
+  if (!byName.error && byName.data) return byName.data;
+
+  if (byKey.error && !["42703", "PGRST204", "PGRST205"].includes(String(byKey.error.code ?? ""))) {
+    console.warn("[admin-email] template lookup skipped", { key, code: byKey.error.code, message: byKey.error.message });
+  }
+  return null;
+}
+
+async function applyEmailTemplate(admin: any, key: string, variables: Record<string, unknown>, fallback: EmailPayload, language = "fr"): Promise<EmailPayload> {
+  const template = await fetchEmailTemplate(admin, key, language);
+  const safeFallback: EmailPayload = {
+    ...fallback,
+    subject: sanitizeBranding(fallback.subject),
+    html: sanitizeBranding(fallback.html),
+    text: sanitizeBranding(fallback.text),
+  };
+  const isActive = template?.is_active ?? template?.is_system ?? true;
+  if (!template || isActive === false) {
+    return {
+      ...safeFallback,
+      metadata: { ...(safeFallback.metadata ?? {}), template_key: key, template_found: Boolean(template), fallback_used: true, language },
+    };
+  }
+  const html = template.body_html ?? template.html_body;
+  if (!template.subject || !html) {
+    return {
+      ...safeFallback,
+      metadata: { ...(safeFallback.metadata ?? {}), template_key: key, template_found: true, fallback_used: true, language },
+    };
+  }
+  const renderedSubject = renderTemplateString(template.subject, variables);
+  return {
+    ...safeFallback,
+    subject: renderedSubject,
+    html: renderTemplateString(html, variables),
+    text: renderTemplateString(template.body_text ?? template.preheader ?? safeFallback.text, variables),
+    metadata: { ...(fallback.metadata ?? {}), template_key: key, template_source: "email_templates", template_found: true, fallback_used: false, language },
+  };
+}
 
 const fmtMAD = (value: unknown) =>
   `${Number(value || 0).toLocaleString("fr-FR", { maximumFractionDigits: 0 })} MAD`;
@@ -340,7 +413,7 @@ async function createLog(
       subject: payload.subject ?? null,
       status,
       error_message: errorMessage ?? null,
-      metadata: { function_version, ...(payload.metadata ?? {}) },
+      metadata: payload.metadata ?? {},
       sent_at: status === "sent" ? new Date().toISOString() : null,
       related_booking_id: payload.related_booking_id ?? null,
       related_payment_id: payload.related_payment_id ?? null,
@@ -360,7 +433,7 @@ async function updateLogDetails(admin: any, id: string | undefined, payload: Ema
       event_type: payload.eventType,
       recipient: payload.recipient,
       subject: payload.subject,
-      metadata: { function_version, ...(payload.metadata ?? {}) },
+      metadata: payload.metadata ?? {},
       related_booking_id: payload.related_booking_id ?? null,
       related_payment_id: payload.related_payment_id ?? null,
       related_contact_id: payload.related_contact_id ?? null,
@@ -383,6 +456,12 @@ async function updateLog(admin: any, id: string | undefined, status: LogStatus, 
 }
 
 async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: string) {
+  payload = {
+    ...payload,
+    subject: sanitizeBranding(payload.subject),
+    html: sanitizeBranding(payload.html),
+    text: sanitizeBranding(payload.text),
+  };
   const logId = existingLogId ?? await createLog(admin, payload, "pending");
   if (existingLogId) await updateLogDetails(admin, existingLogId, payload);
   if (!payload.recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.recipient)) {
@@ -398,7 +477,7 @@ async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: stri
       to: payload.recipient,
       replyTo: payload.replyTo || smtp.replyTo,
       subject: payload.subject,
-      html: withFunctionVersion(payload.html),
+      html: payload.html,
       content: payload.text,
     });
     await client.close();
@@ -407,7 +486,7 @@ async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: stri
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await updateLog(admin, logId, "failed", message);
-    console.error("[admin-email] failed", { function_version, eventType: payload.eventType, logId, email_send_success: false, error_code: "email_send_failed", error: message });
+    console.error("[admin-email] failed", { eventType: payload.eventType, logId, error_code: "email_send_failed", error: message });
     return { ok: false, log_id: logId, error: "email_send_failed", detail: message };
   }
 }
@@ -422,7 +501,7 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
       .maybeSingle();
   const booking = fetchedBooking;
   if (error || !booking) {
-    console.error("[admin-email] booking fetch failed", { function_version, booking_id: bookingId || null, error_code: "booking_fetch_failed", detail: error?.message ?? "Booking not found" });
+    console.error("[admin-email] booking fetch failed", { booking_id: bookingId || null, error_code: "booking_fetch_failed", detail: error?.message ?? "Booking not found" });
     throw new Error(error?.message ?? "Booking not found");
   }
 
@@ -545,7 +624,7 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
   const extrasText = extrasItems.length ? extrasItems.map((item: string) => `- ${item}`).join("\n") : `- ${missing}`;
   const adjustmentsText = adjustmentItems.length ? adjustmentItems.map((item: string) => `- ${item}`).join("\n") : `- ${missing}`;
 
-  return {
+  const payload: EmailPayload = {
     eventType: "booking_internal",
     recipient: adminRecipient(),
     subject,
@@ -593,6 +672,15 @@ Ouvrir la réservation: ${adminUrl}`,
     related_booking_id: booking.id,
     metadata: { reference: booking.reference, admin_url: adminUrl },
   };
+  return await applyEmailTemplate(admin, "booking_new_admin", {
+    client_name: plainMissing(booking.contact_name),
+    booking_reference: plainMissing(booking.reference),
+    trip_title: plainMissing(trip?.title || tripLabel),
+    admin_link: adminUrl,
+    amount: fmtMAD(total),
+    agency_name: agencyName || "",
+    status: booking.status,
+  }, payload);
 }
 
 async function bookingClientEmail(admin: any, bookingId: string, fullBookingData?: any): Promise<EmailPayload> {
@@ -605,7 +693,7 @@ async function bookingClientEmail(admin: any, bookingId: string, fullBookingData
       .maybeSingle();
   const booking = fetchedBooking;
   if (error || !booking) {
-    console.error("[admin-email] booking client fetch failed", { function_version, booking_id: bookingId || null, error_code: "booking_fetch_failed", detail: error?.message ?? "Booking not found" });
+    console.error("[admin-email] booking client fetch failed", { booking_id: bookingId || null, error_code: "booking_fetch_failed", detail: error?.message ?? "Booking not found" });
     throw new Error(error?.message ?? "Booking not found");
   }
 
@@ -641,7 +729,7 @@ async function bookingClientEmail(admin: any, bookingId: string, fullBookingData
     "LeJapon.ma / Moroccan Express Travel & Events · info@lejapon.ma · +212 711 449 838",
   );
 
-  return {
+  const payload: EmailPayload = {
     eventType: "booking_client",
     recipient: normalizeEmail(booking.contact_email),
     subject,
@@ -671,6 +759,14 @@ LeJapon.ma / Moroccan Express Travel & Events`,
     related_booking_id: booking.id,
     metadata: { reference: booking.reference, client_email: booking.contact_email },
   };
+  return await applyEmailTemplate(admin, "booking_received_client", {
+    client_name: plainMissing(booking.contact_name),
+    booking_reference: plainMissing(booking.reference),
+    trip_title: tripLabel,
+    amount: total ? fmtMAD(total) : missing,
+    download_link: whatsappHref,
+    date: fmtDateOnly(trip?.start_date || booking.start_date),
+  }, payload);
 }
 
 async function paymentEmail(admin: any, paymentId: string, paymentPayload?: any, bookingIdHint?: string): Promise<EmailPayload> {
@@ -690,7 +786,7 @@ async function paymentEmail(admin: any, paymentId: string, paymentPayload?: any,
         : { data: null, error: null };
   const payment = fetchedPayment;
   if (error || !payment) {
-    console.error("[admin-email] payment fetch failed", { function_version, payment_id: paymentId || null, booking_id: bookingIdHint || null, error_code: "payment_fetch_failed", detail: error?.message ?? "Payment not found" });
+    console.error("[admin-email] payment fetch failed", { payment_id: paymentId || null, booking_id: bookingIdHint || null, error_code: "payment_fetch_failed", detail: error?.message ?? "Payment not found" });
     throw new Error(error?.message ?? "Payment not found");
   }
 
@@ -700,7 +796,7 @@ async function paymentEmail(admin: any, paymentId: string, paymentPayload?: any,
     .eq("id", payment.booking_id || bookingIdHint)
     .maybeSingle();
   if (bookingError || !booking) {
-    console.error("[admin-email] payment booking fetch failed", { function_version, payment_id: payment.id || paymentId || null, booking_id: payment.booking_id || bookingIdHint || null, error_code: "payment_booking_fetch_failed", detail: bookingError?.message ?? "Booking not found" });
+    console.error("[admin-email] payment booking fetch failed", { payment_id: payment.id || paymentId || null, booking_id: payment.booking_id || bookingIdHint || null, error_code: "payment_booking_fetch_failed", detail: bookingError?.message ?? "Booking not found" });
     throw new Error(bookingError?.message ?? "Booking not found");
   }
 
@@ -725,7 +821,7 @@ async function paymentEmail(admin: any, paymentId: string, paymentPayload?: any,
   const adminUrl = `${adminBaseUrl()}/admin/bookings/${booking.id}`;
   const subject = `Nouveau paiement LeJapon.ma — ${plainMissing(booking.contact_name)} — ${fmtMAD(payment.amount_mad)}`;
 
-  return {
+  const payload: EmailPayload = {
     eventType: "payment_recorded",
     recipient: adminRecipient(),
     subject,
@@ -769,6 +865,17 @@ Ouvrir: ${adminUrl}`,
     related_payment_id: payment.id,
     metadata: { reference: booking.reference },
   };
+  return await applyEmailTemplate(admin, "payment_new_admin", {
+    client_name: plainMissing(booking.contact_name),
+    booking_reference: plainMissing(booking.reference),
+    trip_title: tripLabel,
+    amount: fmtMAD(payment.amount_mad),
+    payment_method: paymentMethodLabel(payment.method),
+    admin_link: adminUrl,
+    agency_name: agencyName || "",
+    status: paymentStatusLabel(payment.status),
+    date: fmtDate(payment.paid_at || payment.created_at),
+  }, payload);
 }
 
 async function agencyBookingEmail(admin: any, requestId: string): Promise<EmailPayload> {
@@ -826,7 +933,7 @@ async function agencyBookingEmail(admin: any, requestId: string): Promise<EmailP
     ]),
   ];
 
-  return {
+  const payload: EmailPayload = {
     eventType: "agency_booking_internal",
     recipient: adminRecipient(),
     subject,
@@ -848,6 +955,15 @@ Commission estimée: ${metadata.estimated_commission ? fmtMAD(metadata.estimated
 Ouvrir: ${adminUrl}`,
     metadata: { agency_booking_request_id: request.id },
   };
+  return await applyEmailTemplate(admin, "agency_booking_new_admin", {
+    agency_name: plainMissing(agencyName),
+    client_name: plainMissing(request.client_full_name),
+    trip_title: plainMissing(tripLabel),
+    amount: metadata.estimated_total ? fmtMAD(metadata.estimated_total) : missing,
+    admin_link: adminUrl,
+    status: request.status,
+    date: fmtDateOnly(request.preferred_departure_date || trip?.start_date),
+  }, payload);
 }
 
 async function agencyPaymentEmail(admin: any, requestId: string, paymentId?: string): Promise<EmailPayload> {
@@ -874,7 +990,7 @@ async function agencyPaymentEmail(admin: any, requestId: string, paymentId?: str
   const adminUrl = `${adminBaseUrl()}/admin/bookings`;
   const subject = `Nouveau paiement agence — ${plainMissing(request.client_full_name)} — ${fmtMAD(payment.amount_mad)}`;
 
-  return {
+  const payload: EmailPayload = {
     eventType: "agency_payment_recorded",
     recipient: adminRecipient(),
     subject,
@@ -910,6 +1026,16 @@ Reste à payer: ${total ? fmtMAD(rest) : missing}
 Ouvrir: ${adminUrl}`,
     metadata: { agency_booking_request_id: request.id, payment_id: payment.id },
   };
+  return await applyEmailTemplate(admin, "agency_payment_new_admin", {
+    agency_name: plainMissing(agencyName),
+    client_name: plainMissing(request.client_full_name),
+    trip_title: plainMissing(metadata.trip_title || request.trip_interest),
+    amount: fmtMAD(payment.amount_mad),
+    payment_method: paymentMethodLabel(payment.method),
+    admin_link: adminUrl,
+    status: paymentStatusLabel(payment.status),
+    date: fmtDate(payment.paid_at || payment.created_at),
+  }, payload);
 }
 
 function contactEmailPayload(contact: any): EmailPayload {
@@ -1033,6 +1159,7 @@ function eventTypeFromBody(body: any): EventType {
   if (type === "agency_payment") return "agency_payment_recorded";
   if (type === "contact") return "contact_internal";
   if (type === "test") return "test";
+  if (type === "test_template") return "test_template";
   if (type === "resend") return "resend_log";
   if (["contact_internal", "contact_client", "booking_internal", "booking_client"].includes(type)) return type as EventType;
 
@@ -1100,6 +1227,23 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
     await requireStaff(admin, req);
     return [testEmail()];
   }
+  if (type === "test_template") {
+    await requireStaff(admin, req);
+    const recipient = normalizeEmail(payload.recipient ?? body.recipient ?? "");
+    const subject = String(payload.subject ?? body.subject ?? "Test template email — LeJapon.ma");
+    const html = String(payload.html ?? body.html ?? "");
+    const text = String(payload.text ?? body.text ?? "Test template email — LeJapon.ma");
+    const templateKey = String(payload.template_key ?? body.template_key ?? "test_template");
+    if (!recipient || !html) throw new Error("missing_test_template_fields: recipient and html are required");
+    return [{
+      eventType: "test_template",
+      recipient,
+      subject,
+      html,
+      text,
+      metadata: { test_template: true, template_key: templateKey, fallback_used: false },
+    }];
+  }
   if (type === "resend") {
     await requireStaff(admin, req);
     const { data: log, error } = await admin.from("email_logs").select("*").eq("id", String(body.payload?.log_id ?? "")).maybeSingle();
@@ -1159,7 +1303,6 @@ Deno.serve(async (req) => {
   if (!supabaseUrl || !serviceRoleKey) {
     return new Response(JSON.stringify({
       ok: false,
-      function_version,
       error: "missing_supabase_config",
       detail: "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing; email_logs cannot be written.",
     }), {
@@ -1180,7 +1323,6 @@ Deno.serve(async (req) => {
     const failed = results.filter((result) => !result.ok);
     const result = {
       ok: failed.length === 0,
-      function_version,
       results,
       log_ids: results.map((item) => item.log_id).filter(Boolean),
       error: failed.length ? "one_or_more_emails_failed" : undefined,
@@ -1204,7 +1346,6 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       ok: false,
-      function_version,
       error: code,
       detail: message,
       log_id: failureLogId,

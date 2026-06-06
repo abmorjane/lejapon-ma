@@ -51,6 +51,14 @@ type OperationalState = {
   legacy_notes?: string | null;
 };
 
+type QuoteEngineDiagnostic = {
+  label: string;
+  ok: boolean;
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+};
+
 const tableBySection: Record<QuoteSection, string> = {
   hotels: "supplier_quote_hotel_rows",
   transport: "supplier_quote_transport_rows",
@@ -94,6 +102,20 @@ const guideTypes = ["francophone", "anglophone", "japanese", "assistant", "other
 const roomTypes = ["double/twin", "single", "triple", "TL"];
 
 const DEFAULT_HOTEL_ROOM_TYPES = ["double/twin", "single", "triple", "TL"] as const;
+
+const DEFAULT_GUIDE_ROWS = [
+  { day_number: 2, guide_type: "French or English speaking assistant", daily_price_jpy: 30000 },
+  { day_number: 3, guide_type: "French or English speaking guide (Shibuya)", daily_price_jpy: 50000 },
+  { day_number: 4, guide_type: "French or English speaking guide (Odaiba)", daily_price_jpy: 50000 },
+  { day_number: 5, guide_type: "French or English speaking guide (Kamakura)", daily_price_jpy: 60000 },
+  { day_number: 6, guide_type: "French or English speaking guide (Hakone)", daily_price_jpy: 60000 },
+  { day_number: 7, guide_type: "French speaking guide (Kyoto) - Monsieur Koenuma", daily_price_jpy: 65000 },
+  { day_number: 9, guide_type: "French speaking guide (Kyoto - Nara - Osaka)", daily_price_jpy: 65000 },
+  { day_number: 10, guide_type: "French speaking guide (Hiroshima - Miyajima) - Madame Sekimura", daily_price_jpy: 55000 },
+  { day_number: 11, guide_type: "French or English speaking guide (Osaka) - Monsieur Koenuma", daily_price_jpy: 65000 },
+  { day_number: 15, guide_type: "French or English speaking guide (Asakusa - Akihabara) - Monsieur Atsushi au Kanto", daily_price_jpy: 55000 },
+  { day_number: 16, guide_type: "French or English speaking assistant", daily_price_jpy: 30000 },
+] as const;
 
 const DEFAULT_REQUIRED_ACTIVITIES = [
   { day_number: 3, activity_name: "Team Lab Planet Tokyo", unit_price_jpy: 5600 },
@@ -143,6 +165,9 @@ export default function SupplierTripCosts() {
   const [extrasList, setExtrasList] = useState<any[]>([]);
   const [participantActivitySelections, setParticipantActivitySelections] = useState<any[]>([]);
   const [sqlMissing, setSqlMissing] = useState(false);
+  const [lastQuoteEngineError, setLastQuoteEngineError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<QuoteEngineDiagnostic[]>([]);
+  const [diagnosticBusy, setDiagnosticBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<QuoteStatus>("draft");
   const [commissionPct, setCommissionPct] = useState(10);
@@ -241,9 +266,9 @@ export default function SupplierTripCosts() {
     if (loadedQuote) {
       setQuote(loadedQuote.quote);
       setStatus((loadedQuote.quote.status ?? "draft") as QuoteStatus);
-      setCommissionPct(Number(loadedQuote.quote.commission_percentage ?? 10));
+      setCommissionPct(Number(loadedQuote.quote.commission_percentage ?? loadedQuote.quote.commission_percent ?? 10));
       setExchangeRate(Number(loadedQuote.quote.exchange_rate_jpy_mad ?? 0.068));
-      setInternalNotes(loadedQuote.quote.internal_notes ?? "");
+      setInternalNotes(loadedQuote.quote.internal_notes ?? loadedQuote.quote.admin_notes ?? "");
       setOperationalState(parseOperationalState(loadedQuote.quote.supplier_notes));
       setRows(loadedQuote.rows);
     } else {
@@ -252,6 +277,7 @@ export default function SupplierTripCosts() {
         programmeDays: normalizeProgrammeDays(dayRows ?? [], tripRow),
         hotels: hotelRows ?? [],
         rooms: roomRows ?? [],
+        assignments: assignmentRows ?? [],
         bookings: bookingRows ?? [],
         participants: participantList,
         bookingExtras: extrasRows ?? [],
@@ -277,6 +303,7 @@ export default function SupplierTripCosts() {
       ? await query.eq("supplier_id", currentSupplierId)
       : await query;
     if (error) {
+      setLastQuoteEngineError(formatSupabaseError(error));
       if (isMissingTableError(error)) setSqlMissing(true);
       return null;
     }
@@ -289,7 +316,10 @@ export default function SupplierTripCosts() {
         .select("*")
         .eq("quote_id", quote.id)
         .order("sort_order", { ascending: true });
-      if (error && isMissingTableError(error)) setSqlMissing(true);
+      if (error) {
+        setLastQuoteEngineError(`${tableBySection[section]}: ${formatSupabaseError(error)}`);
+        if (isMissingTableError(error)) setSqlMissing(true);
+      }
       return [section, normalizeRows(data ?? [])] as const;
     }));
 
@@ -327,7 +357,7 @@ export default function SupplierTripCosts() {
   const saveQuote = async (nextStatus = status) => {
     if (!tripId) return;
     if (sqlMissing) {
-      toast.error("Migration SQL quote engine requise avant l'enregistrement.");
+      toast.error(lastQuoteEngineError ? `Migration SQL quote engine requise: ${lastQuoteEngineError}` : "Migration SQL quote engine requise avant l'enregistrement.");
       return;
     }
     setBusy(true);
@@ -358,7 +388,7 @@ export default function SupplierTripCosts() {
       const quoteResult = quote?.id
         ? await db.from("supplier_trip_quotes").update(quotePayload).eq("id", quote.id).select("*").maybeSingle()
         : await db.from("supplier_trip_quotes").insert({ ...quotePayload, created_by: user?.id ?? null }).select("*").maybeSingle();
-      if (quoteResult.error) throw quoteResult.error;
+      if (quoteResult.error) throw withQueryContext(quoteResult.error, "supplier_trip_quotes save");
       const savedQuote = quoteResult.data;
       if (!savedQuote?.id) throw new Error("Demande de devis non sauvegardée.");
 
@@ -367,7 +397,7 @@ export default function SupplierTripCosts() {
         const payload = rows[section].map((row, index) => serializeRow(section, row, savedQuote.id, index));
         if (payload.length) {
           const { error } = await db.from(tableBySection[section]).insert(payload);
-          if (error) throw error;
+          if (error) throw withQueryContext(error, `${tableBySection[section]} insert`);
         }
       }
 
@@ -376,9 +406,10 @@ export default function SupplierTripCosts() {
       toast.success(nextStatus === "submitted" ? "Devis soumis à l'équipe LeJapon.ma." : "Devis enregistré.");
       await load();
     } catch (error: any) {
+      setLastQuoteEngineError(formatSupabaseError(error));
       if (isMissingTableError(error)) {
         setSqlMissing(true);
-        toast.error("Migration SQL quote engine requise avant l'enregistrement.");
+        toast.error(`Migration SQL quote engine requise: ${formatSupabaseError(error)}`);
       } else {
         toast.error(error?.message ?? "Enregistrement impossible.");
       }
@@ -393,6 +424,102 @@ export default function SupplierTripCosts() {
 
   const addRow = (section: QuoteSection) => {
     updateRows(section, [...rows[section], blankRow(section, rows[section].length)]);
+  };
+
+  const runQuoteEngineDiagnostics = async () => {
+    if (!tripId || !isAdmin) return;
+    setDiagnosticBusy(true);
+    const next: QuoteEngineDiagnostic[] = [];
+    const addResult = (label: string, error: any, details?: string | null) => {
+      next.push({
+        label,
+        ok: !error,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+        details: details ?? error?.details ?? error?.hint ?? null,
+      });
+    };
+
+    const tables = ["supplier_trip_quotes", ...Object.values(tableBySection), "supplier_quote_comments"];
+    for (const table of tables) {
+      const { error } = await db.from(table).select("*").limit(1);
+      addResult(`SELECT ${table}`, error);
+    }
+
+    const diagnosticQuotePayload = {
+      trip_id: tripId,
+      supplier_id: null,
+      status: "draft",
+      commission_percentage: commissionPct,
+      exchange_rate_jpy_mad: exchangeRate,
+      participant_count: totals.participantCount,
+      total_hotels_jpy: 0,
+      total_transport_jpy: 0,
+      total_activities_jpy: 0,
+      total_guides_jpy: 0,
+      total_other_jpy: 0,
+      grand_total_jpy: 0,
+      commission_amount_jpy: 0,
+      final_total_jpy: 0,
+      final_total_mad: 0,
+      cost_per_person_jpy: 0,
+      cost_per_person_mad: 0,
+      supplier_notes: serializeOperationalState({ day_statuses: {}, day_comments: {}, legacy_notes: "diagnostic" }),
+      internal_notes: "diagnostic",
+      created_by: user?.id ?? null,
+      updated_by: user?.id ?? null,
+      metadata: { diagnostic: true },
+    };
+
+    const quoteInsert = await db.from("supplier_trip_quotes").insert(diagnosticQuotePayload).select("*").maybeSingle();
+    addResult("INSERT supplier_trip_quotes diagnostic payload", quoteInsert.error);
+    const diagnosticQuoteId = quoteInsert.data?.id;
+
+    if (diagnosticQuoteId) {
+      const hotelInsert = await db.from("supplier_quote_hotel_rows").insert({
+        quote_id: diagnosticQuoteId,
+        sort_order: 0,
+        city: "Diagnostic",
+        hotel_name: "Diagnostic",
+        check_in: null,
+        check_out: null,
+        nights: 1,
+        room_type: "double/twin",
+        rooms_count: 1,
+        unit_price_jpy: 1,
+        subtotal_jpy: 1,
+        status: "todo",
+        comment: "diagnostic",
+        metadata: { diagnostic: true },
+      });
+      addResult("INSERT supplier_quote_hotel_rows diagnostic payload", hotelInsert.error);
+
+      const guideInsert = await db.from("supplier_quote_guide_rows").insert({
+        quote_id: diagnosticQuoteId,
+        sort_order: 0,
+        service_date: null,
+        city: "Diagnostic",
+        guide_type: "francophone",
+        guides_count: 1,
+        daily_price_jpy: 1,
+        subtotal_jpy: 1,
+        status: "todo",
+        comment: "diagnostic",
+        metadata: { diagnostic: true },
+      });
+      addResult("INSERT supplier_quote_guide_rows diagnostic payload", guideInsert.error);
+
+      for (const table of [...Object.values(tableBySection), "supplier_quote_comments"]) {
+        await db.from(table).delete().eq("quote_id", diagnosticQuoteId);
+      }
+      const cleanup = await db.from("supplier_trip_quotes").delete().eq("id", diagnosticQuoteId);
+      addResult("DELETE diagnostic quote cleanup", cleanup.error);
+    }
+
+    setDiagnostics(next);
+    const firstError = next.find((item) => !item.ok);
+    setLastQuoteEngineError(firstError ? `${firstError.label}: ${firstError.code ?? ""} ${firstError.message ?? ""}`.trim() : null);
+    setDiagnosticBusy(false);
   };
 
   const exportExcel = async (scope: "quote" | "operations" | "participants" | "rooms_extras" | "global") => {
@@ -521,6 +648,46 @@ export default function SupplierTripCosts() {
       {sqlMissing && (
         <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
           Les tables dédiées au quote engine fournisseur sont absentes ou non accessibles. Appliquez la migration SQL V1 pour enregistrer les devis structurés.
+          {lastQuoteEngineError && <p className="mt-2 font-mono text-xs">{lastQuoteEngineError}</p>}
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card className="border-dashed p-4 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Diagnostic quote engine</h2>
+              <p className="text-muted-foreground">Visible admin uniquement. Teste les tables, RLS et colonnes utilisées par cette page.</p>
+            </div>
+            <Button type="button" variant="outline" onClick={runQuoteEngineDiagnostics} disabled={diagnosticBusy}>
+              {diagnosticBusy ? "Test en cours..." : "Tester accès SQL"}
+            </Button>
+          </div>
+          {lastQuoteEngineError && <p className="mt-3 rounded bg-muted px-3 py-2 font-mono text-xs">{lastQuoteEngineError}</p>}
+          {diagnostics.length > 0 && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-[720px] text-left text-xs">
+                <thead>
+                  <tr className="border-b">
+                    <th className="py-2 pr-3">Test</th>
+                    <th className="py-2 pr-3">Statut</th>
+                    <th className="py-2 pr-3">Code</th>
+                    <th className="py-2 pr-3">Erreur</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {diagnostics.map((item) => (
+                    <tr key={item.label} className="border-b last:border-0">
+                      <td className="py-2 pr-3 font-mono">{item.label}</td>
+                      <td className="py-2 pr-3">{item.ok ? <Badge variant="outline">OK</Badge> : <Badge variant="destructive">Erreur</Badge>}</td>
+                      <td className="py-2 pr-3 font-mono">{item.code || "—"}</td>
+                      <td className="py-2 pr-3">{item.message || item.details || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Card>
       )}
 
@@ -769,10 +936,11 @@ const CellInput = ({ column, value, disabled, onChange }: { column: any; value: 
     );
   }
   if (column.type === "select") {
+    const options = Array.from(new Set([...(column.options ?? []), value].filter((option) => String(option ?? "").trim()).map(String)));
     return (
       <Select value={String(value ?? column.options[0] ?? "")} disabled={disabled} onValueChange={onChange}>
         <SelectTrigger className="h-9 min-w-[140px]"><SelectValue /></SelectTrigger>
-        <SelectContent>{column.options.map((option: string) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent>
+        <SelectContent>{options.map((option: string) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent>
       </Select>
     );
   }
@@ -1309,8 +1477,8 @@ const columnsForSection = (section: QuoteSection) => {
     { key: "check_out", label: "Check-out", type: "date" },
     { key: "nights", label: "Nuits", type: "number" },
     { key: "room_type", label: "Type", type: "select", options: roomTypes },
-    { key: "rooms_count", label: "Chambres", type: "number" },
-    { key: "unit_price_jpy", label: "Prix/nuit JPY", type: "number" },
+    { key: "rooms_count", label: "Personnes", type: "number" },
+    { key: "unit_price_jpy", label: "Prix/pers./nuit JPY", type: "number" },
   ];
   if (section === "transport") return [
     { key: "service_date", label: "Date", type: "date" },
@@ -1326,11 +1494,12 @@ const columnsForSection = (section: QuoteSection) => {
     { key: "day_number", label: "Jour", type: "number" },
     { key: "activity_name", label: "Activité" },
     { key: "unit_price_jpy", label: "Prix unitaire JPY", type: "number" },
-    { key: "quantity", label: "Participants", type: "number" },
+    { key: "participant_count", label: "Participants", type: "number" },
     { key: "optional", label: "Optionnel", type: "boolean" },
   ];
   if (section === "guides") return [
     { key: "service_date", label: "Date", type: "date" },
+    { key: "day_number", label: "Jour", type: "number" },
     { key: "city", label: "Ville" },
     { key: "guide_type", label: "Type", type: "select", options: guideTypes },
     { key: "guides_count", label: "Guides", type: "number" },
@@ -1347,14 +1516,15 @@ const blankRow = (section: QuoteSection, index: number): QuoteRow => {
   const base = { local_id: crypto.randomUUID(), sort_order: index, status: "todo" as RowStatus, comment: "", assigned_to: "" };
   if (section === "hotels") return { ...base, city: "", hotel_name: "", check_in: "", check_out: "", nights: 1, room_type: "double/twin", rooms_count: 1, unit_price_jpy: 0 };
   if (section === "transport") return { ...base, service_date: "", day_number: index + 1, city_route: "", transport_type: "bus", description: "", quantity: 1, unit_price_jpy: 0 };
-  if (section === "activities") return { ...base, service_date: "", day_number: index + 1, activity_name: "", quantity: 1, unit_price_jpy: 0, optional: false };
-  if (section === "guides") return { ...base, service_date: "", city: "", guide_type: "francophone", guides_count: 1, daily_price_jpy: 0 };
+  if (section === "activities") return { ...base, service_date: "", day_number: index + 1, activity_name: "", participant_count: 1, quantity: 1, unit_price_jpy: 0, optional: false };
+  if (section === "guides") return { ...base, service_date: "", day_number: index + 1, city: "", guide_type: "francophone", guides_count: 1, daily_price_jpy: 0 };
   return { ...base, label: "", quantity: 1, unit_price_jpy: 0 };
 };
 
 const subtotal = (row: QuoteRow) => {
-  if ("rooms_count" in row) return Number(row.rooms_count || 0) * Number(row.nights || 0) * Number(row.unit_price_jpy || 0);
-  if ("guides_count" in row) return Number(row.guides_count || 0) * Number(row.daily_price_jpy || 0);
+  if ("hotel_name" in row || "rooms_count" in row || "room_count" in row) return Number(row.rooms_count ?? row.room_count ?? 0) * Number(row.nights || 0) * Number(row.unit_price_jpy || row.price_per_room_per_night_jpy || 0);
+  if ("activity_name" in row || "participant_count" in row) return Number(row.participant_count ?? row.quantity ?? 0) * Number(row.unit_price_jpy || 0);
+  if ("guide_type" in row || "guides_count" in row || "guide_count" in row) return Number(row.guides_count ?? row.guide_count ?? 0) * Number(row.daily_price_jpy || 0);
   return Number(row.quantity || 0) * Number(row.unit_price_jpy || 0);
 };
 
@@ -1369,10 +1539,27 @@ const serializeRow = (section: QuoteSection, row: QuoteRow, quoteId: string, ind
     updated_at: new Date().toISOString(),
   };
   const clean = (keys: string[]) => Object.fromEntries(keys.map((key) => [key, row[key] ?? null]));
-  if (section === "hotels") return { ...base, ...clean(["city", "hotel_name", "check_in", "check_out", "nights", "room_type", "rooms_count", "unit_price_jpy"]) };
+  if (section === "hotels") {
+    const peopleCount = Number(row.rooms_count ?? row.room_count ?? 0);
+    const unitPrice = Number(row.unit_price_jpy ?? row.price_per_room_per_night_jpy ?? 0);
+    return {
+      ...base,
+      ...clean(["city", "hotel_name", "check_in", "check_out", "nights", "room_type"]),
+      rooms_count: peopleCount,
+      room_count: peopleCount,
+      unit_price_jpy: unitPrice,
+      price_per_room_per_night_jpy: unitPrice,
+    };
+  }
   if (section === "transport") return { ...base, ...clean(["service_date", "day_number", "city_route", "transport_type", "description", "quantity", "unit_price_jpy"]) };
-  if (section === "activities") return { ...base, ...clean(["service_date", "day_number", "activity_name", "quantity", "unit_price_jpy", "optional"]) };
-  if (section === "guides") return { ...base, ...clean(["service_date", "city", "guide_type", "guides_count", "daily_price_jpy"]) };
+  if (section === "activities") {
+    const participantCount = Number(row.participant_count ?? row.quantity ?? 0);
+    return { ...base, ...clean(["service_date", "day_number", "activity_name", "unit_price_jpy", "optional"]), participant_count: participantCount, quantity: participantCount };
+  }
+  if (section === "guides") {
+    const guideCount = Number(row.guides_count ?? row.guide_count ?? 0);
+    return { ...base, ...clean(["service_date", "day_number", "city", "guide_type", "daily_price_jpy"]), guides_count: guideCount, guide_count: guideCount };
+  }
   return { ...base, ...clean(["label", "quantity", "unit_price_jpy"]) };
 };
 
@@ -1428,8 +1615,8 @@ const buildQuoteExportRows = (rows: Record<QuoteSection, QuoteRow[]>, includeAdm
         check_out: formatDateForDisplay(row.check_out),
         nuits: row.nights,
         type_chambre: row.room_type,
-        chambres: row.rooms_count,
-        prix_nuit_jpy: row.unit_price_jpy,
+        personnes: row.rooms_count ?? row.room_count,
+        prix_personne_nuit_jpy: row.unit_price_jpy ?? row.price_per_room_per_night_jpy,
       });
       if (section === "transport") Object.assign(base, {
         date: formatDateForDisplay(row.service_date),
@@ -1445,14 +1632,15 @@ const buildQuoteExportRows = (rows: Record<QuoteSection, QuoteRow[]>, includeAdm
         jour: row.day_number,
         activite: row.activity_name,
         optionnel: row.optional ? "Oui" : "Non",
-        participants: row.quantity,
+        participants: row.participant_count ?? row.quantity,
         prix_unitaire_jpy: row.unit_price_jpy,
       });
       if (section === "guides") Object.assign(base, {
         date: formatDateForDisplay(row.service_date),
+        jour: row.day_number,
         ville: row.city,
         type_guide: row.guide_type,
-        guides: row.guides_count,
+        guides: row.guides_count ?? row.guide_count,
         prix_jour_jpy: row.daily_price_jpy,
       });
       if (section === "other") Object.assign(base, {
@@ -1593,19 +1781,30 @@ const isParticipantExtraSelected = (participant: any, extraId: string, bookingEx
 };
 
 const normalizeRows = (rows: any[]): QuoteRow[] =>
-  reindexRows(rows.map((row, index) => ({ ...row, local_id: row.id ?? crypto.randomUUID(), sort_order: row.sort_order ?? index, status: row.status ?? "todo", optional: Boolean(row.optional) })));
+  reindexRows(rows.map((row, index) => ({
+    ...row,
+    local_id: row.id ?? crypto.randomUUID(),
+    sort_order: row.sort_order ?? index,
+    status: row.status ?? "todo",
+    optional: Boolean(row.optional),
+    rooms_count: row.rooms_count ?? row.room_count,
+    unit_price_jpy: row.unit_price_jpy ?? row.price_per_room_per_night_jpy,
+    participant_count: row.participant_count ?? row.quantity,
+    quantity: row.quantity ?? row.participant_count,
+    guides_count: row.guides_count ?? row.guide_count,
+  })));
 
 const reindexRows = (rows: QuoteRow[]): QuoteRow[] =>
   rows.map((row, index) => ({ ...row, sort_order: index }));
 
-const buildInitialRows = ({ trip, programmeDays, hotels, rooms, bookings, participants, bookingExtras }: any): Record<QuoteSection, QuoteRow[]> => {
+const buildInitialRows = ({ trip, programmeDays, hotels, rooms, assignments, bookings, participants, bookingExtras }: any): Record<QuoteSection, QuoteRow[]> => {
+  const participantCount = getParticipantCount(participants, bookings ?? []);
   const sortedHotels = [...(hotels.length ? hotels : [])].sort((a: any, b: any) =>
     (dateToTime(a.check_in) ?? Number.MAX_SAFE_INTEGER) - (dateToTime(b.check_in) ?? Number.MAX_SAFE_INTEGER)
     || Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0)
   );
   const hotelRows = sortedHotels.flatMap((hotel: any, hotelIndex: number) => {
-    const hotelRooms = rooms.filter((room: any) => room.trip_hotel_id === hotel.id);
-    const detectedRoomCount = hotelRooms.length || 0;
+    const peopleCounts = hotelPersonCountsByRoomType(hotel.id, rooms, assignments ?? [], participantCount);
     return DEFAULT_HOTEL_ROOM_TYPES.map((roomType, roomTypeIndex) => {
       const index = hotelIndex * DEFAULT_HOTEL_ROOM_TYPES.length + roomTypeIndex;
       return {
@@ -1616,7 +1815,7 @@ const buildInitialRows = ({ trip, programmeDays, hotels, rooms, bookings, partic
         check_out: dateOnly(hotel.check_out),
         nights: nightsBetween(hotel.check_in, hotel.check_out) || 1,
         room_type: roomType,
-        rooms_count: roomType === "double/twin" ? detectedRoomCount : 0,
+        rooms_count: peopleCounts[roomType] ?? 0,
       };
     });
   });
@@ -1628,35 +1827,79 @@ const buildInitialRows = ({ trip, programmeDays, hotels, rooms, bookings, partic
     transport_type: guessTransportType(day.transport),
     description: day.transport || "",
   }));
-  const guideRows = programmeDays.map((day: any, index: number) => ({
-    ...blankRow("guides", index),
-    service_date: dateOnly(day.date),
-    city: day.city || day.location || "",
-  }));
-  const participantCount = getParticipantCount(participants, bookings ?? []);
+  const guideRows = DEFAULT_GUIDE_ROWS.map((guide, index) => {
+    const day = programmeDays.find((item: any) => Number(item.day_number) === guide.day_number);
+    return {
+      ...blankRow("guides", index),
+      service_date: dateForDay(programmeDays, trip, guide.day_number),
+      day_number: guide.day_number,
+      city: day?.city || day?.location || "",
+      guide_type: guide.guide_type,
+      guides_count: 1,
+      daily_price_jpy: guide.daily_price_jpy,
+      status: "todo" as RowStatus,
+    };
+  });
   const optionalQuantities = aggregateOptionalActivityQuantities(bookingExtras, participants);
   const requiredActivityRows = DEFAULT_REQUIRED_ACTIVITIES.map((activity, index) => ({
     ...blankRow("activities", index),
     service_date: dateForDay(programmeDays, trip, activity.day_number),
     day_number: activity.day_number,
     activity_name: activity.activity_name,
+    participant_count: participantCount,
     quantity: participantCount,
     unit_price_jpy: activity.unit_price_jpy,
     optional: false,
   }));
   const optionalActivityRows = DEFAULT_OPTIONAL_ACTIVITIES.map((activity, optionalIndex) => {
     const index = requiredActivityRows.length + optionalIndex;
+    const participantCount = optionalQuantityForActivity(optionalQuantities, activity.aliases);
     return {
       ...blankRow("activities", index),
       service_date: dateForDay(programmeDays, trip, activity.day_number),
       day_number: activity.day_number,
       activity_name: activity.activity_name,
-      quantity: optionalQuantityForActivity(optionalQuantities, activity.aliases),
+      participant_count: participantCount,
+      quantity: participantCount,
       unit_price_jpy: activity.unit_price_jpy,
       optional: true,
     };
   });
   return { hotels: hotelRows, transport: transportRows, activities: [...requiredActivityRows, ...optionalActivityRows], guides: guideRows, other: [] };
+};
+
+const hotelPersonCountsByRoomType = (hotelId: string, rooms: any[], assignments: any[], totalParticipants: number) => {
+  const counts: Record<string, number> = { "double/twin": 0, single: 0, triple: 0, TL: 0 };
+  const hotelRooms = rooms.filter((room) => room.trip_hotel_id === hotelId);
+  let assignedCount = 0;
+
+  hotelRooms.forEach((room) => {
+    const roomAssignments = assignments.filter((assignment) => assignment.room_id === room.id);
+    const count = roomAssignments.length;
+    if (count <= 0) return;
+    assignedCount += count;
+    const key = normalizeRoomTypeForCost(room.room_type);
+    counts[key] = (counts[key] ?? 0) + count;
+  });
+
+  if (assignedCount === 0) {
+    counts["double/twin"] = totalParticipants;
+    counts.single = 0;
+    counts.triple = 0;
+    counts.TL = 1;
+  } else if (counts.TL === 0 && hotelRooms.some((room) => normalizeRoomTypeForCost(room.room_type) === "TL")) {
+    counts.TL = 1;
+  }
+
+  return counts;
+};
+
+const normalizeRoomTypeForCost = (value: unknown): "double/twin" | "single" | "triple" | "TL" => {
+  const text = String(value ?? "").toLowerCase();
+  if (/tl|tour\s*leader|leader|accompagn/.test(text)) return "TL";
+  if (/single|solo|individuel|individuelle/.test(text)) return "single";
+  if (/triple|3/.test(text)) return "triple";
+  return "double/twin";
 };
 
 const parseOperationalState = (value: unknown): OperationalState => {
@@ -1986,8 +2229,19 @@ const formatActivities = (value: any): string => {
   return String(value);
 };
 
+const formatSupabaseError = (error: any) =>
+  [error?.context, error?.code, error?.message, error?.details, error?.hint]
+    .filter(Boolean)
+    .join(" · ");
+
+const withQueryContext = (error: any, context: string) => {
+  if (error && typeof error === "object") return { ...error, context };
+  return { message: String(error ?? "Erreur inconnue"), context };
+};
+
 const isMissingTableError = (error: any) =>
-  ["42P01", "PGRST205", "PGRST204"].includes(error?.code) || /Could not find the table|does not exist|schema cache/i.test(error?.message ?? "");
+  ["42P01", "PGRST205"].includes(error?.code)
+  || /Could not find the table|relation .* does not exist/i.test(error?.message ?? "");
 
 const dateOnly = (value: any) => typeof value === "string" ? value.slice(0, 10) : "";
 

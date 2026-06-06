@@ -41,6 +41,7 @@ const nav: AdminNavItem[] = [
   { to: "/admin/marketing", icon: Send, label: "Emailing marketing", module: "marketing", section: "Partners" },
   { to: "/admin/users", icon: ShieldCheck, label: "Utilisateurs & Rôles", module: "users", section: "System" },
   { to: "/admin/email-settings", icon: Mail, label: "Paramètres email", module: "email_settings", section: "System" },
+  { to: "/admin/email-templates", icon: FileText, label: "Templates email", module: "email_templates", section: "System" },
   { to: "/admin/email-logs", icon: Mail, label: "Email Logs", module: "email_logs", section: "System" },
   { to: "/admin/backups", icon: Archive, label: "System · Backups", module: "backups", section: "System" },
   { to: "/admin/theme", icon: Palette, label: "Thème", module: "theme", section: "System" },

@@ -68,6 +68,7 @@ const AdminOrganizations = lazy(() => import("@/admin/pages/Organizations"));
 const AdminPartnerRequests = lazy(() => import("@/admin/pages/PartnerRequests"));
 const AdminAgencySettings = lazy(() => import("@/admin/pages/AgencySettings"));
 const AdminEmailSettings = lazy(() => import("@/admin/pages/EmailSettings"));
+const AdminEmailTemplates = lazy(() => import("@/admin/pages/EmailTemplates"));
 const AdminEmailLogs = lazy(() => import("@/admin/pages/EmailLogs"));
 const AdminBackups = lazy(() => import("@/admin/pages/Backups"));
 const AdminVisaApplications = lazy(() => import("@/admin/pages/VisaApplications"));
@@ -255,6 +256,7 @@ const AppRoutes = () => {
         <Route path="organizations" element={<RequireRole module="organizations"><AdminOrganizations /></RequireRole>} />
         <Route path="agency-settings" element={<RequireRole module="agency_settings"><AdminAgencySettings /></RequireRole>} />
         <Route path="email-settings" element={<RequireRole module="email_settings"><AdminEmailSettings /></RequireRole>} />
+        <Route path="email-templates" element={<RequireRole module="email_templates"><AdminEmailTemplates /></RequireRole>} />
         <Route path="email-logs" element={<RequireRole module="email_logs"><AdminEmailLogs /></RequireRole>} />
         <Route path="backups" element={<RequireRole module="backups"><AdminBackups /></RequireRole>} />
         <Route path="visa" element={<RequireRole module="visa"><AdminVisaApplications /></RequireRole>} />

@@ -172,7 +172,13 @@ export default function OpsRooms({ trip }: { trip: any }) {
     if (!sourceHotelId || !targetHotelId) return toast.error("Sélectionnez un hôtel source et un hôtel cible.");
     if (sourceHotelId === targetHotelId) return toast.error("La source et la cible doivent être deux hôtels différents.");
 
-    const sourceRooms = getHotelRooms(sourceHotelId);
+    const sourceRooms = getHotelRooms(sourceHotelId)
+      .slice()
+      .sort((a, b) =>
+        String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")) ||
+        String(a.room_number ?? "").localeCompare(String(b.room_number ?? ""), "fr", { numeric: true }) ||
+        String(a.id ?? "").localeCompare(String(b.id ?? ""))
+      );
     const targetRooms = getHotelRooms(targetHotelId);
     if (sourceRooms.length === 0) return toast.error("Aucune chambre à copier dans l'hôtel source.");
 
@@ -191,31 +197,36 @@ export default function OpsRooms({ trip }: { trip: any }) {
         if (roomDeleteError) throw roomDeleteError;
       }
 
-      const roomPayloads = sourceRooms.map((room) => {
-        const payload: Record<string, unknown> = {
+      const roomMap = new Map<string, string>();
+      for (const room of sourceRooms) {
+        const roomPayload = {
           trip_hotel_id: targetHotelId,
           room_number: room.room_number ?? null,
           room_type: room.room_type ?? "Twin",
-          capacity: room.capacity ?? 2,
+          capacity: Number(room.capacity ?? 2) || 2,
+          client_type: room.client_type ?? null,
+          notes: room.notes ?? null,
         };
-        if ("notes" in room) payload.notes = room.notes ?? null;
-        if ("room_name" in room) payload.room_name = room.room_name ?? null;
-        return payload;
-      });
-
-      const { data: insertedRooms, error: insertRoomsError } = await supabase.from("trip_rooms").insert(roomPayloads).select("*");
-      if (insertRoomsError) throw insertRoomsError;
+        const { data: insertedRoom, error: insertRoomError } = await supabase
+          .from("trip_rooms")
+          .insert(roomPayload)
+          .select("id")
+          .maybeSingle();
+        if (insertRoomError) throw insertRoomError;
+        if (!insertedRoom?.id) throw new Error("Chambre copiée sans identifiant retourné.");
+        roomMap.set(room.id, insertedRoom.id);
+      }
 
       let skippedAssignments = 0;
-      if (includeAssignments && insertedRooms?.length) {
-        const roomMap = new Map(sourceRooms.map((room, index) => [room.id, insertedRooms[index]?.id]));
+      if (includeAssignments && roomMap.size > 0) {
+        const sourceRoomIds = new Set(sourceRooms.map((room) => room.id));
         const existingTargetAssignments = replaceExisting
           ? []
           : assignments.filter((assignment) => targetRoomIds.includes(assignment.room_id));
         const targetParticipantIds = new Set(existingTargetAssignments.map((assignment) => assignment.participant_id));
         const assignmentPayloads: Array<{ room_id: string; participant_id: string }> = [];
 
-        for (const assignment of assignments.filter((item) => sourceRooms.some((room) => room.id === item.room_id))) {
+        for (const assignment of assignments.filter((item) => sourceRoomIds.has(item.room_id))) {
           const newRoomId = roomMap.get(assignment.room_id);
           if (!newRoomId || !assignment.participant_id) continue;
           if (targetParticipantIds.has(assignment.participant_id)) {

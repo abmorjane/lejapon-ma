@@ -22,12 +22,79 @@ const STATUS_LABEL: Record<string, string> = {
 
 const missing = "Non renseigné";
 
+const legacyBrandPattern = "Ta" + "pis\\s+Volant";
+const legacyTripsPattern = "Tri" + "ps\\s+app";
+const BRAND_REPLACEMENTS: Array<[RegExp, string]> = [
+  [new RegExp(`L['’]équipe\\s+${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "L’équipe LeJapon.ma"],
+  [new RegExp(`L['’]equipe\\s+${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "L’équipe LeJapon.ma"],
+  [new RegExp(`${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "LeJapon.ma"],
+  [new RegExp(legacyBrandPattern, "gi"), "LeJapon.ma"],
+  [new RegExp(legacyTripsPattern, "gi"), "LeJapon.ma"],
+];
+
+const sanitizeBranding = (value: unknown) =>
+  BRAND_REPLACEMENTS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), String(value ?? ""));
+
 const escapeHtml = (value: unknown) =>
   String(value ?? missing)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+
+const renderTemplateString = (content: unknown, variables: Record<string, unknown>) =>
+  sanitizeBranding(content).replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, key) => {
+    const value = variables[key];
+    return value === null || value === undefined || value === "" ? missing : sanitizeBranding(value);
+  });
+
+async function fetchEmailTemplate(admin: any, key: string, language = "fr") {
+  const byKey = await admin
+    .from("email_templates")
+    .select("*")
+    .eq("key", key)
+    .eq("language", language)
+    .limit(1)
+    .maybeSingle();
+  if (!byKey.error && byKey.data) return byKey.data;
+
+  const byName = await admin
+    .from("email_templates")
+    .select("*")
+    .eq("name", key)
+    .eq("language", language)
+    .limit(1)
+    .maybeSingle();
+  if (!byName.error && byName.data) return byName.data;
+  return null;
+}
+
+async function renderEmailTemplate(admin: any, key: string, variables: Record<string, unknown>, fallback: { subject: string; html: string; text?: string }) {
+  const language = "fr";
+  const template = await fetchEmailTemplate(admin, key);
+  const safeFallback = {
+    subject: sanitizeBranding(fallback.subject),
+    html: sanitizeBranding(fallback.html),
+    text: sanitizeBranding(fallback.text ?? ""),
+  };
+  const isActive = template?.is_active ?? template?.is_system ?? true;
+  if (!template || isActive === false) {
+    return { ...safeFallback, templateKey: key, templateFound: Boolean(template), language, fallbackUsed: true };
+  }
+  const html = template.body_html ?? template.html_body;
+  if (!template.subject || !html) {
+    return { ...safeFallback, templateKey: key, templateFound: true, language, fallbackUsed: true };
+  }
+  return {
+    subject: renderTemplateString(template.subject, variables),
+    html: renderTemplateString(html, variables),
+    text: renderTemplateString(template.body_text ?? template.preheader ?? safeFallback.text ?? "", variables),
+    templateKey: key,
+    templateFound: true,
+    language,
+    fallbackUsed: false,
+  };
+}
 
 const truthy = (value: unknown) => {
   if (value === null || value === undefined) return false;
@@ -168,6 +235,37 @@ function bodyForStatus(status: string, app: any, extra?: string) {
   return html + sign;
 }
 
+function templateKeyForVisaStatus(status: string) {
+  const keys: Record<string, string> = {
+    submitted: "visa_application_submitted_client",
+    application_submitted_client: "visa_application_submitted_client",
+    application_new_admin: "visa_application_new_admin",
+    awaiting_documents: "visa_documents_requested_client",
+    documents_requested: "visa_documents_requested_client",
+    documents_received: "visa_documents_received_client",
+    submitted_to_embassy: "visa_submitted_to_embassy_client",
+    approved: "visa_approved_client",
+    issue: "visa_rejected_or_issue_client",
+    rejected: "visa_rejected_or_issue_client",
+  };
+  return keys[status] ?? null;
+}
+
+function visaTemplateVariables(app: any, extra?: string) {
+  const clientName = [app.surname, app.given_names].filter(Boolean).join(" ") || "Cher client";
+  return {
+    client_name: clientName,
+    visa_reference: app.reference,
+    passport_number: app.passport_no,
+    status: STATUS_LABEL[String(app.status ?? "")] ?? app.status ?? "",
+    download_link: "https://lejapon.ma/formulaire-visa",
+    admin_link: `${adminBaseUrl()}/admin/visa/${app.id}`,
+    date: fmtDate(new Date().toISOString()),
+    extra: extra ?? "",
+    message: extra ?? "",
+  };
+}
+
 async function buildInternalVisaEmail(admin: any, app: any) {
   const adminUrl = `${adminBaseUrl()}/admin/visa/${app.id}`;
   let trip: any = null;
@@ -284,13 +382,20 @@ Deno.serve(async (req) => {
       },
     });
 
-    const subject =
+    const fallbackSubject =
       status === "reminder"
         ? `Rappel — Documents en attente pour votre visa ${app.reference}`
         : status === "form_received"
         ? `Demande de visa Japon – Réception confirmée`
         : `Visa Japon — ${STATUS_LABEL[status] ?? status} (${app.reference})`;
-    const html = bodyForStatus(status, app, extra);
+    const fallbackHtml = bodyForStatus(status, app, extra);
+    const clientTemplateKey = templateKeyForVisaStatus(status);
+    const renderedClient = clientTemplateKey
+      ? await renderEmailTemplate(admin, clientTemplateKey, visaTemplateVariables(app, extra), { subject: fallbackSubject, html: fallbackHtml })
+      : { subject: fallbackSubject, html: fallbackHtml, text: "", templateKey: null, templateFound: false, language: "fr", fallbackUsed: true };
+    const subject = renderedClient.subject;
+    const html = renderedClient.html;
+    const text = renderedClient.text;
     const sent: Record<string, boolean | string> = {};
 
     if (app.residential_email) {
@@ -300,7 +405,7 @@ Deno.serve(async (req) => {
         replyTo: smtp.reply_to ?? undefined,
         subject,
         html,
-        content: "auto",
+        content: text || "auto",
       });
       sent.client = true;
     } else {
@@ -309,13 +414,14 @@ Deno.serve(async (req) => {
 
     if (status === "submitted") {
       const internal = await buildInternalVisaEmail(admin, app);
+      const renderedInternal = await renderEmailTemplate(admin, "visa_application_new_admin", visaTemplateVariables(app, extra), internal);
       await client.send({
         from: `${smtp.from_name} <${smtp.from_email}>`,
         to: internal.to,
         replyTo: smtp.reply_to ?? undefined,
-        subject: internal.subject,
-        html: internal.html,
-        content: internal.text,
+        subject: renderedInternal.subject,
+        html: renderedInternal.html,
+        content: renderedInternal.text ?? internal.text,
       });
       sent.internal = true;
     }

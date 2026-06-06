@@ -177,15 +177,6 @@ const Booking = () => {
       // Auto-add to CRM via SECURITY DEFINER RPC (anti-doublon email/phone)
       let clientId: string | null = null;
       try {
-        console.log("CLIENT INSERT PAYLOAD", {
-          source: "booking_form_rpc:upsert_client_from_booking",
-          payload: {
-            full_name: info.name || "",
-            email: info.email || "",
-            phone: info.phone || "",
-            city: info.city || "",
-          },
-        });
         const { data: upsertedId } = await supabase.rpc("upsert_client_from_booking" as any, {
           _name: info.name || "",
           _email: info.email || "",
@@ -232,7 +223,6 @@ const Booking = () => {
         .select("*, clients(*), trips(*), booking_extras(*)")
         .eq("id", newBookingId)
         .maybeSingle();
-      console.log("FULL BOOKING EMAIL DATA", { fullBookingData, fullBookingError });
       const notificationPayload = { type: "booking", payload: { booking_id: newBookingId, fullBookingData } };
       if (import.meta.env.DEV) {
         console.info("[admin-email] invoke", { function: "send-admin-notification", payload: notificationPayload });

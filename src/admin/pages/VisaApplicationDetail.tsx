@@ -288,8 +288,13 @@ export default function VisaApplicationDetail() {
     setApp({ ...app, ...patch });
     toast.success("Statut mis à jour");
     // Fire-and-forget email notification to the client
+    const payload = {
+      application_id: app.id,
+      status,
+      extra: app.requested_documents ?? null,
+    };
     supabase.functions.invoke("send-visa-email", {
-      body: { application_id: app.id, status, extra: app.requested_documents ?? null },
+      body: payload,
     }).then(({ error: e }) => {
       if (e) console.warn("notification email failed", e);
     });
@@ -527,8 +532,12 @@ export default function VisaApplicationDetail() {
     if (!app) return;
     if (!confirm("Envoyer l'email de confirmation de réception du formulaire au client ?")) return;
     setBusy(true);
+    const payload = {
+      application_id: app.id,
+      status: "form_received",
+    };
     const { error } = await supabase.functions.invoke("send-visa-email", {
-      body: { application_id: app.id, status: "form_received" },
+      body: payload,
     });
     setBusy(false);
     if (error) return toast.error(error.message ?? "Échec de l'envoi");

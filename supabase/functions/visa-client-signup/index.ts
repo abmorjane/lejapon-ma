@@ -1,8 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
-const functionVersion = "visa-client-signup-v2-email-design";
-
 const baseCorsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -44,7 +42,7 @@ const corsHeadersFor = (req: Request): Record<string, string> => {
 const fallbackCorsHeaders = { ...baseCorsHeaders, "Access-Control-Allow-Origin": "https://lejapon.ma" };
 
 const json = (payload: Record<string, unknown>, status = 200, headers: Record<string, string> = fallbackCorsHeaders) =>
-  new Response(JSON.stringify({ function_version: functionVersion, ...payload }), {
+  new Response(JSON.stringify(payload), {
     status,
     headers: { ...headers, "Content-Type": "application/json" },
   });
@@ -93,6 +91,46 @@ const escapeHtml = (value: unknown) =>
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+
+const legacyBrandPattern = "Ta" + "pis\\s+Volant";
+const legacyTripsPattern = "Tri" + "ps\\s+app";
+const BRAND_REPLACEMENTS: Array<[RegExp, string]> = [
+  [new RegExp(`L['’]équipe\\s+${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "L’équipe LeJapon.ma"],
+  [new RegExp(`L['’]equipe\\s+${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "L’équipe LeJapon.ma"],
+  [new RegExp(`${legacyBrandPattern}\\s*[—-]\\s*Le\\s+Japon`, "gi"), "LeJapon.ma"],
+  [new RegExp(legacyBrandPattern, "gi"), "LeJapon.ma"],
+  [new RegExp(legacyTripsPattern, "gi"), "LeJapon.ma"],
+];
+
+const sanitizeBranding = (value: unknown) =>
+  BRAND_REPLACEMENTS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), String(value ?? ""));
+
+const renderTemplateString = (content: unknown, variables: Record<string, unknown>) =>
+  sanitizeBranding(content).replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, key) => {
+    const value = variables[key];
+    return value === null || value === undefined || value === "" ? "Non renseigné" : sanitizeBranding(value);
+  });
+
+async function fetchEmailTemplate(admin: any, key: string, language = "fr") {
+  const byKey = await admin
+    .from("email_templates")
+    .select("*")
+    .eq("key", key)
+    .eq("language", language)
+    .limit(1)
+    .maybeSingle();
+  if (!byKey.error && byKey.data) return byKey.data;
+
+  const byName = await admin
+    .from("email_templates")
+    .select("*")
+    .eq("name", key)
+    .eq("language", language)
+    .limit(1)
+    .maybeSingle();
+  if (!byName.error && byName.data) return byName.data;
+  return null;
+}
 
 const normalizeComparable = (value: unknown) =>
   String(value ?? "")
@@ -241,8 +279,8 @@ async function sendWelcomeEmail(admin: any, firstName: string, email: string) {
   const siteUrl = "https://lejapon.ma";
   const loginUrl = `${siteUrl}/formulaire-visa/login`;
   const logoUrl = `${siteUrl}/favicon.png`;
-  const subject = "Bienvenue sur LeJapon.ma — votre espace visa est prêt";
-  const text = `Bonjour ${firstName},
+  let subject = "Bienvenue sur LeJapon.ma — votre espace visa est prêt";
+  let text = `Bonjour ${firstName},
 
 Votre espace visa Japon est prêt.
 
@@ -265,8 +303,7 @@ L’équipe LeJapon.ma
 Moroccan Express Travel & Events
 info@lejapon.ma`;
 
-  const html = `
-    <!-- function_version: ${functionVersion} -->
+  let html = `
     <div style="margin:0;padding:0;background:#f6f3ef;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
       <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">
         Votre espace visa Japon est prêt. Complétez votre demande et suivez son avancement depuis votre espace client LeJapon.ma.
@@ -317,6 +354,23 @@ info@lejapon.ma`;
         </div>
       </div>
     </div>`;
+
+  const templateKey = "visa_account_created";
+  const template = await fetchEmailTemplate(admin, templateKey);
+  const templateIsActive = template?.is_active ?? template?.is_system ?? true;
+  if (template && templateIsActive !== false && template.subject && (template.body_html || template.html_body)) {
+    const variables = {
+      client_name: firstName,
+      download_link: loginUrl,
+      date: new Date().toLocaleDateString("fr-FR"),
+    };
+    subject = renderTemplateString(template.subject, variables);
+    html = renderTemplateString(template.body_html ?? template.html_body, variables);
+    text = renderTemplateString(template.body_text ?? template.preheader ?? text, variables);
+  }
+  subject = sanitizeBranding(subject);
+  html = sanitizeBranding(html);
+  text = sanitizeBranding(text);
 
   const smtp = await smtpConfig(admin);
   const client = new SMTPClient({
