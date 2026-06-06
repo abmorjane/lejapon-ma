@@ -107,10 +107,12 @@ export default function ProgrammePage() {
       <div className="programme-page w-full max-w-full overflow-x-hidden">
       <ProgrammeHero active={active} loading={loading} />
 
-      <section className="container-app w-full max-w-full [overflow:clip] box-border px-4 sm:px-5 md:px-8 lg:px-12 py-10 md:py-14">
+      <section className="container-app w-full max-w-full [overflow:clip] box-border px-4 sm:px-5 md:px-8 lg:px-12 py-10 md:py-14 min-h-[720px]">
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-muted-foreground">
-            <Loader2 className="w-5 h-5 animate-spin mr-2" /> Chargement des programmes…
+          <div className="grid min-h-[560px] place-items-center text-muted-foreground">
+            <div className="flex items-center">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Chargement des programmes…
+            </div>
           </div>
         ) : rows.length === 0 ? (
           <div className="text-center py-20 text-muted-foreground">
@@ -177,7 +179,7 @@ export default function ProgrammePage() {
 function ProgrammeHero({ active, loading }: { active?: Programme; loading: boolean }) {
   const hero = active?.hero_image_url;
   return (
-    <section className="relative w-full max-w-full overflow-hidden border-b border-border">
+    <section className="relative min-h-[420px] sm:min-h-[520px] md:min-h-[640px] w-full max-w-full overflow-hidden border-b border-border">
       {hero ? (
         <>
           <Img
@@ -185,6 +187,8 @@ function ProgrammeHero({ active, loading }: { active?: Programme; loading: boole
             alt={active?.hero_alt || (active?.title ? `${active.title} — Japon` : "")}
             preset="hero"
             priority
+            width={1600}
+            height={900}
             className="absolute inset-0 w-full max-w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-background via-background/60 to-background/20" />
@@ -192,7 +196,7 @@ function ProgrammeHero({ active, loading }: { active?: Programme; loading: boole
       ) : (
         <div className="absolute inset-0 bg-gradient-to-br from-secondary/40 via-background to-background" />
       )}
-      <div className="container-app relative w-full max-w-full overflow-hidden box-border px-4 sm:px-5 md:px-8 lg:px-12 py-14 sm:py-20 md:py-32 text-center">
+      <div className="container-app relative flex min-h-[420px] sm:min-h-[520px] md:min-h-[640px] w-full max-w-full flex-col items-center justify-center overflow-hidden box-border px-4 sm:px-5 md:px-8 lg:px-12 py-14 sm:py-20 md:py-32 text-center">
         <motion.span
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -389,8 +393,8 @@ function RichDays({ programme }: { programme: Programme }) {
 
 function DaySection({ day, reverse, programme, showCta }: { day: ProgrammeDay; reverse: boolean; programme: Programme; showCta: boolean }) {
   return (
-    <article id={`jour-${day.day_number}`} className="scroll-mt-20 md:scroll-mt-24 w-full max-w-full overflow-hidden box-border">
-      <div className={cn("grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 md:gap-10 items-start w-full max-w-full min-w-0 overflow-hidden box-border")}>
+    <article id={`jour-${day.day_number}`} className="scroll-mt-20 md:scroll-mt-24 w-full max-w-full overflow-hidden box-border md:min-h-[520px]">
+      <div className={cn("grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 md:gap-10 items-start w-full max-w-full min-w-0 overflow-hidden box-border md:min-h-[520px]")}>
         {/* Image + galerie */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -399,13 +403,15 @@ function DaySection({ day, reverse, programme, showCta }: { day: ProgrammeDay; r
           transition={{ duration: 0.5 }}
           className={cn("space-y-3 min-w-0 w-full max-w-full overflow-hidden box-border", reverse && "md:order-2")}
         >
-          <div className="relative w-full max-w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-secondary aspect-[16/11] sm:aspect-[4/3] max-h-[58vh] box-border">
+          <div className="relative w-full max-w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-secondary aspect-[16/11] sm:aspect-[4/3] min-h-[220px] sm:min-h-[300px] md:min-h-[360px] max-h-[58vh] box-border">
             {day.main_image_url ? (
               <Img
                 src={day.main_image_url}
                 alt={day.title}
                 preset="card"
                 sizes="(max-width: 767px) 100vw, 50vw"
+                width={800}
+                height={600}
                 className="block w-full max-w-full h-full object-cover"
               />
             ) : (
@@ -425,11 +431,13 @@ function DaySection({ day, reverse, programme, showCta }: { day: ProgrammeDay; r
           {day.gallery_images.length > 0 && (
             <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full max-w-full overflow-hidden box-border">
               {day.gallery_images.map((g, i) => (
-                <div key={i} className="relative min-w-0 w-full max-w-full rounded-xl sm:rounded-2xl overflow-hidden bg-secondary aspect-[16/11] sm:aspect-[4/3] max-h-[28vh] box-border">
+                <div key={i} className="relative min-w-0 w-full max-w-full rounded-xl sm:rounded-2xl overflow-hidden bg-secondary aspect-[16/11] sm:aspect-[4/3] min-h-[110px] sm:min-h-[150px] max-h-[28vh] box-border">
                   <Img
                     src={g}
                     alt={`${day.title} — photo ${i + 1}`}
                     preset="thumb"
+                    width={400}
+                    height={300}
                     className="block w-full max-w-full h-full object-cover hover:scale-105 transition-transform duration-500"
                     sizes="(max-width: 767px) 50vw, 25vw"
                   />
@@ -445,7 +453,7 @@ function DaySection({ day, reverse, programme, showCta }: { day: ProgrammeDay; r
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-80px" }}
           transition={{ duration: 0.5, delay: 0.05 }}
-          className="min-w-0 w-full max-w-full overflow-hidden box-border"
+          className="min-w-0 w-full max-w-full overflow-hidden box-border md:min-h-[360px]"
         >
           {(day.city || day.badge) && (
             <div className="flex flex-wrap items-center gap-2 text-sm text-accent font-semibold mb-2 max-w-full">

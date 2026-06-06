@@ -33,6 +33,13 @@ const DEFAULT_SIZES: Record<ImgPreset, string> = {
   full: "100vw",
 };
 
+const DEFAULT_DIMENSIONS: Record<ImgPreset, { width: number; height: number }> = {
+  thumb: { width: 400, height: 300 },
+  card: { width: 800, height: 600 },
+  hero: { width: 1600, height: 900 },
+  full: { width: 1920, height: 1080 },
+};
+
 /**
  * Drop-in replacement for <img> that:
  *  - rewrites Supabase Storage URLs through the on-the-fly render endpoint
@@ -61,6 +68,7 @@ export const Img = forwardRef<HTMLImageElement, Props>(function Img(
     ? getSrcSet(src, widths ?? RESPONSIVE_WIDTHS[preset])
     : undefined;
   const finalSizes = sizes ?? (transformable ? DEFAULT_SIZES[preset] : undefined);
+  const dimensions = DEFAULT_DIMENSIONS[preset];
 
   return (
     <img
@@ -73,8 +81,8 @@ export const Img = forwardRef<HTMLImageElement, Props>(function Img(
       decoding={rest.decoding ?? "async"}
       // @ts-expect-error — fetchpriority is a valid HTML attribute, not yet typed
       fetchpriority={priority ? "high" : rest.fetchpriority ?? "auto"}
-      width={rest.width ?? baseWidth}
-      height={rest.height}
+      width={rest.width ?? baseWidth ?? dimensions.width}
+      height={rest.height ?? dimensions.height}
       className={className}
       {...rest}
     />

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, Download, MessageSquare, Plane, Plus, Save, Send, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Download, MessageSquare, Paperclip, Plane, Plus, Save, Search, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -20,6 +20,10 @@ const db = supabase as any;
 type QuoteStatus = "draft" | "submitted" | "reviewed" | "approved" | "revision_requested";
 type RowStatus = "todo" | "pending" | "confirmed" | "issue";
 type QuoteSection = "hotels" | "transport" | "activities" | "guides" | "other";
+type ValidationItemKey = QuoteSection | "participants" | "rooming" | "documents";
+type TripMessageType = "general" | "hotel" | "transport" | "activities" | "guides" | "urgent";
+type TripDocumentCategory = "hotel_vouchers" | "transport_vouchers" | "guide_confirmations" | "flight_tickets" | "rooming_lists" | "emergency_contacts" | "contracts" | "other";
+type SupplierValidationStatus = "draft" | "in_progress" | "ready_for_japan_office" | "japan_office_confirmed" | "ready_to_travel";
 
 type QuoteRow = {
   id?: string;
@@ -59,6 +63,52 @@ type QuoteEngineDiagnostic = {
   details?: string | null;
 };
 
+type TripMessageAttachment = {
+  id?: string;
+  message_id: string;
+  file_name: string;
+  file_path?: string | null;
+  file_url?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  created_at?: string | null;
+};
+
+type TripMessage = {
+  id: string;
+  trip_id: string;
+  quote_id?: string | null;
+  message_type: TripMessageType;
+  body: string;
+  sender_id?: string | null;
+  sender_name?: string | null;
+  sender_role?: string | null;
+  sender_source?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  attachments?: TripMessageAttachment[];
+};
+
+type TripDocument = {
+  id: string;
+  trip_id: string;
+  quote_id?: string | null;
+  category: TripDocumentCategory;
+  title: string;
+  file_name: string;
+  file_path?: string | null;
+  file_url?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  version: number;
+  uploaded_by?: string | null;
+  uploaded_by_name?: string | null;
+  uploaded_by_role?: string | null;
+  uploaded_at: string;
+  updated_at?: string | null;
+  deleted_at?: string | null;
+};
+
 const tableBySection: Record<QuoteSection, string> = {
   hotels: "supplier_quote_hotel_rows",
   transport: "supplier_quote_transport_rows",
@@ -96,6 +146,60 @@ const dayStatusLabel: Record<DayOperationalStatus, string> = {
   attention: "Attention requise",
   modified: "Modifié",
 };
+
+const messageTypeLabel: Record<TripMessageType, string> = {
+  general: "Général",
+  hotel: "Hôtel",
+  transport: "Transport",
+  activities: "Activités",
+  guides: "Guides",
+  urgent: "Urgent",
+};
+
+const messageTypes = Object.keys(messageTypeLabel) as TripMessageType[];
+const tripMessageAttachmentBucket = "trip-message-attachments";
+
+const tripDocumentCategoryLabel: Record<TripDocumentCategory, string> = {
+  hotel_vouchers: "Hotel vouchers",
+  transport_vouchers: "Transport vouchers",
+  guide_confirmations: "Guide confirmations",
+  flight_tickets: "Flight tickets",
+  rooming_lists: "Rooming lists",
+  emergency_contacts: "Emergency contacts",
+  contracts: "Contracts",
+  other: "Other",
+};
+
+const tripDocumentCategories = Object.keys(tripDocumentCategoryLabel) as TripDocumentCategory[];
+const tripDocumentBucket = "trip-documents";
+
+const mandatoryTripDocumentCategories: TripDocumentCategory[] = [
+  "hotel_vouchers",
+  "transport_vouchers",
+  "guide_confirmations",
+  "flight_tickets",
+  "rooming_lists",
+  "emergency_contacts",
+  "contracts",
+];
+
+const validationStatusLabel: Record<SupplierValidationStatus, string> = {
+  draft: "Draft",
+  in_progress: "In Progress",
+  ready_for_japan_office: "Ready For Japan Office",
+  japan_office_confirmed: "Japan Office Confirmed",
+  ready_to_travel: "Ready To Travel",
+};
+
+const validationStatusOrder: SupplierValidationStatus[] = ["draft", "in_progress", "ready_for_japan_office", "japan_office_confirmed", "ready_to_travel"];
+const validationDbColumns = [
+  "validation_status",
+  "validation_snapshot",
+  "validation_metadata",
+  "validation_completion_percentage",
+  "validation_updated_by",
+  "validation_updated_at",
+] as const;
 
 const transportTypes = ["bus", "metro", "taxi", "train", "shinkansen", "boat", "other"];
 const guideTypes = ["francophone", "anglophone", "japanese", "assistant", "other"];
@@ -170,17 +274,57 @@ export default function SupplierTripCosts() {
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<QuoteStatus>("draft");
+  const [validationStatus, setValidationStatus] = useState<SupplierValidationStatus>("draft");
+  const [validationBusy, setValidationBusy] = useState(false);
+  const [validationOverrides, setValidationOverrides] = useState<Partial<Record<ValidationItemKey, boolean>>>({});
   const [commissionPct, setCommissionPct] = useState(10);
   const [exchangeRate, setExchangeRate] = useState(0.068);
   const [internalNotes, setInternalNotes] = useState("");
   const [operationalState, setOperationalState] = useState<OperationalState>({ day_statuses: {}, day_comments: {} });
+  const [activeTab, setActiveTab] = useState("quote");
+  const [messages, setMessages] = useState<TripMessage[]>([]);
+  const [messageReads, setMessageReads] = useState<Record<string, string>>({});
+  const [messageDraft, setMessageDraft] = useState("");
+  const [messageType, setMessageType] = useState<TripMessageType>("general");
+  const [messageSearch, setMessageSearch] = useState("");
+  const [messageFilter, setMessageFilter] = useState<TripMessageType | "all">("all");
+  const [messageFiles, setMessageFiles] = useState<File[]>([]);
+  const [messageBusy, setMessageBusy] = useState(false);
+  const [messagesSqlMissing, setMessagesSqlMissing] = useState(false);
+  const [documents, setDocuments] = useState<TripDocument[]>([]);
+  const [documentCategory, setDocumentCategory] = useState<TripDocumentCategory>("hotel_vouchers");
+  const [documentTitle, setDocumentTitle] = useState("");
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [documentSearch, setDocumentSearch] = useState("");
+  const [documentFilter, setDocumentFilter] = useState<TripDocumentCategory | "all">("all");
+  const [documentBusy, setDocumentBusy] = useState(false);
+  const [documentsSqlMissing, setDocumentsSqlMissing] = useState(false);
 
   const isAdmin = roles.some((role) => ["super_admin", "admin"].includes(role));
   const canEdit = isAdmin || ["draft", "submitted", "revision_requested"].includes(status);
+  const unreadMessageCount = useMemo(
+    () => messages.filter((message) => message.sender_id !== user?.id && !messageReads[message.id]).length,
+    [messageReads, messages, user?.id]
+  );
+  const validation = useMemo(
+    () => buildSupplierValidation({
+      rows,
+      participants,
+      rooms,
+      assignments,
+      documents,
+      overrides: validationOverrides,
+    }),
+    [assignments, documents, participants, rooms, rows, validationOverrides]
+  );
 
   useEffect(() => {
     void load();
   }, [tripId, user?.id]);
+
+  useEffect(() => {
+    if (activeTab === "messages") void markMessagesRead(messages);
+  }, [activeTab, messages.length]);
 
   const load = async () => {
     if (!tripId || !user) return;
@@ -211,7 +355,7 @@ export default function SupplierTripCosts() {
       tripRow.programme_id
         ? db.from("programme_days").select("*").eq("programme_id", tripRow.programme_id).order("day_number", { ascending: true }).order("sort_order", { ascending: true })
         : Promise.resolve({ data: [] }),
-      db.from("bookings").select("id,reference,contact_name,contact_email,contact_phone,contact_city,num_adults,num_children,room_type,formula,status,source,agency_organization_id,special_requests,metadata,created_at").eq("trip_id", tripId),
+      db.from("bookings").select("id,reference,contact_name,contact_email,contact_phone,contact_city,num_adults,num_children,room_type,formula,status,source,agency_organization_id,special_requests,total_amount_mad,paid_amount_mad,metadata,created_at").eq("trip_id", tripId),
       db.from("trip_hotels").select("*").eq("trip_id", tripId).order("sort_order", { ascending: true }),
       db.from("extras").select("*").eq("is_active", true).order("sort_order"),
     ]);
@@ -266,10 +410,12 @@ export default function SupplierTripCosts() {
     if (loadedQuote) {
       setQuote(loadedQuote.quote);
       setStatus((loadedQuote.quote.status ?? "draft") as QuoteStatus);
+      setValidationStatus((loadedQuote.quote.validation_status ?? "draft") as SupplierValidationStatus);
       setCommissionPct(Number(loadedQuote.quote.commission_percentage ?? loadedQuote.quote.commission_percent ?? 10));
       setExchangeRate(Number(loadedQuote.quote.exchange_rate_jpy_mad ?? 0.068));
       setInternalNotes(loadedQuote.quote.internal_notes ?? loadedQuote.quote.admin_notes ?? "");
       setOperationalState(parseOperationalState(loadedQuote.quote.supplier_notes));
+      setValidationOverrides(extractValidationOverrides(loadedQuote.quote));
       setRows(loadedQuote.rows);
     } else {
       const initialRows = buildInitialRows({
@@ -284,11 +430,238 @@ export default function SupplierTripCosts() {
       });
       setQuote(null);
       setStatus("draft");
+      setValidationStatus("draft");
       setCommissionPct(10);
       setExchangeRate(0.068);
       setInternalNotes("");
       setOperationalState({ day_statuses: {}, day_comments: {} });
+      setValidationOverrides({});
       setRows(initialRows);
+    }
+    await loadMessages(tripId);
+    await loadDocuments(tripId);
+  };
+
+  const loadMessages = async (targetTripId = tripId) => {
+    if (!targetTripId || !user) return;
+    setMessagesSqlMissing(false);
+    const { data, error } = await db
+      .from("trip_messages")
+      .select("*")
+      .eq("trip_id", targetTripId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: true });
+    if (error) {
+      if (isMissingTableError(error)) setMessagesSqlMissing(true);
+      return;
+    }
+
+    const messageRows = (data ?? []) as TripMessage[];
+    const messageIds = messageRows.map((message) => message.id);
+    let attachmentsByMessage = new Map<string, TripMessageAttachment[]>();
+    if (messageIds.length) {
+      const { data: attachmentRows } = await db
+        .from("trip_message_attachments")
+        .select("*")
+        .in("message_id", messageIds)
+        .order("created_at", { ascending: true });
+      const signedAttachments = await Promise.all((attachmentRows ?? []).map(async (attachment: TripMessageAttachment) => ({
+        ...attachment,
+        file_url: await signedAttachmentUrl(attachment),
+      })));
+      attachmentsByMessage = signedAttachments.reduce((map, attachment) => {
+        map.set(attachment.message_id, [...(map.get(attachment.message_id) ?? []), attachment]);
+        return map;
+      }, new Map<string, TripMessageAttachment[]>());
+    }
+
+    const { data: readRows } = messageIds.length
+      ? await db.from("trip_message_reads").select("message_id,read_at").eq("user_id", user.id).in("message_id", messageIds)
+      : { data: [] };
+
+    const nextMessages = messageRows.map((message) => ({
+      ...message,
+      attachments: attachmentsByMessage.get(message.id) ?? [],
+    }));
+    setMessages(nextMessages);
+    setMessageReads(Object.fromEntries((readRows ?? []).map((row: any) => [row.message_id, row.read_at])));
+    if (activeTab === "messages") await markMessagesRead(nextMessages);
+  };
+
+  const markMessagesRead = async (messageList: TripMessage[]) => {
+    if (!user?.id || !messageList.length) return;
+    const unread = messageList.filter((message) => message.sender_id !== user.id && !messageReads[message.id]);
+    if (!unread.length) return;
+    const now = new Date().toISOString();
+    const payload = unread.map((message) => ({ message_id: message.id, user_id: user.id, read_at: now }));
+    const { error } = await db.from("trip_message_reads").upsert(payload, { onConflict: "message_id,user_id" });
+    if (!error) {
+      setMessageReads((current) => ({
+        ...current,
+        ...Object.fromEntries(unread.map((message) => [message.id, now])),
+      }));
+    }
+  };
+
+  const sendTripMessage = async () => {
+    if (!tripId || !user) return;
+    const body = messageDraft.trim();
+    if (!body && messageFiles.length === 0) return;
+    setMessageBusy(true);
+    try {
+      const { data: message, error } = await db
+        .from("trip_messages")
+        .insert({
+          trip_id: tripId,
+          quote_id: quote?.id ?? null,
+          message_type: messageType,
+          body: body || "Pièce jointe",
+          sender_id: user.id,
+          sender_name: user.user_metadata?.full_name || user.email || "Utilisateur",
+          sender_role: roles[0] ?? (isAdmin ? "admin" : "supplier"),
+          sender_source: isAdmin ? "morocco_office" : "japan_office",
+          metadata: { notify: isAdmin ? "supplier_users" : "admin_users" },
+        })
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      if (!message?.id) throw new Error("Message non sauvegardé.");
+
+      for (const file of messageFiles) {
+        const safeName = safeStorageFilename(file.name);
+        const path = `${tripId}/${message.id}/${Date.now()}-${safeName}`;
+        const upload = await supabase.storage.from(tripMessageAttachmentBucket).upload(path, file, { upsert: false });
+        if (upload.error) throw upload.error;
+        const { error: attachmentError } = await db.from("trip_message_attachments").insert({
+          message_id: message.id,
+          file_name: file.name,
+          file_path: path,
+          mime_type: file.type || null,
+          size_bytes: file.size,
+          uploaded_by: user.id,
+        });
+        if (attachmentError) throw attachmentError;
+      }
+
+      setMessageDraft("");
+      setMessageFiles([]);
+      toast.success("Message envoyé.");
+      await loadMessages(tripId);
+    } catch (error: any) {
+      if (isMissingTableError(error)) setMessagesSqlMissing(true);
+      toast.error(error?.message ?? "Envoi du message impossible.");
+    } finally {
+      setMessageBusy(false);
+    }
+  };
+
+  const loadDocuments = async (targetTripId = tripId) => {
+    if (!targetTripId || !user) return;
+    setDocumentsSqlMissing(false);
+    const { data, error } = await db
+      .from("trip_documents")
+      .select("*")
+      .eq("trip_id", targetTripId)
+      .is("deleted_at", null)
+      .order("category", { ascending: true })
+      .order("uploaded_at", { ascending: false });
+    if (error) {
+      if (isMissingTableError(error)) setDocumentsSqlMissing(true);
+      return;
+    }
+    const signedDocuments = await Promise.all((data ?? []).map(async (document: TripDocument) => ({
+      ...document,
+      file_url: await signedTripDocumentUrl(document),
+    })));
+    setDocuments(signedDocuments);
+  };
+
+  const uploadTripDocument = async () => {
+    if (!tripId || !user || !documentFile) return;
+    setDocumentBusy(true);
+    try {
+      const safeName = safeStorageFilename(documentFile.name);
+      const path = `${tripId}/${documentCategory}/${Date.now()}-${safeName}`;
+      const upload = await supabase.storage.from(tripDocumentBucket).upload(path, documentFile, { upsert: false });
+      if (upload.error) throw upload.error;
+      const now = new Date().toISOString();
+      const { error } = await db.from("trip_documents").insert({
+        trip_id: tripId,
+        quote_id: quote?.id ?? null,
+        category: documentCategory,
+        title: documentTitle.trim() || documentFile.name,
+        file_name: documentFile.name,
+        file_path: path,
+        mime_type: documentFile.type || null,
+        size_bytes: documentFile.size,
+        version: 1,
+        uploaded_by: user.id,
+        uploaded_by_name: user.user_metadata?.full_name || user.email || "Utilisateur",
+        uploaded_by_role: roles[0] ?? (isAdmin ? "admin" : "supplier"),
+        uploaded_at: now,
+        updated_at: now,
+      });
+      if (error) throw error;
+      setDocumentTitle("");
+      setDocumentFile(null);
+      toast.success("Document ajouté.");
+      await loadDocuments(tripId);
+    } catch (error: any) {
+      if (isMissingTableError(error)) setDocumentsSqlMissing(true);
+      toast.error(error?.message ?? "Upload du document impossible.");
+    } finally {
+      setDocumentBusy(false);
+    }
+  };
+
+  const replaceTripDocument = async (document: TripDocument, file: File) => {
+    if (!tripId || !user) return;
+    setDocumentBusy(true);
+    try {
+      const safeName = safeStorageFilename(file.name);
+      const path = `${tripId}/${document.category}/${document.id}/v${Number(document.version || 1) + 1}-${Date.now()}-${safeName}`;
+      const upload = await supabase.storage.from(tripDocumentBucket).upload(path, file, { upsert: false });
+      if (upload.error) throw upload.error;
+      if (document.file_path) await supabase.storage.from(tripDocumentBucket).remove([document.file_path]);
+      const now = new Date().toISOString();
+      const { error } = await db
+        .from("trip_documents")
+        .update({
+          file_name: file.name,
+          file_path: path,
+          mime_type: file.type || null,
+          size_bytes: file.size,
+          version: Number(document.version || 1) + 1,
+          uploaded_by: user.id,
+          uploaded_by_name: user.user_metadata?.full_name || user.email || "Utilisateur",
+          uploaded_by_role: roles[0] ?? (isAdmin ? "admin" : "supplier"),
+          uploaded_at: now,
+          updated_at: now,
+        })
+        .eq("id", document.id);
+      if (error) throw error;
+      toast.success("Version remplacée.");
+      await loadDocuments(tripId);
+    } catch (error: any) {
+      toast.error(error?.message ?? "Remplacement impossible.");
+    } finally {
+      setDocumentBusy(false);
+    }
+  };
+
+  const deleteTripDocument = async (document: TripDocument) => {
+    if (!tripId) return;
+    setDocumentBusy(true);
+    try {
+      if (document.file_path) await supabase.storage.from(tripDocumentBucket).remove([document.file_path]);
+      const { error } = await db.from("trip_documents").update({ deleted_at: new Date().toISOString() }).eq("id", document.id);
+      if (error) throw error;
+      toast.success("Document supprimé.");
+      await loadDocuments(tripId);
+    } catch (error: any) {
+      toast.error(error?.message ?? "Suppression impossible.");
+    } finally {
+      setDocumentBusy(false);
     }
   };
 
@@ -320,7 +693,7 @@ export default function SupplierTripCosts() {
         setLastQuoteEngineError(`${tableBySection[section]}: ${formatSupabaseError(error)}`);
         if (isMissingTableError(error)) setSqlMissing(true);
       }
-      return [section, normalizeRows(data ?? [])] as const;
+      return [section, normalizeRows(section, data ?? [])] as const;
     }));
 
     return {
@@ -329,72 +702,99 @@ export default function SupplierTripCosts() {
     };
   };
 
-  const totals = useMemo(() => {
-    const sectionTotals = {
-      hotels: rows.hotels.reduce((sum, row) => sum + subtotal(row), 0),
-      transport: rows.transport.reduce((sum, row) => sum + subtotal(row), 0),
-      activities: rows.activities.reduce((sum, row) => sum + subtotal(row), 0),
-      guides: rows.guides.reduce((sum, row) => sum + subtotal(row), 0),
-      other: rows.other.reduce((sum, row) => sum + subtotal(row), 0),
-    };
-    const grandTotalJpy = Object.values(sectionTotals).reduce((sum, value) => sum + value, 0);
-    const commissionAmountJpy = grandTotalJpy * Number(commissionPct || 0) / 100;
-    const finalTotalJpy = grandTotalJpy + commissionAmountJpy;
-    const finalTotalMad = finalTotalJpy * Number(exchangeRate || 0);
-    const participantCount = Math.max(1, participants.length || getParticipantCount([], bookings) || 1);
-    return {
-      ...sectionTotals,
-      grandTotalJpy,
-      commissionAmountJpy,
-      finalTotalJpy,
-      finalTotalMad,
-      participantCount,
-      costPerPersonJpy: finalTotalJpy / participantCount,
-      costPerPersonMad: finalTotalMad / participantCount,
-    };
-  }, [bookings, commissionPct, exchangeRate, participants.length, rows]);
+  const totals = useMemo(
+    () => calculateQuoteTotals(rows, commissionPct, exchangeRate, participants, bookings),
+    [bookings, commissionPct, exchangeRate, participants, rows]
+  );
 
-  const saveQuote = async (nextStatus = status) => {
-    if (!tripId) return;
+  const buildValidationForSave = (
+    rowsToValidate: Record<QuoteSection, QuoteRow[]> = rows,
+    overridesToValidate: Partial<Record<ValidationItemKey, boolean>> = validationOverrides
+  ) => buildSupplierValidation({
+    rows: rowsToValidate,
+    participants,
+    rooms,
+    assignments,
+    documents,
+    overrides: overridesToValidate,
+  });
+
+  const saveQuote = async (
+    nextStatus = status,
+    options: {
+      rowsOverride?: Record<QuoteSection, QuoteRow[]>;
+      validationOverridesOverride?: Partial<Record<ValidationItemKey, boolean>>;
+      validationStatusOverride?: SupplierValidationStatus;
+    } = {}
+  ) => {
+    if (!tripId) return null;
     if (sqlMissing) {
       toast.error(lastQuoteEngineError ? `Migration SQL quote engine requise: ${lastQuoteEngineError}` : "Migration SQL quote engine requise avant l'enregistrement.");
-      return;
+      return null;
     }
     setBusy(true);
     try {
-      const quotePayload = {
+      const rowsToSave = options.rowsOverride ?? rows;
+      const overridesToSave = options.validationOverridesOverride ?? validationOverrides;
+      const validationStatusToSave = options.validationStatusOverride ?? validationStatus;
+      const validationForSave = buildValidationForSave(rowsToSave, overridesToSave);
+      const totalsForSave = calculateQuoteTotals(rowsToSave, commissionPct, exchangeRate, participants, bookings);
+      const validationMetadata = {
+        manual_overrides: overridesToSave,
+        completion_percentage: validationForSave.completionPercentage,
+        updated_at: new Date().toISOString(),
+      };
+      const quotePayloadBase = {
         trip_id: tripId,
         supplier_id: supplierId,
         status: nextStatus,
         commission_percentage: commissionPct,
         exchange_rate_jpy_mad: exchangeRate,
-        participant_count: totals.participantCount,
-        total_hotels_jpy: totals.hotels,
-        total_transport_jpy: totals.transport,
-        total_activities_jpy: totals.activities,
-        total_guides_jpy: totals.guides,
-        total_other_jpy: totals.other,
-        grand_total_jpy: totals.grandTotalJpy,
-        commission_amount_jpy: totals.commissionAmountJpy,
-        final_total_jpy: totals.finalTotalJpy,
-        final_total_mad: totals.finalTotalMad,
-        cost_per_person_jpy: totals.costPerPersonJpy,
-        cost_per_person_mad: totals.costPerPersonMad,
+        participant_count: totalsForSave.participantCount,
+        total_hotels_jpy: totalsForSave.hotels,
+        total_transport_jpy: totalsForSave.transport,
+        total_activities_jpy: totalsForSave.activities,
+        total_guides_jpy: totalsForSave.guides,
+        total_other_jpy: totalsForSave.other,
+        grand_total_jpy: totalsForSave.grandTotalJpy,
+        commission_amount_jpy: totalsForSave.commissionAmountJpy,
+        final_total_jpy: totalsForSave.finalTotalJpy,
+        final_total_mad: totalsForSave.finalTotalMad,
+        cost_per_person_jpy: totalsForSave.costPerPersonJpy,
+        cost_per_person_mad: totalsForSave.costPerPersonMad,
         supplier_notes: serializeOperationalState(operationalState),
         internal_notes: internalNotes || null,
         updated_by: user?.id ?? null,
       };
+      const quotePayloadValidation = {
+        validation_status: validationStatusToSave,
+        validation_snapshot: { ...validationForSave, manual_overrides: overridesToSave },
+        validation_metadata: validationMetadata,
+        validation_completion_percentage: validationForSave.completionPercentage,
+        validation_updated_by: user?.id ?? null,
+        validation_updated_at: new Date().toISOString(),
+      };
 
-      const quoteResult = quote?.id
-        ? await db.from("supplier_trip_quotes").update(quotePayload).eq("id", quote.id).select("*").maybeSingle()
-        : await db.from("supplier_trip_quotes").insert({ ...quotePayload, created_by: user?.id ?? null }).select("*").maybeSingle();
-      if (quoteResult.error) throw withQueryContext(quoteResult.error, "supplier_trip_quotes save");
+      let quotePayload: Record<string, any> = { ...quotePayloadBase, ...quotePayloadValidation };
+      let quoteResult: any = null;
+      for (let attempt = 0; attempt <= validationDbColumns.length; attempt += 1) {
+        quoteResult = quote?.id
+          ? await db.from("supplier_trip_quotes").update(quotePayload).eq("id", quote.id).select("*").maybeSingle()
+          : await db.from("supplier_trip_quotes").insert({ ...quotePayload, created_by: user?.id ?? null }).select("*").maybeSingle();
+        if (!quoteResult.error) break;
+        const missingColumn = missingValidationColumnName(quoteResult.error);
+        if (!missingColumn || !(missingColumn in quotePayload)) break;
+        const nextPayload = { ...quotePayload };
+        delete nextPayload[missingColumn];
+        quotePayload = nextPayload;
+      }
+      if (quoteResult?.error) throw withQueryContext(quoteResult.error, "supplier_trip_quotes save");
       const savedQuote = quoteResult.data;
       if (!savedQuote?.id) throw new Error("Demande de devis non sauvegardée.");
 
       for (const section of Object.keys(tableBySection) as QuoteSection[]) {
         await db.from(tableBySection[section]).delete().eq("quote_id", savedQuote.id);
-        const payload = rows[section].map((row, index) => serializeRow(section, row, savedQuote.id, index));
+        const payload = rowsToSave[section].map((row, index) => serializeRow(section, row, savedQuote.id, index));
         if (payload.length) {
           const { error } = await db.from(tableBySection[section]).insert(payload);
           if (error) throw withQueryContext(error, `${tableBySection[section]} insert`);
@@ -403,8 +803,10 @@ export default function SupplierTripCosts() {
 
       setQuote(savedQuote);
       setStatus(nextStatus as QuoteStatus);
+      setValidationStatus(validationStatusToSave);
       toast.success(nextStatus === "submitted" ? "Devis soumis à l'équipe LeJapon.ma." : "Devis enregistré.");
       await load();
+      return savedQuote;
     } catch (error: any) {
       setLastQuoteEngineError(formatSupabaseError(error));
       if (isMissingTableError(error)) {
@@ -413,13 +815,58 @@ export default function SupplierTripCosts() {
       } else {
         toast.error(error?.message ?? "Enregistrement impossible.");
       }
+      return null;
     } finally {
       setBusy(false);
     }
   };
 
+  const updateValidationStatus = async (nextStatus: SupplierValidationStatus) => {
+    if (!tripId || !user) return;
+    const blockingErrors = validationBlockingErrors(nextStatus, validationStatus, validation);
+    if (blockingErrors.length > 0) {
+      toast.error(blockingErrors[0]);
+      return;
+    }
+    setValidationBusy(true);
+    try {
+      const saved = await saveQuote(status, { validationStatusOverride: nextStatus });
+      if (!saved?.id) throw new Error("Enregistrez le devis avant de modifier le workflow.");
+      setValidationStatus(nextStatus);
+      toast.success(`Statut workflow: ${validationStatusLabel[nextStatus]}`);
+    } catch (error: any) {
+      toast.error(error?.message ?? "Mise à jour du workflow impossible.");
+    } finally {
+      setValidationBusy(false);
+    }
+  };
+
+  const bulkSetValidationSection = async (section: ValidationItemKey, confirmed: boolean) => {
+    if (!canEdit) return;
+    setValidationBusy(true);
+    try {
+      if (isQuoteSection(section)) {
+        const nextRows = {
+          ...rows,
+          [section]: normalizeRows(section, rows[section].map((row) => ({ ...row, status: confirmed ? "confirmed" : "todo" }))),
+        };
+        setRows(nextRows);
+        await saveQuote(status, { rowsOverride: nextRows });
+      } else {
+        const nextOverrides = { ...validationOverrides, [section]: confirmed };
+        setValidationOverrides(nextOverrides);
+        await saveQuote(status, { validationOverridesOverride: nextOverrides });
+      }
+      toast.success(confirmed ? "Section validée." : "Section remise à faire.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Mise à jour de la validation impossible.");
+    } finally {
+      setValidationBusy(false);
+    }
+  };
+
   const updateRows = (section: QuoteSection, nextRows: QuoteRow[]) => {
-    setRows((current) => ({ ...current, [section]: reindexRows(nextRows) }));
+    setRows((current) => ({ ...current, [section]: normalizeRows(section, nextRows) }));
   };
 
   const addRow = (section: QuoteSection) => {
@@ -522,7 +969,7 @@ export default function SupplierTripCosts() {
     setDiagnosticBusy(false);
   };
 
-  const exportExcel = async (scope: "quote" | "operations" | "participants" | "rooms_extras" | "global") => {
+  const exportExcel = async (scope: "quote" | "operations" | "participants" | "rooms_extras" | "global" | "operational_book") => {
     const context = buildExportContext({
       trip,
       rows,
@@ -553,6 +1000,34 @@ export default function SupplierTripCosts() {
       await exportWorkbook(`${fileBase}-chambres-extras.xlsx`, [
         { name: "Chambres", rows: context.roomRows },
         { name: "Extras", rows: context.extraRows },
+      ]);
+    } else if (scope === "operational_book") {
+      const book = buildOperationalBookContext({
+        trip,
+        rows,
+        totals,
+        programmeDays,
+        hotels,
+        rooms,
+        assignments,
+        participants,
+        bookings,
+        bookingExtras,
+        extrasList,
+        participantActivitySelections,
+        operationalState,
+        supplierName,
+      });
+      await exportWorkbook(`${fileBase}-dossier-operationnel.xlsx`, [
+        { name: "Summary", rows: book.summaryRows },
+        { name: "Flights", rows: book.flightRows },
+        { name: "Hotels", rows: book.hotelRows },
+        { name: "Rooming List", rows: book.roomingRows },
+        { name: "Participants", rows: book.participantRows },
+        { name: "Activities", rows: book.activityRows },
+        { name: "Guides", rows: book.guideRows },
+        { name: "Transport", rows: book.transportRows },
+        { name: "Emergency Contacts", rows: book.emergencyContactRows },
       ]);
     } else {
       await exportWorkbook(`${fileBase}-global.xlsx`, [
@@ -691,6 +1166,15 @@ export default function SupplierTripCosts() {
         </Card>
       )}
 
+      <SupplierValidationWorkflow
+        validation={validation}
+        status={validationStatus}
+        busy={validationBusy || busy}
+        canEdit={canEdit}
+        onStatusChange={updateValidationStatus}
+        onBulkSectionChange={bulkSetValidationSection}
+      />
+
       <div className="grid gap-3 lg:grid-cols-5">
         <TotalCard label="Hôtels" value={totals.hotels} />
         <TotalCard label="Transport" value={totals.transport} />
@@ -738,13 +1222,20 @@ export default function SupplierTripCosts() {
             <Button variant="outline" size="sm" onClick={() => void exportExcel("participants")}><Download className="h-4 w-4" /> Export participants Excel</Button>
             <Button variant="outline" size="sm" onClick={() => void exportExcel("rooms_extras")}><Download className="h-4 w-4" /> Export chambres & extras Excel</Button>
             <Button size="sm" onClick={() => void exportExcel("global")}><Download className="h-4 w-4" /> Export dossier global Excel</Button>
+            <Button size="sm" onClick={() => void exportExcel("operational_book")}><Download className="h-4 w-4" /> Exporter dossier opérationnel</Button>
           </div>
         </div>
       </Card>
 
-      <Tabs defaultValue="quote" className="space-y-4">
-        <TabsList className="grid h-auto w-full grid-cols-1 md:grid-cols-4">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value)} className="space-y-4">
+        <TabsList className={`grid h-auto w-full grid-cols-1 ${isAdmin ? "md:grid-cols-4 xl:grid-cols-7" : "md:grid-cols-3 xl:grid-cols-6"}`}>
           <TabsTrigger value="quote">Devis</TabsTrigger>
+          {isAdmin && <TabsTrigger value="financial">Bilan financier</TabsTrigger>}
+          <TabsTrigger value="messages" className="gap-2">
+            Messages
+            {unreadMessageCount > 0 && <Badge variant="destructive" className="px-1.5 py-0 text-[10px]">{unreadMessageCount}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="operations">Vue opérationnelle</TabsTrigger>
           <TabsTrigger value="participants">Participants</TabsTrigger>
           <TabsTrigger value="rooms">Chambres & extras</TabsTrigger>
@@ -760,6 +1251,54 @@ export default function SupplierTripCosts() {
             <Label>Notes internes admin / Japan office</Label>
             <Textarea className="mt-2" rows={3} value={internalNotes} onChange={(event) => setInternalNotes(event.target.value)} disabled={!isAdmin} />
           </Card>
+        </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="financial">
+            <FinancialDashboard rows={rows} totals={totals} bookings={bookings} participants={participants} exchangeRate={exchangeRate} />
+          </TabsContent>
+        )}
+
+        <TabsContent value="messages">
+          <TripMessagesCenter
+            messages={messages}
+            messageType={messageType}
+            messageDraft={messageDraft}
+            messageFiles={messageFiles}
+            messageSearch={messageSearch}
+            messageFilter={messageFilter}
+            messageBusy={messageBusy}
+            messagesSqlMissing={messagesSqlMissing}
+            currentUserId={user?.id ?? null}
+            canSend={Boolean(user)}
+            onTypeChange={setMessageType}
+            onDraftChange={setMessageDraft}
+            onFilesChange={setMessageFiles}
+            onSearchChange={setMessageSearch}
+            onFilterChange={setMessageFilter}
+            onSend={sendTripMessage}
+          />
+        </TabsContent>
+
+        <TabsContent value="documents">
+          <TripDocumentsCenter
+            documents={documents}
+            category={documentCategory}
+            title={documentTitle}
+            file={documentFile}
+            search={documentSearch}
+            filter={documentFilter}
+            busy={documentBusy}
+            sqlMissing={documentsSqlMissing}
+            onCategoryChange={setDocumentCategory}
+            onTitleChange={setDocumentTitle}
+            onFileChange={setDocumentFile}
+            onSearchChange={setDocumentSearch}
+            onFilterChange={setDocumentFilter}
+            onUpload={uploadTripDocument}
+            onReplace={replaceTripDocument}
+            onDelete={deleteTripDocument}
+          />
         </TabsContent>
 
         <TabsContent value="operations" className="space-y-3">
@@ -808,6 +1347,619 @@ export default function SupplierTripCosts() {
   );
 }
 
+function FinancialDashboard({
+  rows,
+  totals,
+  bookings,
+  participants,
+  exchangeRate,
+}: {
+  rows: Record<QuoteSection, QuoteRow[]>;
+  totals: any;
+  bookings: any[];
+  participants: any[];
+  exchangeRate: number;
+}) {
+  const passengerCount = participants.length || getParticipantCount([], bookings) || 0;
+  const safePassengerCount = Math.max(1, passengerCount || 1);
+  const safeExchangeRate = Number(exchangeRate || 0);
+  const revenueMad = bookings.reduce((sum, booking) => sum + numeric(booking.total_amount_mad), 0);
+  const revenueJpy = safeExchangeRate > 0 ? revenueMad / safeExchangeRate : 0;
+  const revenuePerPassengerMad = passengerCount > 0 ? revenueMad / safePassengerCount : 0;
+  const revenuePerPassengerJpy = passengerCount > 0 ? revenueJpy / safePassengerCount : 0;
+  const supplierCostMad = totals.grandTotalJpy * safeExchangeRate;
+  const grossMarginMad = revenueMad - supplierCostMad;
+  const grossMarginJpy = revenueJpy - totals.grandTotalJpy;
+  const netProfitMad = revenueMad - totals.finalTotalMad;
+  const netProfitJpy = revenueJpy - totals.finalTotalJpy;
+  const marginPercent = revenueMad > 0 ? (netProfitMad / revenueMad) * 100 : 0;
+
+  return (
+    <div className="space-y-5">
+      <Card className="p-4">
+        <SectionTitle title="Supplier costs" subtitle="Coûts consolidés depuis les lignes du devis fournisseur." />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          <FinancialMetric label="Hotels total" value={fmtJPY(totals.hotels)} />
+          <FinancialMetric label="Transport total" value={fmtJPY(totals.transport)} />
+          <FinancialMetric label="Activities total" value={fmtJPY(totals.activities)} />
+          <FinancialMetric label="Guides total" value={fmtJPY(totals.guides)} />
+          <FinancialMetric label="Other costs total" value={fmtJPY(totals.other)} />
+          <FinancialMetric label="Grand total supplier cost" value={fmtJPY(totals.grandTotalJpy)} strong />
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle title="Revenue" subtitle="Chiffre d'affaires calculé depuis les réservations rattachées au voyage." />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <FinancialMetric label="Total passengers" value={String(passengerCount)} />
+          <FinancialMetric label="Revenue MAD" value={fmtMAD(revenueMad)} strong />
+          <FinancialMetric label="Revenue JPY" value={fmtJPY(revenueJpy)} />
+          <FinancialMetric label="Revenue per passenger" value={`${fmtMAD(revenuePerPassengerMad)} · ${fmtJPY(revenuePerPassengerJpy)}`} />
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle title="Profitability" subtitle="Lecture marge brute et profit net après commission bureau Japon." />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          <FinancialMetric label="Gross margin MAD" value={fmtMAD(grossMarginMad)} tone={grossMarginMad >= 0 ? "positive" : "negative"} />
+          <FinancialMetric label="Gross margin JPY" value={fmtJPY(grossMarginJpy)} tone={grossMarginJpy >= 0 ? "positive" : "negative"} />
+          <FinancialMetric label="Margin %" value={`${formatPercent(marginPercent)}`} tone={marginPercent >= 0 ? "positive" : "negative"} strong />
+          <FinancialMetric label="Cost per passenger" value={`${fmtMAD(totals.costPerPersonMad)} · ${fmtJPY(totals.costPerPersonJpy)}`} />
+          <FinancialMetric label="Revenue per passenger" value={`${fmtMAD(revenuePerPassengerMad)} · ${fmtJPY(revenuePerPassengerJpy)}`} />
+          <FinancialMetric label="Net profit" value={`${fmtMAD(netProfitMad)} · ${fmtJPY(netProfitJpy)}`} tone={netProfitMad >= 0 ? "positive" : "negative"} strong />
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle title="Supplier status" subtitle="Progression par poste selon les lignes marquées confirmées." />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SupplierStatusCard label="Hotel confirmed" status={sectionConfirmationStatus(rows.hotels)} />
+          <SupplierStatusCard label="Transport confirmed" status={sectionConfirmationStatus(rows.transport)} />
+          <SupplierStatusCard label="Activities confirmed" status={sectionConfirmationStatus(rows.activities)} />
+          <SupplierStatusCard label="Guides confirmed" status={sectionConfirmationStatus(rows.guides)} />
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+const SectionTitle = ({ title, subtitle }: { title: string; subtitle: string }) => (
+  <div>
+    <h2 className="font-display text-lg">{title}</h2>
+    <p className="text-sm text-muted-foreground">{subtitle}</p>
+  </div>
+);
+
+const FinancialMetric = ({
+  label,
+  value,
+  strong = false,
+  tone,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+  tone?: "positive" | "negative";
+}) => (
+  <div className="rounded-lg border border-border bg-background p-3">
+    <p className="text-xs text-muted-foreground">{label}</p>
+    <p className={`mt-1 break-words ${strong ? "font-display text-xl" : "text-base font-semibold"} ${tone === "positive" ? "text-emerald-700" : tone === "negative" ? "text-red-700" : ""}`}>
+      {value}
+    </p>
+  </div>
+);
+
+const SupplierStatusCard = ({ label, status }: { label: string; status: ReturnType<typeof sectionConfirmationStatus> }) => {
+  const styles = {
+    complete: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    pending: "border-orange-200 bg-orange-50 text-orange-950",
+    missing: "border-red-200 bg-red-50 text-red-950",
+  }[status.state];
+  const badgeLabel = status.state === "complete" ? "Complet" : status.state === "pending" ? "En attente" : "Manquant";
+  return (
+    <div className={`rounded-lg border p-4 ${styles}`}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-medium">{label}</p>
+        <Badge variant="outline" className="border-current text-current">{badgeLabel}</Badge>
+      </div>
+      <p className="mt-3 font-display text-2xl">{formatPercent(status.percent)}</p>
+      <p className="text-xs opacity-80">{status.confirmed} / {status.total} ligne(s) confirmée(s)</p>
+    </div>
+  );
+};
+
+function SupplierValidationWorkflow({
+  validation,
+  status,
+  busy,
+  canEdit,
+  onStatusChange,
+  onBulkSectionChange,
+}: {
+  validation: ReturnType<typeof buildSupplierValidation>;
+  status: SupplierValidationStatus;
+  busy: boolean;
+  canEdit: boolean;
+  onStatusChange: (status: SupplierValidationStatus) => void;
+  onBulkSectionChange: (section: ValidationItemKey, confirmed: boolean) => void;
+}) {
+  const blockingErrors = validationBlockingErrors(nextValidationStatus(status), status, validation);
+  return (
+    <Card className="overflow-hidden border-primary/20">
+      <div className="border-b border-border bg-secondary/30 p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="font-display text-lg">Supplier Validation Workflow</h2>
+            <p className="text-sm text-muted-foreground">Aucun voyage ne peut passer en prêt tant que les éléments opérationnels requis ne sont pas complets.</p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Badge variant={validation.allComplete ? "default" : "outline"}>{validationStatusLabel[status]}</Badge>
+            <Select value={status} onValueChange={(value) => onStatusChange(value as SupplierValidationStatus)} disabled={busy}>
+              <SelectTrigger className="w-full sm:w-[250px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {validationStatusOrder.map((item) => (
+                  <SelectItem key={item} value={item}>{validationStatusLabel[item]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 p-4 xl:grid-cols-[280px_1fr]">
+        <div className="rounded-lg border border-border p-4">
+          <p className="text-xs text-muted-foreground">Completion</p>
+          <p className="mt-1 font-display text-4xl">{validation.completionPercentage}%</p>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary">
+            <div className={`h-full rounded-full ${validation.allComplete ? "bg-emerald-600" : "bg-amber-500"}`} style={{ width: `${validation.completionPercentage}%` }} />
+          </div>
+          <p className="mt-3 text-sm text-muted-foreground">{validation.completedItems} / {validation.totalItems} item(s) complets</p>
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {validation.items.map((item) => (
+              <div key={item.key} className={`rounded-lg border p-3 ${item.complete ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "border-amber-200 bg-amber-50 text-amber-950"}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{item.label}</p>
+                    <p className="mt-1 text-xs opacity-80">{item.detail}</p>
+                  </div>
+                  <Badge variant="outline" className="border-current text-current">{item.complete ? "OK" : "Bloquant"}</Badge>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={item.complete ? "outline" : "default"}
+                    disabled={busy || !canEdit}
+                    onClick={() => onBulkSectionChange(item.key, true)}
+                  >
+                    Tout valider
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || !canEdit}
+                    onClick={() => onBulkSectionChange(item.key, false)}
+                  >
+                    Tout remettre à faire
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {validation.blockingErrors.length > 0 && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-950">
+              <p className="font-semibold">Blocking errors</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {validation.blockingErrors.map((error) => <li key={error}>{error}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {blockingErrors.length > 0 && (
+            <p className="text-xs text-muted-foreground">Prochaine étape bloquée: {blockingErrors[0]}</p>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function TripMessagesCenter({
+  messages,
+  messageType,
+  messageDraft,
+  messageFiles,
+  messageSearch,
+  messageFilter,
+  messageBusy,
+  messagesSqlMissing,
+  currentUserId,
+  canSend,
+  onTypeChange,
+  onDraftChange,
+  onFilesChange,
+  onSearchChange,
+  onFilterChange,
+  onSend,
+}: {
+  messages: TripMessage[];
+  messageType: TripMessageType;
+  messageDraft: string;
+  messageFiles: File[];
+  messageSearch: string;
+  messageFilter: TripMessageType | "all";
+  messageBusy: boolean;
+  messagesSqlMissing: boolean;
+  currentUserId: string | null;
+  canSend: boolean;
+  onTypeChange: (value: TripMessageType) => void;
+  onDraftChange: (value: string) => void;
+  onFilesChange: (files: File[]) => void;
+  onSearchChange: (value: string) => void;
+  onFilterChange: (value: TripMessageType | "all") => void;
+  onSend: () => void;
+}) {
+  const filteredMessages = useMemo(() => {
+    const search = normalizeSearch(messageSearch);
+    return messages.filter((message) => {
+      const matchesType = messageFilter === "all" || message.message_type === messageFilter;
+      const haystack = normalizeSearch([
+        message.body,
+        message.sender_name,
+        message.sender_role,
+        message.sender_source,
+        messageTypeLabel[message.message_type],
+        ...(message.attachments ?? []).map((attachment) => attachment.file_name),
+      ].join(" "));
+      return matchesType && (!search || haystack.includes(search));
+    });
+  }, [messageFilter, messageSearch, messages]);
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+      <Card className="p-4">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="h-5 w-5 text-primary" />
+          <div>
+            <h2 className="font-display text-lg">Messages voyage</h2>
+            <p className="text-sm text-muted-foreground">Communication Maroc / Bureau Japon.</p>
+          </div>
+        </div>
+
+        {messagesSqlMissing && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            Migration SQL du centre de messages requise avant utilisation.
+          </div>
+        )}
+
+        <div className="mt-4 space-y-3">
+          <div>
+            <Label>Type de message</Label>
+            <Select value={messageType} onValueChange={(value) => onTypeChange(value as TripMessageType)}>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {messageTypes.map((type) => <SelectItem key={type} value={type}>{messageTypeLabel[type]}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Message</Label>
+            <Textarea
+              className="mt-1"
+              rows={6}
+              value={messageDraft}
+              onChange={(event) => onDraftChange(event.target.value)}
+              placeholder="Écrire un message pour l’équipe Maroc ou le bureau Japon..."
+            />
+          </div>
+          <div>
+            <Label>Pièces jointes</Label>
+            <Input
+              className="mt-1"
+              type="file"
+              multiple
+              onChange={(event) => onFilesChange(Array.from(event.target.files ?? []))}
+            />
+            {messageFiles.length > 0 && (
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {messageFiles.map((file) => (
+                  <div key={`${file.name}-${file.size}`} className="flex items-center gap-1">
+                    <Paperclip className="h-3 w-3" />
+                    <span className="truncate">{file.name}</span>
+                    <span>{formatFileSize(file.size)}</span>
+                  </div>
+                ))}
+                <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => onFilesChange([])}>
+                  Retirer les fichiers
+                </Button>
+              </div>
+            )}
+          </div>
+          <Button onClick={onSend} disabled={!canSend || messageBusy || (!messageDraft.trim() && messageFiles.length === 0)} className="w-full">
+            <Send className="h-4 w-4" />
+            {messageBusy ? "Envoi..." : "Envoyer le message"}
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="border-b border-border p-4">
+          <div className="grid gap-3 md:grid-cols-[1fr_220px]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                value={messageSearch}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="Rechercher dans les messages, auteurs, pièces jointes..."
+              />
+            </div>
+            <Select value={messageFilter} onValueChange={(value) => onFilterChange(value as TripMessageType | "all")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous les types</SelectItem>
+                {messageTypes.map((type) => <SelectItem key={type} value={type}>{messageTypeLabel[type]}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">{filteredMessages.length} message(s) affiché(s) sur {messages.length}.</p>
+        </div>
+
+        <div className="max-h-[720px] space-y-3 overflow-y-auto p-4">
+          {filteredMessages.length === 0 && (
+            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+              Aucun message pour ce filtre.
+            </div>
+          )}
+          {filteredMessages.map((message) => {
+            const mine = message.sender_id === currentUserId;
+            return (
+              <article key={message.id} className={`rounded-lg border p-4 ${message.message_type === "urgent" ? "border-red-200 bg-red-50/70" : mine ? "border-primary/20 bg-primary/5" : "border-border bg-background"}`}>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={message.message_type === "urgent" ? "destructive" : "outline"}>{messageTypeLabel[message.message_type]}</Badge>
+                      <span className="font-medium">{message.sender_name || "Utilisateur"}</span>
+                      <span className="text-xs text-muted-foreground">{senderSourceLabel(message.sender_source)} · {message.sender_role || "—"}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{fmtDateTimeLabel(message.created_at)}</p>
+                  </div>
+                  {mine && <Badge variant="secondary">Moi</Badge>}
+                </div>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{message.body}</p>
+                {(message.attachments ?? []).length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(message.attachments ?? []).map((attachment) => (
+                      <a
+                        key={attachment.id ?? attachment.file_path ?? attachment.file_name}
+                        href={attachment.file_url ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs hover:bg-secondary"
+                      >
+                        <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{attachment.file_name}</span>
+                        {attachment.size_bytes ? <span className="text-muted-foreground">{formatFileSize(attachment.size_bytes)}</span> : null}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function TripDocumentsCenter({
+  documents,
+  category,
+  title,
+  file,
+  search,
+  filter,
+  busy,
+  sqlMissing,
+  onCategoryChange,
+  onTitleChange,
+  onFileChange,
+  onSearchChange,
+  onFilterChange,
+  onUpload,
+  onReplace,
+  onDelete,
+}: {
+  documents: TripDocument[];
+  category: TripDocumentCategory;
+  title: string;
+  file: File | null;
+  search: string;
+  filter: TripDocumentCategory | "all";
+  busy: boolean;
+  sqlMissing: boolean;
+  onCategoryChange: (value: TripDocumentCategory) => void;
+  onTitleChange: (value: string) => void;
+  onFileChange: (file: File | null) => void;
+  onSearchChange: (value: string) => void;
+  onFilterChange: (value: TripDocumentCategory | "all") => void;
+  onUpload: () => void;
+  onReplace: (document: TripDocument, file: File) => void;
+  onDelete: (document: TripDocument) => void;
+}) {
+  const filteredDocuments = useMemo(() => {
+    const query = normalizeSearch(search);
+    return documents.filter((document) => {
+      const matchesCategory = filter === "all" || document.category === filter;
+      const haystack = normalizeSearch([
+        document.title,
+        document.file_name,
+        document.uploaded_by_name,
+        document.uploaded_by_role,
+        tripDocumentCategoryLabel[document.category],
+      ].join(" "));
+      return matchesCategory && (!query || haystack.includes(query));
+    });
+  }, [documents, filter, search]);
+
+  const grouped = tripDocumentCategories
+    .map((key) => ({ category: key, documents: filteredDocuments.filter((document) => document.category === key) }))
+    .filter((group) => group.documents.length > 0);
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+      <Card className="p-4">
+        <div>
+          <h2 className="font-display text-lg">Ajouter un document</h2>
+          <p className="text-sm text-muted-foreground">Documents opérationnels du voyage stockés dans Supabase Storage.</p>
+        </div>
+
+        {sqlMissing && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            Migration SQL du centre documents requise avant utilisation.
+          </div>
+        )}
+
+        <div className="mt-4 space-y-3">
+          <div>
+            <Label>Catégorie</Label>
+            <Select value={category} onValueChange={(value) => onCategoryChange(value as TripDocumentCategory)}>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {tripDocumentCategories.map((item) => <SelectItem key={item} value={item}>{tripDocumentCategoryLabel[item]}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Titre</Label>
+            <Input className="mt-1" value={title} onChange={(event) => onTitleChange(event.target.value)} placeholder="Ex: Voucher hôtel Tokyo" />
+          </div>
+          <div>
+            <Label>Fichier</Label>
+            <Input className="mt-1" type="file" onChange={(event) => onFileChange(event.target.files?.[0] ?? null)} />
+            {file && (
+              <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+                <Paperclip className="h-3 w-3" />
+                {file.name} {formatFileSize(file.size)}
+              </p>
+            )}
+          </div>
+          <Button className="w-full" onClick={onUpload} disabled={busy || !file}>
+            <Plus className="h-4 w-4" />
+            {busy ? "Upload..." : "Uploader"}
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="border-b border-border p-4">
+          <div className="grid gap-3 md:grid-cols-[1fr_240px]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                value={search}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="Rechercher par titre, fichier, auteur..."
+              />
+            </div>
+            <Select value={filter} onValueChange={(value) => onFilterChange(value as TripDocumentCategory | "all")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Toutes catégories</SelectItem>
+                {tripDocumentCategories.map((item) => <SelectItem key={item} value={item}>{tripDocumentCategoryLabel[item]}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">{filteredDocuments.length} document(s) affiché(s) sur {documents.length}.</p>
+        </div>
+
+        <div className="space-y-4 p-4">
+          {filteredDocuments.length === 0 && (
+            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+              Aucun document opérationnel pour ce filtre.
+            </div>
+          )}
+
+          {grouped.map((group) => (
+            <section key={group.category} className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-semibold">{tripDocumentCategoryLabel[group.category]}</h3>
+                <Badge variant="outline">{group.documents.length}</Badge>
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full min-w-[920px] text-sm">
+                  <thead className="bg-secondary/50 text-left text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2">Document</th>
+                      <th className="px-3 py-2">Version</th>
+                      <th className="px-3 py-2">Uploadé par</th>
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Taille</th>
+                      <th className="px-3 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {group.documents.map((document) => (
+                      <tr key={document.id}>
+                        <td className="px-3 py-2">
+                          <p className="font-medium">{document.title || document.file_name}</p>
+                          <p className="text-xs text-muted-foreground">{document.file_name}</p>
+                        </td>
+                        <td className="px-3 py-2">v{document.version || 1}</td>
+                        <td className="px-3 py-2">
+                          <p>{document.uploaded_by_name || "Utilisateur"}</p>
+                          <p className="text-xs text-muted-foreground">{document.uploaded_by_role || "—"}</p>
+                        </td>
+                        <td className="px-3 py-2">{fmtDateTimeLabel(document.uploaded_at)}</td>
+                        <td className="px-3 py-2">{formatFileSize(document.size_bytes)}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button asChild variant="outline" size="sm" disabled={!document.file_url}>
+                              <a href={document.file_url ?? "#"} target="_blank" rel="noreferrer">Prévisualiser</a>
+                            </Button>
+                            <Button asChild variant="outline" size="sm" disabled={!document.file_url}>
+                              <a href={document.file_url ?? "#"} download={document.file_name}>
+                                <Download className="h-4 w-4" /> Télécharger
+                              </a>
+                            </Button>
+                            <label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent">
+                              Remplacer
+                              <input
+                                type="file"
+                                className="sr-only"
+                                disabled={busy}
+                                onChange={(event) => {
+                                  const nextFile = event.target.files?.[0];
+                                  if (nextFile) onReplace(document, nextFile);
+                                  event.currentTarget.value = "";
+                                }}
+                              />
+                            </label>
+                            <Button variant="ghost" size="icon" disabled={busy} onClick={() => onDelete(document)} aria-label="Supprimer le document">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
   section: QuoteSection;
   rows: QuoteRow[];
@@ -815,10 +1967,10 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
   onRowsChange: (rows: QuoteRow[]) => void;
   onAdd: () => void;
 }) {
-  const total = rows.reduce((sum, row) => sum + subtotal(row), 0);
+  const total = rows.reduce((sum, row) => sum + subtotal(row, section), 0);
   const columns = columnsForSection(section);
   const update = (index: number, key: string, value: any) => {
-    onRowsChange(rows.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row));
+    onRowsChange(rows.map((row, rowIndex) => rowIndex === index ? normalizeRow(section, { ...row, [key]: value }, rowIndex) : row));
   };
   const remove = (index: number) => onRowsChange(rows.filter((_, rowIndex) => rowIndex !== index));
   const move = (index: number, direction: -1 | 1) => {
@@ -829,10 +1981,10 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
     onRowsChange(nextRows);
   };
   const requiredActivityTotal = section === "activities"
-    ? rows.filter((row) => !row.optional).reduce((sum, row) => sum + subtotal(row), 0)
+    ? rows.filter((row) => !row.optional).reduce((sum, row) => sum + subtotal(row, "activities"), 0)
     : 0;
   const optionalActivityTotal = section === "activities"
-    ? rows.filter((row) => row.optional).reduce((sum, row) => sum + subtotal(row), 0)
+    ? rows.filter((row) => row.optional).reduce((sum, row) => sum + subtotal(row, "activities"), 0)
     : 0;
 
   return (
@@ -880,7 +2032,7 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
                     <CellInput column={column} value={row[column.key]} disabled={!canEdit} onChange={(value) => update(index, column.key, value)} />
                   </td>
                 ))}
-                <td className="px-3 py-2 text-right font-semibold">{fmtJPY(subtotal(row))}</td>
+                <td className="px-3 py-2 text-right font-semibold">{fmtJPY(subtotal(row, section))}</td>
                 <td className="px-3 py-2">
                   <Select value={row.status ?? "todo"} disabled={!canEdit} onValueChange={(value) => update(index, "status", value)}>
                     <SelectTrigger className="h-9 min-w-[130px]"><SelectValue /></SelectTrigger>
@@ -1306,6 +2458,56 @@ const fmtDateTimeLabel = (value?: string | null) => {
   return date.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 
+const normalizeSearch = (value: unknown) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+const senderSourceLabel = (source?: string | null) => {
+  if (source === "japan_office" || source === "supplier") return "Bureau Japon";
+  if (source === "morocco_office") return "Maroc";
+  if (source === "admin") return "Admin";
+  return "Équipe";
+};
+
+const formatFileSize = (size?: number | null) => {
+  const value = Number(size ?? 0);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (value < 1024) return `${value} o`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} Ko`;
+  return `${(value / (1024 * 1024)).toFixed(1)} Mo`;
+};
+
+const safeStorageFilename = (filename: string) => {
+  const extension = filename.includes(".") ? `.${filename.split(".").pop()}` : "";
+  const base = filename.replace(/\.[^.]+$/, "");
+  const normalized = base
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "piece-jointe";
+  return `${normalized}${extension.toLowerCase()}`;
+};
+
+const signedAttachmentUrl = async (attachment: TripMessageAttachment) => {
+  if (!attachment.file_path) return attachment.file_url ?? null;
+  const { data, error } = await supabase.storage
+    .from(tripMessageAttachmentBucket)
+    .createSignedUrl(attachment.file_path, 60 * 60);
+  return error ? attachment.file_url ?? null : data?.signedUrl ?? attachment.file_url ?? null;
+};
+
+const signedTripDocumentUrl = async (document: TripDocument) => {
+  if (!document.file_path) return document.file_url ?? null;
+  const { data, error } = await supabase.storage
+    .from(tripDocumentBucket)
+    .createSignedUrl(document.file_path, 60 * 60);
+  return error ? document.file_url ?? null : data?.signedUrl ?? document.file_url ?? null;
+};
+
 function ParticipantsTable({
   participants,
   bookings,
@@ -1521,27 +2723,46 @@ const blankRow = (section: QuoteSection, index: number): QuoteRow => {
   return { ...base, label: "", quantity: 1, unit_price_jpy: 0 };
 };
 
-const subtotal = (row: QuoteRow) => {
-  if ("hotel_name" in row || "rooms_count" in row || "room_count" in row) return Number(row.rooms_count ?? row.room_count ?? 0) * Number(row.nights || 0) * Number(row.unit_price_jpy || row.price_per_room_per_night_jpy || 0);
-  if ("activity_name" in row || "participant_count" in row) return Number(row.participant_count ?? row.quantity ?? 0) * Number(row.unit_price_jpy || 0);
-  if ("guide_type" in row || "guides_count" in row || "guide_count" in row) return Number(row.guides_count ?? row.guide_count ?? 0) * Number(row.daily_price_jpy || 0);
-  return Number(row.quantity || 0) * Number(row.unit_price_jpy || 0);
+const numeric = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const hasValue = (value: unknown) => value !== null && value !== undefined && value !== "";
+
+const subtotal = (row: QuoteRow, section?: QuoteSection) => {
+  if (section === "hotels" || (!section && ("hotel_name" in row || "rooms_count" in row || "room_count" in row))) {
+    return numeric(row.rooms_count ?? row.room_count) * numeric(row.nights || 0) * numeric(row.unit_price_jpy ?? row.price_per_room_per_night_jpy);
+  }
+  if (section === "transport") {
+    return numeric(row.quantity) * numeric(row.unit_price_jpy);
+  }
+  if (section === "activities" || (!section && ("activity_name" in row || "participant_count" in row))) {
+    const count = hasValue(row.participant_count) ? row.participant_count : row.quantity;
+    return numeric(count) * numeric(row.unit_price_jpy);
+  }
+  if (section === "guides" || (!section && ("guide_type" in row || "guides_count" in row || "guide_count" in row))) {
+    return numeric(row.guides_count ?? row.guide_count) * numeric(row.daily_price_jpy);
+  }
+  return numeric(row.quantity) * numeric(row.unit_price_jpy);
 };
 
 const serializeRow = (section: QuoteSection, row: QuoteRow, quoteId: string, index: number) => {
+  const normalized = normalizeRow(section, row, index);
   const base = {
     quote_id: quoteId,
     sort_order: index,
-    status: row.status ?? "todo",
-    assigned_to: row.assigned_to || null,
-    comment: row.comment || null,
-    subtotal_jpy: subtotal(row),
+    status: normalized.status ?? "todo",
+    assigned_to: normalized.assigned_to || null,
+    comment: normalized.comment || null,
+    subtotal_jpy: subtotal(normalized, section),
     updated_at: new Date().toISOString(),
   };
-  const clean = (keys: string[]) => Object.fromEntries(keys.map((key) => [key, row[key] ?? null]));
+  const clean = (keys: string[]) => Object.fromEntries(keys.map((key) => [key, normalized[key] ?? null]));
   if (section === "hotels") {
-    const peopleCount = Number(row.rooms_count ?? row.room_count ?? 0);
-    const unitPrice = Number(row.unit_price_jpy ?? row.price_per_room_per_night_jpy ?? 0);
+    const peopleCount = numeric(normalized.rooms_count ?? normalized.room_count);
+    const unitPrice = numeric(normalized.unit_price_jpy ?? normalized.price_per_room_per_night_jpy);
     return {
       ...base,
       ...clean(["city", "hotel_name", "check_in", "check_out", "nights", "room_type"]),
@@ -1553,11 +2774,11 @@ const serializeRow = (section: QuoteSection, row: QuoteRow, quoteId: string, ind
   }
   if (section === "transport") return { ...base, ...clean(["service_date", "day_number", "city_route", "transport_type", "description", "quantity", "unit_price_jpy"]) };
   if (section === "activities") {
-    const participantCount = Number(row.participant_count ?? row.quantity ?? 0);
+    const participantCount = numeric(hasValue(normalized.participant_count) ? normalized.participant_count : normalized.quantity);
     return { ...base, ...clean(["service_date", "day_number", "activity_name", "unit_price_jpy", "optional"]), participant_count: participantCount, quantity: participantCount };
   }
   if (section === "guides") {
-    const guideCount = Number(row.guides_count ?? row.guide_count ?? 0);
+    const guideCount = numeric(normalized.guides_count ?? normalized.guide_count);
     return { ...base, ...clean(["service_date", "day_number", "city", "guide_type", "daily_price_jpy"]), guides_count: guideCount, guide_count: guideCount };
   }
   return { ...base, ...clean(["label", "quantity", "unit_price_jpy"]) };
@@ -1569,6 +2790,25 @@ const exportWorkbook = async (filename: string, sheets: Array<{ name: string; ro
   sheets.forEach((sheet) => {
     const rows = sheet.rows.length ? sheet.rows : [{ note: "Aucune donnée" }];
     const worksheet = XLSX.utils.json_to_sheet(rows);
+    const headers = Object.keys(rows[0] ?? {});
+    worksheet["!cols"] = headers.map((header) => ({
+      wch: Math.min(48, Math.max(14, header.length + 4, ...rows.map((row) => String(row?.[header] ?? "").length + 2))),
+    }));
+    if (headers.length > 0 && rows.length > 0) {
+      const range = XLSX.utils.decode_range(worksheet["!ref"] ?? "A1:A1");
+      worksheet["!autofilter"] = { ref: XLSX.utils.encode_range(range) };
+      worksheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+      headers.forEach((_, index) => {
+        const cell = worksheet[XLSX.utils.encode_cell({ r: 0, c: index })];
+        if (cell) {
+          cell.s = {
+            font: { bold: true, color: { rgb: "FFFFFF" } },
+            fill: { fgColor: { rgb: "1F2937" } },
+            alignment: { horizontal: "center" },
+          };
+        }
+      });
+    }
     XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeSheetName(sheet.name));
   });
   XLSX.writeFile(workbook, filename);
@@ -1597,6 +2837,240 @@ const buildExportContext = ({ trip, rows, totals, programmeDays, hotels, rooms, 
   return { participantRows, extraRows, roomRows, operationalRows, quoteRows, totalRows };
 };
 
+const buildOperationalBookContext = ({
+  trip,
+  rows,
+  totals,
+  programmeDays,
+  hotels,
+  rooms,
+  assignments,
+  participants,
+  bookings,
+  bookingExtras,
+  extrasList,
+  participantActivitySelections,
+  operationalState,
+  supplierName,
+}: any) => {
+  const participantRows = buildParticipantRows({ participants, bookings, bookingExtras, extrasList, rooms, hotels, assignments, participantActivitySelections });
+  const roomingRows = buildRoomRows({ hotels, rooms, assignments, participants, bookings });
+  const extraRows = buildExtraGroups({ participants, bookings, bookingExtras, extrasList, participantActivitySelections });
+  const summaryRows = buildOperationalSummaryRows({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName });
+  return {
+    summaryRows,
+    flightRows: buildFlightRows(trip),
+    hotelRows: buildOperationalHotelRows(hotels, rooms, assignments),
+    roomingRows,
+    participantRows,
+    activityRows: buildOperationalActivityRows(rows.activities, extraRows),
+    guideRows: buildOperationalGuideRows(rows.guides),
+    transportRows: buildOperationalTransportRows(rows.transport),
+    emergencyContactRows: buildEmergencyContactRows({ trip, hotels, participants, operationalState }),
+  };
+};
+
+const buildOperationalSummaryRows = ({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName }: any) => [
+  { Rubrique: "Voyage", Information: "Titre", Valeur: trip?.title ?? "—" },
+  { Rubrique: "Voyage", Information: "Saison", Valeur: trip?.season ?? trip?.label ?? "—" },
+  { Rubrique: "Voyage", Information: "Départ", Valeur: formatDateForDisplay(trip?.start_date) },
+  { Rubrique: "Voyage", Information: "Retour", Valeur: formatDateForDisplay(trip?.end_date) },
+  { Rubrique: "Voyage", Information: "Durée", Valeur: trip?.duration_days ? `${trip.duration_days} jours` : "—" },
+  { Rubrique: "Bureau Japon", Information: "Fournisseur", Valeur: supplierName ?? "Japan office" },
+  { Rubrique: "Participants", Information: "Total passagers", Valeur: participants.length || getParticipantCount([], bookings) || 0 },
+  { Rubrique: "Participants", Information: "Réservations", Valeur: bookings.length },
+  { Rubrique: "Hébergement", Information: "Hôtels", Valeur: hotels.length },
+  { Rubrique: "Hébergement", Information: "Chambres", Valeur: rooms.length },
+  { Rubrique: "Planning", Information: "Activités devis", Valeur: rows.activities.length },
+  { Rubrique: "Planning", Information: "Guides", Valeur: rows.guides.length },
+  { Rubrique: "Planning", Information: "Transports", Valeur: rows.transport.length },
+  { Rubrique: "Coûts", Information: "Total fournisseur JPY", Valeur: roundNumber(totals.grandTotalJpy) },
+  { Rubrique: "Coûts", Information: "Total final JPY", Valeur: roundNumber(totals.finalTotalJpy) },
+  { Rubrique: "Coûts", Information: "Total final MAD", Valeur: roundNumber(totals.finalTotalMad) },
+  { Rubrique: "Export", Information: "Généré le", Valeur: new Date().toLocaleString("fr-FR") },
+];
+
+const buildFlightRows = (trip: any) => [
+  {
+    Segment: "Aller",
+    Route: firstText(trip?.metadata?.outbound_route, trip?.visa_arrival_port ? `Maroc → ${trip.visa_arrival_port}` : "À confirmer"),
+    Vols: firstText(trip?.metadata?.outbound_flight_numbers, trip?.visa_arrival_flight_number, "À confirmer"),
+    Départ: firstText(trip?.metadata?.outbound_departure_text, trip?.start_date ? `Départ: ${formatDateForDisplay(trip.start_date)}` : "À confirmer"),
+    Arrivée: firstText(trip?.metadata?.outbound_arrival_text, trip?.visa_japan_arrival_date ? `Arrivée: ${formatDateForDisplay(trip.visa_japan_arrival_date)} · ${trip.visa_arrival_port || ""}` : "À confirmer"),
+    Compagnie: firstText(trip?.airline, trip?.metadata?.airline, "À confirmer"),
+    Notes: firstText(trip?.outbound_flight_text, trip?.metadata?.outbound_flight_text, trip?.flight_notes, trip?.metadata?.flight_notes, ""),
+  },
+  {
+    Segment: "Retour",
+    Route: firstText(trip?.metadata?.return_route, "Japon → Maroc"),
+    Vols: firstText(trip?.metadata?.return_flight_numbers, "À confirmer"),
+    Départ: firstText(trip?.metadata?.return_departure_text, trip?.visa_japan_departure_date ? `Départ Japon: ${formatDateForDisplay(trip.visa_japan_departure_date)}` : "À confirmer"),
+    Arrivée: firstText(trip?.metadata?.return_arrival_text, trip?.end_date ? `Retour: ${formatDateForDisplay(trip.end_date)}` : "À confirmer"),
+    Compagnie: firstText(trip?.airline, trip?.metadata?.airline, "À confirmer"),
+    Notes: firstText(trip?.return_flight_text, trip?.metadata?.return_flight_text, trip?.flight_notes, trip?.metadata?.flight_notes, ""),
+  },
+];
+
+const buildOperationalHotelRows = (hotels: any[], rooms: any[], assignments: any[]) =>
+  (hotels ?? []).map((hotel) => {
+    const hotelRooms = (rooms ?? []).filter((room) => room.trip_hotel_id === hotel.id);
+    const assignedCount = hotelRooms.reduce((sum, room) => sum + (assignments ?? []).filter((assignment) => assignment.room_id === room.id).length, 0);
+    return {
+      Ville: hotel.city ?? "",
+      Hôtel: hotel.name ?? hotel.hotel_name ?? "Hôtel",
+      "Check-in": formatDateForDisplay(hotel.check_in),
+      "Check-out": formatDateForDisplay(hotel.check_out),
+      Nuits: nightsBetween(hotel.check_in, hotel.check_out) || "",
+      Adresse: hotel.address ?? "",
+      Téléphone: hotel.phone ?? "",
+      Site: hotel.website_url ?? hotel.website ?? "",
+      "Google Maps": hotel.google_maps_url ?? hotel.google_maps_link ?? "",
+      Chambres: hotelRooms.length,
+      "Participants assignés": assignedCount,
+      Notes: hotel.notes ?? hotel.internal_notes ?? "",
+    };
+  });
+
+const buildOperationalActivityRows = (activityRows: QuoteRow[], extraRows: any[]) => {
+  const matched = new Set<string>();
+  const rowsFromQuote = (activityRows ?? []).map((row) => {
+    const extra = findMatchingExtraGroup(row.activity_name, extraRows);
+    if (extra) matched.add(normalizeActivityName(extra.name));
+    return {
+      Date: formatDateForDisplay(row.service_date),
+      Jour: row.day_number ?? "",
+      Activité: row.activity_name ?? "",
+      Type: row.optional ? "Optionnelle" : "Incluse / requise",
+      "Participants prévus": row.participant_count ?? row.quantity ?? 0,
+      "Participants inscrits": extra?.participants ?? "",
+      "Réservations": extra?.booking_references ?? "",
+      Quantité: row.quantity ?? row.participant_count ?? 0,
+      "Prix unitaire JPY": row.unit_price_jpy ?? "",
+      "Sous-total JPY": roundNumber(subtotal(row, "activities")),
+      Statut: rowStatusLabel[row.status as RowStatus] ?? row.status ?? "",
+      "Assigné à": row.assigned_to ?? "",
+      Commentaire: row.comment ?? "",
+    };
+  });
+  const extraOnlyRows = (extraRows ?? [])
+    .filter((extra) => !matched.has(normalizeActivityName(extra.name)))
+    .map((extra) => ({
+      Date: "",
+      Jour: "",
+      Activité: extra.name,
+      Type: "Extra sélectionné",
+      "Participants prévus": extra.quantity,
+      "Participants inscrits": extra.participants,
+      "Réservations": extra.booking_references,
+      Quantité: extra.quantity,
+      "Prix unitaire JPY": "",
+      "Sous-total JPY": "",
+      Statut: "À confirmer",
+      "Assigné à": "",
+      Commentaire: "",
+    }));
+  return [...rowsFromQuote, ...extraOnlyRows];
+};
+
+const buildOperationalGuideRows = (guideRows: QuoteRow[]) =>
+  (guideRows ?? []).map((row) => ({
+    Date: formatDateForDisplay(row.service_date),
+    Jour: row.day_number ?? "",
+    Ville: row.city ?? "",
+    "Guide / type": row.guide_type ?? "",
+    "Nombre de guides": row.guides_count ?? row.guide_count ?? 0,
+    "Prix jour JPY": row.daily_price_jpy ?? "",
+    "Sous-total JPY": roundNumber(subtotal(row, "guides")),
+    Statut: rowStatusLabel[row.status as RowStatus] ?? row.status ?? "",
+    "Assigné à": row.assigned_to ?? "",
+    Commentaire: row.comment ?? "",
+  }));
+
+const buildOperationalTransportRows = (transportRows: QuoteRow[]) =>
+  (transportRows ?? []).map((row) => ({
+    Date: formatDateForDisplay(row.service_date),
+    Jour: row.day_number ?? "",
+    "Ville / route": row.city_route ?? "",
+    Type: row.transport_type ?? "",
+    Description: row.description ?? "",
+    Quantité: row.quantity ?? 0,
+    "Prix unitaire JPY": row.unit_price_jpy ?? "",
+    "Sous-total JPY": roundNumber(subtotal(row, "transport")),
+    Statut: rowStatusLabel[row.status as RowStatus] ?? row.status ?? "",
+    "Assigné à": row.assigned_to ?? "",
+    Commentaire: row.comment ?? "",
+  }));
+
+const buildEmergencyContactRows = ({ trip, hotels, participants, operationalState }: any) => {
+  const rows: any[] = [
+    { Type: "Organisateur Maroc", Nom: "LeJapon.ma / Moroccan Express Travel & Events", Téléphone: "+212 711 449 838", Email: "info@lejapon.ma", Adresse: "Rue Annour, El Wifaq, Témara", Notes: "Contact principal Maroc" },
+  ];
+  collectEmergencyContacts(trip).forEach((contact) => rows.push(contact));
+  (hotels ?? []).forEach((hotel: any) => {
+    if (!hotel.phone && !hotel.address) return;
+    rows.push({
+      Type: "Hôtel",
+      Nom: hotel.name ?? hotel.hotel_name ?? "Hôtel",
+      Téléphone: hotel.phone ?? "",
+      Email: hotel.email ?? "",
+      Adresse: hotel.address ?? "",
+      Notes: [hotel.city, formatDateForDisplay(hotel.check_in), formatDateForDisplay(hotel.check_out)].filter(Boolean).join(" · "),
+    });
+  });
+  (participants ?? []).forEach((participant: any) => {
+    const name = firstText(participant.emergency_contact_name, participant.emergency_name, participant.metadata?.emergency_contact_name, participant.metadata?.emergency_name);
+    const phone = firstText(participant.emergency_contact_phone, participant.emergency_phone, participant.metadata?.emergency_contact_phone, participant.metadata?.emergency_phone);
+    if (!name && !phone) return;
+    rows.push({
+      Type: "Contact urgence participant",
+      Nom: name || "Contact urgence",
+      Téléphone: phone,
+      Email: "",
+      Adresse: "",
+      Notes: `Participant: ${participantFullName(participant)}`,
+    });
+  });
+  const dayIssues = Object.entries(operationalState?.day_statuses ?? {})
+    .filter(([, status]) => status === "attention")
+    .map(([day]) => `Jour ${day}`)
+    .join(", ");
+  if (dayIssues) rows.push({ Type: "Attention opérationnelle", Nom: "Jours à surveiller", Téléphone: "", Email: "", Adresse: "", Notes: dayIssues });
+  return rows;
+};
+
+const collectEmergencyContacts = (trip: any) => {
+  const metadata = trip?.metadata ?? {};
+  const raw = metadata.emergency_contacts ?? metadata.emergencyContacts ?? trip?.emergency_contacts ?? [];
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? Object.values(raw) : [];
+  const rows = list.map((contact: any) => ({
+    Type: contact.type ?? contact.role ?? "Contact urgence",
+    Nom: contact.name ?? contact.full_name ?? contact.title ?? "",
+    Téléphone: contact.phone ?? contact.tel ?? contact.mobile ?? "",
+    Email: contact.email ?? "",
+    Adresse: contact.address ?? "",
+    Notes: contact.notes ?? contact.comment ?? "",
+  }));
+  [
+    ["Bureau Japon", metadata.japan_office_contact ?? metadata.japanOfficeContact],
+    ["Accompagnateur", metadata.tour_leader_contact ?? metadata.tourLeaderContact],
+    ["Guide principal", metadata.guide_contact ?? metadata.guideContact],
+  ].forEach(([type, value]) => {
+    if (!value) return;
+    if (typeof value === "string") rows.push({ Type: type, Nom: value, Téléphone: "", Email: "", Adresse: "", Notes: "" });
+    else rows.push({ Type: type, Nom: value.name ?? value.full_name ?? "", Téléphone: value.phone ?? value.mobile ?? "", Email: value.email ?? "", Adresse: value.address ?? "", Notes: value.notes ?? "" });
+  });
+  return rows.filter((row) => Object.values(row).some((value) => String(value ?? "").trim()));
+};
+
+const findMatchingExtraGroup = (activityName: unknown, extraRows: any[]) => {
+  const normalized = normalizeActivityName(activityName);
+  if (!normalized) return null;
+  return (extraRows ?? []).find((extra) => {
+    const extraName = normalizeActivityName(extra.name);
+    return extraName === normalized || extraName.includes(normalized) || normalized.includes(extraName);
+  }) ?? null;
+};
+
 const buildQuoteExportRows = (rows: Record<QuoteSection, QuoteRow[]>, includeAdminNotes: boolean) =>
   (Object.keys(rows) as QuoteSection[]).flatMap((section) =>
     rows[section].map((row, index) => {
@@ -1604,7 +3078,7 @@ const buildQuoteExportRows = (rows: Record<QuoteSection, QuoteRow[]>, includeAdm
         section: sectionLabels[section],
         ordre: index + 1,
         statut: rowStatusLabel[row.status as RowStatus] ?? row.status ?? "",
-        sous_total_jpy: roundNumber(subtotal(row)),
+        sous_total_jpy: roundNumber(subtotal(row, section)),
         assigne_a: row.assigned_to ?? "",
         commentaire: row.comment ?? "",
       };
@@ -1780,19 +3254,46 @@ const isParticipantExtraSelected = (participant: any, extraId: string, bookingEx
   return bookingExtras.some((extra) => extra.booking_id === participant.booking_id && extra.extra_id === extraId);
 };
 
-const normalizeRows = (rows: any[]): QuoteRow[] =>
-  reindexRows(rows.map((row, index) => ({
+const normalizeRow = (section: QuoteSection, row: any, index: number): QuoteRow => {
+  const normalized: QuoteRow = {
     ...row,
-    local_id: row.id ?? crypto.randomUUID(),
+    local_id: row.local_id ?? row.id ?? crypto.randomUUID(),
     sort_order: row.sort_order ?? index,
     status: row.status ?? "todo",
     optional: Boolean(row.optional),
-    rooms_count: row.rooms_count ?? row.room_count,
-    unit_price_jpy: row.unit_price_jpy ?? row.price_per_room_per_night_jpy,
-    participant_count: row.participant_count ?? row.quantity,
-    quantity: row.quantity ?? row.participant_count,
-    guides_count: row.guides_count ?? row.guide_count,
-  })));
+  };
+
+  if (section === "hotels") {
+    const peopleCount = numeric(row.rooms_count ?? row.room_count);
+    const unitPrice = numeric(row.unit_price_jpy ?? row.price_per_room_per_night_jpy);
+    normalized.rooms_count = peopleCount;
+    normalized.room_count = peopleCount;
+    normalized.unit_price_jpy = unitPrice;
+    normalized.price_per_room_per_night_jpy = unitPrice;
+  } else if (section === "transport") {
+    normalized.quantity = numeric(row.quantity);
+    normalized.unit_price_jpy = numeric(row.unit_price_jpy);
+  } else if (section === "activities") {
+    const participantCount = numeric(hasValue(row.participant_count) ? row.participant_count : row.quantity);
+    normalized.participant_count = participantCount;
+    normalized.quantity = participantCount;
+    normalized.unit_price_jpy = numeric(row.unit_price_jpy);
+  } else if (section === "guides") {
+    const guideCount = numeric(row.guides_count ?? row.guide_count);
+    normalized.guides_count = guideCount;
+    normalized.guide_count = guideCount;
+    normalized.daily_price_jpy = numeric(row.daily_price_jpy);
+  } else {
+    normalized.quantity = numeric(row.quantity);
+    normalized.unit_price_jpy = numeric(row.unit_price_jpy);
+  }
+
+  normalized.subtotal_jpy = subtotal(normalized, section);
+  return normalized;
+};
+
+const normalizeRows = (section: QuoteSection, rows: any[]): QuoteRow[] =>
+  reindexRows(rows.map((row, index) => normalizeRow(section, row, index)));
 
 const reindexRows = (rows: QuoteRow[]): QuoteRow[] =>
   rows.map((row, index) => ({ ...row, sort_order: index }));
@@ -1865,7 +3366,13 @@ const buildInitialRows = ({ trip, programmeDays, hotels, rooms, assignments, boo
       optional: true,
     };
   });
-  return { hotels: hotelRows, transport: transportRows, activities: [...requiredActivityRows, ...optionalActivityRows], guides: guideRows, other: [] };
+  return {
+    hotels: normalizeRows("hotels", hotelRows),
+    transport: normalizeRows("transport", transportRows),
+    activities: normalizeRows("activities", [...requiredActivityRows, ...optionalActivityRows]),
+    guides: normalizeRows("guides", guideRows),
+    other: normalizeRows("other", []),
+  };
 };
 
 const hotelPersonCountsByRoomType = (hotelId: string, rooms: any[], assignments: any[], totalParticipants: number) => {
@@ -2278,8 +3785,225 @@ const guessTransportType = (value: any) => {
   return "bus";
 };
 
+const formatPercent = (value: number) => `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(Number(value || 0))}%`;
 const fmtJPY = (value: number) => `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(Number(value || 0))} JPY`;
 const fmtMAD = (value: number) => `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(Number(value || 0))} MAD`;
+
+const sectionConfirmationStatus = (rows: QuoteRow[]) => {
+  const total = rows.length;
+  const confirmed = rows.filter((row) => row.status === "confirmed").length;
+  const percent = total > 0 ? (confirmed / total) * 100 : 0;
+  const state: "complete" | "pending" | "missing" = total === 0 ? "missing" : confirmed === total ? "complete" : "pending";
+  return { total, confirmed, percent, state };
+};
+
+const calculateQuoteTotals = (
+  rows: Record<QuoteSection, QuoteRow[]>,
+  commissionPct: number,
+  exchangeRate: number,
+  participants: any[],
+  bookings: any[]
+) => {
+  const sectionTotals = {
+    hotels: rows.hotels.reduce((sum, row) => sum + subtotal(row, "hotels"), 0),
+    transport: rows.transport.reduce((sum, row) => sum + subtotal(row, "transport"), 0),
+    activities: rows.activities.reduce((sum, row) => sum + subtotal(row, "activities"), 0),
+    guides: rows.guides.reduce((sum, row) => sum + subtotal(row, "guides"), 0),
+    other: rows.other.reduce((sum, row) => sum + subtotal(row, "other"), 0),
+  };
+  const grandTotalJpy = Object.values(sectionTotals).reduce((sum, value) => sum + value, 0);
+  const commissionAmountJpy = grandTotalJpy * Number(commissionPct || 0) / 100;
+  const finalTotalJpy = grandTotalJpy + commissionAmountJpy;
+  const finalTotalMad = finalTotalJpy * Number(exchangeRate || 0);
+  const participantCount = Math.max(1, participants.length || getParticipantCount([], bookings) || 1);
+  return {
+    ...sectionTotals,
+    grandTotalJpy,
+    commissionAmountJpy,
+    finalTotalJpy,
+    finalTotalMad,
+    participantCount,
+    costPerPersonJpy: finalTotalJpy / participantCount,
+    costPerPersonMad: finalTotalMad / participantCount,
+  };
+};
+
+const isQuoteSection = (section: ValidationItemKey): section is QuoteSection =>
+  ["hotels", "transport", "activities", "guides", "other"].includes(section);
+
+const missingValidationColumnName = (error: any) => {
+  const text = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`;
+  return validationDbColumns.find((column) =>
+    text.includes(`'${column}'`)
+    || text.includes(`"${column}"`)
+    || text.includes(` ${column} `)
+  ) ?? null;
+};
+
+const extractValidationOverrides = (quote: any): Partial<Record<ValidationItemKey, boolean>> => {
+  const metadata = quote?.validation_metadata ?? quote?.validation_snapshot ?? {};
+  const raw = metadata?.manual_overrides ?? metadata?.manualOverrides ?? {};
+  if (!raw || typeof raw !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(raw).filter(([key, value]) =>
+      ["hotels", "transport", "activities", "guides", "other", "participants", "rooming", "documents"].includes(key)
+      && typeof value === "boolean"
+    )
+  ) as Partial<Record<ValidationItemKey, boolean>>;
+};
+
+const withManualValidationOverride = (
+  key: ValidationItemKey,
+  computedComplete: boolean,
+  computedDetail: string,
+  overrides: Partial<Record<ValidationItemKey, boolean>>
+) => {
+  const override = overrides[key];
+  if (override === true) return { complete: true, detail: "Validé manuellement" };
+  if (override === false) return { complete: false, detail: "Remis à faire manuellement" };
+  return { complete: computedComplete, detail: computedDetail };
+};
+
+const buildSupplierValidation = ({
+  rows,
+  participants,
+  rooms,
+  assignments,
+  documents,
+  overrides = {},
+}: {
+  rows: Record<QuoteSection, QuoteRow[]>;
+  participants: any[];
+  rooms: any[];
+  assignments: any[];
+  documents: TripDocument[];
+  overrides?: Partial<Record<ValidationItemKey, boolean>>;
+}) => {
+  const confirmed = (items: QuoteRow[]) => items.length > 0 && items.every((row) => row.status === "confirmed");
+  const passportMissing = (participants ?? []).filter((participant) => !isParticipantPassportComplete(participant));
+  const assignedParticipantIds = new Set((assignments ?? []).map((assignment) => assignment.participant_id).filter(Boolean));
+  const roomsWithAssignments = new Set((assignments ?? []).map((assignment) => assignment.room_id).filter(Boolean));
+  const roomingComplete = (participants ?? []).length > 0
+    && (participants ?? []).every((participant) => assignedParticipantIds.has(participant.id))
+    && (rooms ?? []).length > 0
+    && roomsWithAssignments.size > 0;
+  const missingDocumentCategories = mandatoryTripDocumentCategories.filter((category) =>
+    !(documents ?? []).some((document) => document.category === category && !document.deleted_at && (document.file_path || document.file_url))
+  );
+
+  const hotelValidation = withManualValidationOverride("hotels", confirmed(rows.hotels), rows.hotels.length ? `${rows.hotels.filter((row) => row.status === "confirmed").length}/${rows.hotels.length} confirmed` : "No hotel rows", overrides);
+  const transportValidation = withManualValidationOverride("transport", confirmed(rows.transport), rows.transport.length ? `${rows.transport.filter((row) => row.status === "confirmed").length}/${rows.transport.length} confirmed` : "No transport rows", overrides);
+  const activitiesValidation = withManualValidationOverride("activities", confirmed(rows.activities), rows.activities.length ? `${rows.activities.filter((row) => row.status === "confirmed").length}/${rows.activities.length} confirmed` : "No activity rows", overrides);
+  const guidesValidation = withManualValidationOverride("guides", confirmed(rows.guides), rows.guides.length ? `${rows.guides.filter((row) => row.status === "confirmed").length}/${rows.guides.length} confirmed` : "No guide rows", overrides);
+  const participantsValidation = withManualValidationOverride("participants", (participants ?? []).length > 0 && passportMissing.length === 0, passportMissing.length ? `${passportMissing.length} passport(s) incomplete` : `${participants.length} passport(s) complete`, overrides);
+  const roomingValidation = withManualValidationOverride("rooming", roomingComplete, roomingComplete ? "All participants assigned to rooms" : "Room assignments incomplete", overrides);
+  const documentsValidation = withManualValidationOverride(
+    "documents",
+    missingDocumentCategories.length === 0,
+    missingDocumentCategories.length
+      ? `Missing: ${missingDocumentCategories.map((category) => tripDocumentCategoryLabel[category]).join(", ")}`
+      : "Mandatory files uploaded",
+    overrides
+  );
+
+  const items: Array<{
+    key: ValidationItemKey;
+    label: string;
+    complete: boolean;
+    detail: string;
+    error: string;
+  }> = [
+    {
+      key: "hotels",
+      label: "Hotels",
+      complete: hotelValidation.complete,
+      detail: hotelValidation.detail,
+      error: "Hotels: all hotel lines must be confirmed.",
+    },
+    {
+      key: "transport",
+      label: "Transport",
+      complete: transportValidation.complete,
+      detail: transportValidation.detail,
+      error: "Transport: all transport lines must be confirmed.",
+    },
+    {
+      key: "activities",
+      label: "Activities",
+      complete: activitiesValidation.complete,
+      detail: activitiesValidation.detail,
+      error: "Activities: all activity lines must be confirmed.",
+    },
+    {
+      key: "guides",
+      label: "Guides",
+      complete: guidesValidation.complete,
+      detail: guidesValidation.detail,
+      error: "Guides: all guide lines must be confirmed.",
+    },
+    {
+      key: "participants",
+      label: "Participants",
+      complete: participantsValidation.complete,
+      detail: participantsValidation.detail,
+      error: "Participants: all passports must include number, nationality, birthdate, sex and expiry date.",
+    },
+    {
+      key: "rooming",
+      label: "Rooming",
+      complete: roomingValidation.complete,
+      detail: roomingValidation.detail,
+      error: "Rooming: every participant must be assigned to a room.",
+    },
+    {
+      key: "documents",
+      label: "Documents",
+      complete: documentsValidation.complete,
+      detail: documentsValidation.detail,
+      error: "Documents: all mandatory operational files must be uploaded.",
+    },
+  ];
+  const blockingErrors = items.filter((item) => !item.complete).map((item) => item.error);
+  const completedItems = items.filter((item) => item.complete).length;
+  const totalItems = items.length;
+  return {
+    items,
+    blockingErrors,
+    missingDocumentCategories,
+    allComplete: blockingErrors.length === 0,
+    completedItems,
+    totalItems,
+    completionPercentage: Math.round((completedItems / Math.max(1, totalItems)) * 100),
+  };
+};
+
+const isParticipantPassportComplete = (participant: any) =>
+  Boolean(
+    passportNumber(participant)
+    && participantNationality(participant)
+    && participantBirthdate(participant)
+    && participantSex(participant)
+    && participantPassportExpiry(participant)
+  );
+
+const nextValidationStatus = (status: SupplierValidationStatus) =>
+  validationStatusOrder[Math.min(validationStatusOrder.length - 1, validationStatusOrder.indexOf(status) + 1)] ?? status;
+
+const validationBlockingErrors = (
+  nextStatus: SupplierValidationStatus,
+  currentStatus: SupplierValidationStatus,
+  validation: ReturnType<typeof buildSupplierValidation>
+) => {
+  const nextIndex = validationStatusOrder.indexOf(nextStatus);
+  const currentIndex = validationStatusOrder.indexOf(currentStatus);
+  if (nextIndex <= currentIndex) return [];
+  if (nextStatus === "draft" || nextStatus === "in_progress") return [];
+  if (!validation.allComplete) return validation.blockingErrors;
+  if (nextStatus === "ready_to_travel" && currentStatus !== "japan_office_confirmed" && currentStatus !== "ready_to_travel") {
+    return ["Ready To Travel requires Japan Office Confirmed first."];
+  }
+  return [];
+};
 
 const TotalCard = ({ label, value }: { label: string; value: number }) => (
   <Card className="p-4">

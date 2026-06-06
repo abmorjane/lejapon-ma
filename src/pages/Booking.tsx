@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { memo, useCallback, useState, useMemo, useEffect, useRef, type ChangeEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
@@ -57,9 +57,16 @@ const Booking = () => {
   const [returning, setReturning] = useState<{ trips: number; tier: string; reward?: string } | null>(null);
   const { ready: captchaReady, executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha();
   const [submitting, setSubmitting] = useState(false);
+  const tripAutoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     trackEvent("booking_form_started", { source: "public_booking" });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (tripAutoAdvanceTimer.current) clearTimeout(tripAutoAdvanceTimer.current);
+    };
   }, []);
 
   // Load trips from admin (open or completed) — runs once
@@ -84,7 +91,11 @@ const Booking = () => {
     if (matchedTrip) {
       setTripId(matchedTrip.id);
       setTripLocked(true);
-      setStep((s) => (s < 2 ? 2 : s));
+      setStep((s) => {
+        if (s >= 2) return s;
+        trackEvent("booking_step_advanced", { source: "trip_url_preselect", from_step: s, to_step: 2 });
+        return 2;
+      });
     } else if (!tripId) {
       setTripId(tripsList[0].id);
     }
@@ -110,7 +121,7 @@ const Booking = () => {
     return () => clearTimeout(t);
   }, [info.email]);
 
-  const selectedTrip = tripsList.find((tr) => tr.id === tripId) ?? null;
+  const selectedTrip = useMemo(() => tripsList.find((tr) => tr.id === tripId) ?? null, [tripId, tripsList]);
 
   // If triple becomes invalid (total not a multiple of 3), fall back to double
   useEffect(() => {
@@ -120,11 +131,11 @@ const Booking = () => {
     }
   }, [adults, children, room]);
 
-  const formatDates = (s: string | null, e: string | null) => {
+  const formatDates = useCallback((s: string | null, e: string | null) => {
     if (!s && !e) return "";
     if (s && e) return `${fmtDate(s)} → ${fmtDate(e)}`;
     return fmtDate(s ?? e);
-  };
+  }, []);
   const hotels = PUBLIC_HOTEL_OPTIONS;
   const pricing = useMemo(() => {
     const base = selectedTrip?.base_price_mad ?? 0;
@@ -148,13 +159,54 @@ const Booking = () => {
   const visibleTotal = tripLocked ? TOTAL_STEPS - 1 : TOTAL_STEPS;
   const visibleStep = tripLocked ? step - 1 : step;
 
-  const next = () => setStep((s) => Math.min(TOTAL_STEPS, s + 1));
-  const prev = () => setStep((s) => Math.max(minStep, s - 1));
+  const next = useCallback(() => {
+    setStep((current) => {
+      const nextStep = Math.min(TOTAL_STEPS, current + 1);
+      if (nextStep !== current) {
+        trackEvent("booking_step_advanced", { source: "next_button", from_step: current, to_step: nextStep });
+      }
+      return nextStep;
+    });
+  }, []);
+  const prev = useCallback(() => setStep((s) => Math.max(minStep, s - 1)), [minStep]);
+  const canSubmit = Boolean(info.name && info.email && !submitting && captchaReady);
 
-  const unlockTrip = () => {
+  const selectTripAndAdvance = useCallback((nextTripId: string) => {
+    const selected = tripsList.find((tr) => tr.id === nextTripId);
+    setTripId((current) => (current === nextTripId ? current : nextTripId));
+    trackEvent("booking_trip_selected", {
+      source: "public_booking",
+      trip_id: nextTripId,
+      trip_slug: selected?.slug ?? null,
+      trip_index: selected ? tripsList.findIndex((tr) => tr.id === nextTripId) : null,
+    });
+    if (tripAutoAdvanceTimer.current) clearTimeout(tripAutoAdvanceTimer.current);
+    tripAutoAdvanceTimer.current = setTimeout(() => {
+      setStep((currentStep) => {
+        if (currentStep !== 1) return currentStep;
+        trackEvent("booking_step_advanced", { source: "trip_auto_advance", from_step: 1, to_step: 2 });
+        return 2;
+      });
+    }, 275);
+  }, [tripsList]);
+
+  const unlockTrip = useCallback(() => {
     setTripLocked(false);
     setStep(1);
-  };
+  }, []);
+
+  const updateInfoField = useCallback((key: keyof typeof info, value: string) => {
+    setInfo((current) => (current[key] === value ? current : { ...current, [key]: value }));
+  }, []);
+
+  const updateExtraQty = useCallback((id: string, value: number) => {
+    setExtras((current) => (current[id] === value ? current : { ...current, [id]: value }));
+  }, []);
+  const updateName = useCallback((value: string) => updateInfoField("name", value), [updateInfoField]);
+  const updateEmail = useCallback((value: string) => updateInfoField("email", value), [updateInfoField]);
+  const updatePhone = useCallback((value: string) => updateInfoField("phone", value), [updateInfoField]);
+  const updateCity = useCallback((value: string) => updateInfoField("city", value), [updateInfoField]);
+  const updateNotes = useCallback((value: string) => updateInfoField("notes", value), [updateInfoField]);
 
   const submit = async () => {
     if (submitting) return;
@@ -241,6 +293,12 @@ const Booking = () => {
         travelers_count: adults + children,
         extras_count: chosenExtras.length,
       });
+      trackEvent("booking_form_submitted", {
+        source: "public_site",
+        trip_id: tripMeta?.id ?? null,
+        travelers_count: adults + children,
+        extras_count: chosenExtras.length,
+      });
       setDone(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
@@ -264,7 +322,7 @@ const Booking = () => {
   }
 
   return (
-    <div className="container-app max-w-full overflow-x-hidden py-8 sm:py-12 md:py-20">
+    <div className="container-app max-w-full overflow-x-hidden pb-36 pt-8 sm:py-12 md:py-20">
       <Seo
         title="Réserver mon voyage au Japon — Composer votre séjour | lejapon.ma"
         description="Composez votre voyage au Japon en 2 minutes : dates, formule, chambre et options. Prix instantané, paiement sécurisé, départs depuis Casablanca."
@@ -277,7 +335,7 @@ const Booking = () => {
           <h1 className="font-display mb-3 text-3xl leading-tight sm:text-4xl md:text-5xl">{t("booking.title")}</h1>
           <p className="mb-8 text-foreground/70 sm:mb-10">{t("booking.subtitle")}</p>
 
-          {tripLocked && selectedTrip && (
+          {step > 1 && selectedTrip && (
             <div className="mb-8 flex flex-col gap-3 border border-accent/40 bg-accent-soft/30 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 text-sm">
                 <p className="eyebrow text-accent mb-1">Voyage sélectionné</p>
@@ -318,7 +376,7 @@ const Booking = () => {
           </div>
 
           {/* top actions */}
-          <div className="mb-8 flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-8 hidden flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between md:flex">
             <button onClick={prev} disabled={step === minStep} className={cn(
               "inline-flex min-h-11 items-center justify-center gap-2 text-sm sm:min-h-0 sm:justify-start",
               step === minStep ? "opacity-30 cursor-not-allowed" : "hover:text-accent"
@@ -330,7 +388,7 @@ const Booking = () => {
                 {t("cta.continue")} <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
-              <button onClick={submit} disabled={!info.name || !info.email || submitting || !captchaReady}
+              <button onClick={submit} disabled={!canSubmit}
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-accent px-5 py-3 text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-6">
                 {submitting ? "…" : t("cta.confirm")} <Check className="w-4 h-4" />
               </button>
@@ -350,41 +408,15 @@ const Booking = () => {
                         const hasPromo = typeof tr.promo_percent === "number" && tr.promo_percent > 0 && tr.promo_percent < 100;
                         const originalPrice = hasPromo ? Math.round(Number(tr.base_price_mad || 0) / (1 - Number(tr.promo_percent) / 100)) : null;
                         return (
-                        <button key={tr.id} onClick={() => setTripId(tr.id)} className={cn(
-                          "w-full max-w-full text-start p-4 sm:p-6 border transition-all duration-300",
-                          tripId === tr.id ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40"
-                        )}>
-                          <div className="mb-1 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <h3 className="font-display min-w-0 break-words text-lg leading-tight sm:text-xl">{tr.title}</h3>
-                            <div className="min-w-0 text-left sm:shrink-0 sm:text-right">
-                              {originalPrice && originalPrice > tr.base_price_mad && (
-                                <div className="text-sm font-semibold text-muted-foreground line-through">{fmt(originalPrice)}</div>
-                              )}
-                              {hasPromo && <div className="mb-1 text-xs font-bold uppercase tracking-wide text-accent">Offre spéciale</div>}
-                              <span className="break-words text-2xl font-bold text-accent sm:whitespace-nowrap sm:text-3xl">{fmt(tr.base_price_mad)}</span>
-                            </div>
-                          </div>
-                          <p className="text-xs eyebrow text-muted-foreground mb-2">
-                            {tr.season || formatDates(tr.start_date, tr.end_date)}
-                          </p>
-                          <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3 text-sm text-foreground/70">
-                            {typeof tr.duration_days === "number" && tr.duration_days > 0 && (
-                              <span className="inline-flex items-center gap-1.5">
-                                <Clock3 className="w-4 h-4 text-accent" />
-                                {tr.duration_days} jours
-                              </span>
-                            )}
-                            {(tr.start_date || tr.end_date) && (
-                              <span className="inline-flex items-center gap-1.5">
-                                <CalendarDays className="w-4 h-4 text-accent" />
-                                {formatDates(tr.start_date, tr.end_date)}
-                              </span>
-                            )}
-                          </div>
-                          {tr.short_description && (
-                            <p className="text-sm text-foreground/70">{tr.short_description}</p>
-                          )}
-                        </button>
+                          <TripSelectCard
+                            key={tr.id}
+                            trip={tr}
+                            selected={tripId === tr.id}
+                            originalPrice={originalPrice}
+                            hasPromo={hasPromo}
+                            dateLabel={formatDates(tr.start_date, tr.end_date)}
+                            onSelect={selectTripAndAdvance}
+                          />
                       )})}
                     </div>
                   )}
@@ -482,7 +514,7 @@ const Booking = () => {
                           })()}
                         </div>
                         <div className="self-start pt-0.5 sm:shrink-0">
-                          <Counter mini value={extras[e.id] || 0} onChange={(v) => setExtras({ ...extras, [e.id]: v })} min={0} />
+                          <Counter mini value={extras[e.id] || 0} onChange={(v) => updateExtraQty(e.id, v)} min={0} />
                         </div>
                       </div>
                     ))}
@@ -494,18 +526,18 @@ const Booking = () => {
                 <div>
                   <h2 className="font-display text-2xl mb-6">{t("booking.s5.title")}</h2>
                   <div className="grid sm:grid-cols-2 gap-4">
-                    <Field label={t("booking.s5.name")} value={info.name} onChange={(v) => setInfo({ ...info, name: v })} />
-                    <Field label={t("booking.s5.email")} type="email" value={info.email} onChange={(v) => setInfo({ ...info, email: v })} />
-                    <Field label={t("booking.s5.phone")} value={info.phone} onChange={(v) => setInfo({ ...info, phone: v })} />
-                    <Field label={t("booking.s5.city")} value={info.city} onChange={(v) => setInfo({ ...info, city: v })} />
+                    <Field label={t("booking.s5.name")} value={info.name} onChange={updateName} />
+                    <Field label={t("booking.s5.email")} type="email" value={info.email} onChange={updateEmail} />
+                    <Field label={t("booking.s5.phone")} value={info.phone} onChange={updatePhone} />
+                    <Field label={t("booking.s5.city")} value={info.city} onChange={updateCity} />
                   </div>
-                  <Field className="mt-4" label={t("booking.s5.notes")} multiline value={info.notes} onChange={(v) => setInfo({ ...info, notes: v })} />
+                  <Field className="mt-4" label={t("booking.s5.notes")} multiline value={info.notes} onChange={updateNotes} />
                 </div>
               )}
             </motion.div>
           </AnimatePresence>
 
-          <div className="mt-10 flex flex-col-reverse items-stretch gap-3 border-t border-border pt-6 sm:mt-12 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-10 hidden flex-col-reverse items-stretch gap-3 border-t border-border pt-6 sm:mt-12 sm:flex-row sm:items-center sm:justify-between md:flex">
             <button onClick={prev} disabled={step === minStep} className={cn(
               "inline-flex min-h-11 items-center justify-center gap-2 text-sm sm:min-h-0 sm:justify-start",
               step === minStep ? "opacity-30 cursor-not-allowed" : "hover:text-accent"
@@ -517,7 +549,7 @@ const Booking = () => {
                 {t("cta.continue")} <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
-              <button onClick={submit} disabled={!info.name || !info.email || submitting || !captchaReady}
+              <button onClick={submit} disabled={!canSubmit}
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-accent px-5 py-3 text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-6">
                 {submitting ? "…" : t("cta.confirm")} <Check className="w-4 h-4" />
               </button>
@@ -585,37 +617,143 @@ const Booking = () => {
           </div>
         </aside>
       </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-background/95 px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 shadow-[0_-12px_30px_-24px_rgba(0,0,0,0.45)] backdrop-blur md:hidden">
+        <div className="mx-auto max-w-lg">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {t("booking.step")} {visibleStep} {t("booking.of")} {visibleTotal}
+            </p>
+            <p className="truncate text-xs text-muted-foreground">{selectedTrip?.title ?? "Voyage"}</p>
+          </div>
+          <div className="mb-3 flex gap-1.5">
+            {Array.from({ length: visibleTotal }).map((_, i) => (
+              <div key={i} className={cn("h-1 flex-1 rounded-full transition-all duration-500", i < visibleStep ? "bg-accent" : "bg-border")} />
+            ))}
+          </div>
+          <div className="grid grid-cols-[0.9fr_1.25fr] gap-3">
+            <button
+              onClick={prev}
+              disabled={step === minStep}
+              className={cn(
+                "inline-flex min-h-11 items-center justify-center gap-2 border border-border px-4 text-sm font-semibold transition-all",
+                step === minStep ? "cursor-not-allowed opacity-35" : "hover:border-accent hover:text-accent"
+              )}
+            >
+              <ArrowLeft className="h-4 w-4" /> {t("cta.back")}
+            </button>
+            {step < TOTAL_STEPS ? (
+              <button onClick={next} className="inline-flex min-h-11 items-center justify-center gap-2 bg-foreground px-4 text-sm font-semibold text-background transition-all hover:bg-accent">
+                {t("cta.continue")} <ArrowRight className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                onClick={submit}
+                disabled={!canSubmit}
+                className="inline-flex min-h-11 items-center justify-center gap-2 bg-accent px-4 text-sm font-semibold text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {submitting ? "…" : t("cta.confirm")} <Check className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
-const Counter = ({ label, value, onChange, min = 0, mini }: { label?: string; value: number; onChange: (v: number) => void; min?: number; mini?: boolean }) => (
+const TripSelectCard = memo(function TripSelectCard({
+  trip,
+  selected,
+  originalPrice,
+  hasPromo,
+  dateLabel,
+  onSelect,
+}: {
+  trip: TripRow;
+  selected: boolean;
+  originalPrice: number | null;
+  hasPromo: boolean;
+  dateLabel: string;
+  onSelect: (tripId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(trip.id)}
+      className={cn(
+        "w-full max-w-full text-start p-4 sm:p-6 border transition-all duration-300",
+        selected ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40"
+      )}
+    >
+      <div className="mb-1 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <h3 className="font-display min-w-0 break-words text-lg leading-tight sm:text-xl">{trip.title}</h3>
+        <div className="min-w-0 text-left sm:shrink-0 sm:text-right">
+          {originalPrice && originalPrice > trip.base_price_mad && (
+            <div className="text-sm font-semibold text-muted-foreground line-through">{fmt(originalPrice)}</div>
+          )}
+          {hasPromo && <div className="mb-1 text-xs font-bold uppercase tracking-wide text-accent">Offre spéciale</div>}
+          <span className="break-words text-2xl font-bold text-accent sm:whitespace-nowrap sm:text-3xl">{fmt(trip.base_price_mad)}</span>
+        </div>
+      </div>
+      <p className="text-xs eyebrow text-muted-foreground mb-2">
+        {trip.season || dateLabel}
+      </p>
+      <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3 text-sm text-foreground/70">
+        {typeof trip.duration_days === "number" && trip.duration_days > 0 && (
+          <span className="inline-flex items-center gap-1.5">
+            <Clock3 className="w-4 h-4 text-accent" />
+            {trip.duration_days} jours
+          </span>
+        )}
+        {(trip.start_date || trip.end_date) && (
+          <span className="inline-flex items-center gap-1.5">
+            <CalendarDays className="w-4 h-4 text-accent" />
+            {dateLabel}
+          </span>
+        )}
+      </div>
+      {trip.short_description && (
+        <p className="text-sm text-foreground/70">{trip.short_description}</p>
+      )}
+    </button>
+  );
+});
+
+const Counter = memo(function Counter({ label, value, onChange, min = 0, mini }: { label?: string; value: number; onChange: (v: number) => void; min?: number; mini?: boolean }) {
+  const decrement = useCallback(() => onChange(Math.max(min, value - 1)), [min, onChange, value]);
+  const increment = useCallback(() => onChange(value + 1), [onChange, value]);
+  return (
   <div className={cn("max-w-full min-w-0", !mini && "border border-border p-4")}>
     {label && <p className="eyebrow mb-3 max-w-full whitespace-normal break-words">{label}</p>}
     <div className="flex max-w-full items-center gap-3">
-      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} className="flex h-8 w-8 shrink-0 items-center justify-center border border-border transition-colors hover:border-accent hover:text-accent">
+      <button type="button" onClick={decrement} className="flex h-11 w-11 shrink-0 items-center justify-center border border-border transition-colors hover:border-accent hover:text-accent">
         <Minus className="w-3 h-3" />
       </button>
       <span className="w-6 shrink-0 text-center font-display text-lg">{value}</span>
-      <button type="button" onClick={() => onChange(value + 1)} className="flex h-8 w-8 shrink-0 items-center justify-center border border-border transition-colors hover:border-accent hover:text-accent">
+      <button type="button" onClick={increment} className="flex h-11 w-11 shrink-0 items-center justify-center border border-border transition-colors hover:border-accent hover:text-accent">
         <Plus className="w-3 h-3" />
       </button>
     </div>
   </div>
-);
+  );
+});
 
-const Field = ({ label, value, onChange, type = "text", multiline, className }: { label: string; value: string; onChange: (v: string) => void; type?: string; multiline?: boolean; className?: string }) => (
+const Field = memo(function Field({ label, value, onChange, type = "text", multiline, className }: { label: string; value: string; onChange: (v: string) => void; type?: string; multiline?: boolean; className?: string }) {
+  const handleChange = useCallback((event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(event.target.value), [onChange]);
+  return (
   <label className={cn("block max-w-full min-w-0", className)}>
     <span className="eyebrow mb-2 block max-w-full whitespace-normal break-words">{label}</span>
     {multiline ? (
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3}
+      <textarea value={value} onChange={handleChange} rows={3}
         className="w-full max-w-full resize-none border border-border bg-background px-4 py-3 transition-colors focus:border-accent focus:outline-none" />
     ) : (
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)}
+      <input type={type} value={value} onChange={handleChange}
         className="w-full max-w-full border border-border bg-background px-4 py-3 transition-colors focus:border-accent focus:outline-none" />
     )}
   </label>
-);
+  );
+});
 
 const Row = ({ label, value }: { label: string; value: string }) => (
   <div className="flex justify-between gap-3">
@@ -624,7 +762,8 @@ const Row = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-const SummaryItem = ({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) => (
+const SummaryItem = memo(function SummaryItem({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
   <li className="flex min-w-0 items-start justify-between gap-3">
     <div className="flex min-w-0 items-center gap-2.5 text-foreground/60">
       <span className="text-accent/80 shrink-0">{icon}</span>
@@ -632,6 +771,7 @@ const SummaryItem = ({ icon, label, value }: { icon: React.ReactNode; label: str
     </div>
     <span className="max-w-[56%] min-w-0 break-words text-end font-medium text-foreground">{value}</span>
   </li>
-);
+  );
+});
 
 export default Booking;

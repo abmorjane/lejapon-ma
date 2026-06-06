@@ -15,6 +15,7 @@ const ADMIN_DISMISS_KEY = "lejapon:pwa-install-dismissed-until:admin:v2";
 const PUBLIC_DISMISS_KEY = "lejapon:pwa-install-dismissed-until:public:v2";
 const DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
 const MOBILE_MAX_WIDTH = 1024;
+const INTERNAL_INSTALL_ROLES = new Set(["admin", "super_admin", "manager", "sales", "sales_user", "supplier", "agency"]);
 
 function isStandalone() {
   return (
@@ -31,8 +32,9 @@ function readDismissedUntil(key: string) {
 
 export function PWAInstallPrompt() {
   const location = useLocation();
-  const { isStaff } = useAuth();
+  const { roles, loading } = useAuth();
   const isAdminArea = location.pathname.startsWith("/admin");
+  const canShowInstallPrompt = !loading && roles.some((role) => INTERNAL_INSTALL_ROLES.has(role));
   const dismissKey = isAdminArea ? ADMIN_DISMISS_KEY : PUBLIC_DISMISS_KEY;
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [dismissedUntil, setDismissedUntil] = useState(0);
@@ -114,7 +116,7 @@ export function PWAInstallPrompt() {
     !dismissed &&
     (Boolean(deferredPrompt) || canShowFallback)
   );
-  const aggressiveAdmin = isAdminArea && isStaff;
+  const aggressiveAdmin = isAdminArea && canShowInstallPrompt;
 
   const instruction = useMemo(() => {
     if (!env) return "";
@@ -124,7 +126,7 @@ export function PWAInstallPrompt() {
     return "Vous pouvez installer l'application depuis le menu de votre navigateur si l'option est disponible.";
   }, [deferredPrompt, env]);
 
-  if (!shouldShow) return null;
+  if (!canShowInstallPrompt || !shouldShow) return null;
 
   const dismiss = () => {
     const until = Date.now() + DISMISS_MS;
