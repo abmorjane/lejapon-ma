@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import hero from "@/assets/hero-fuji.jpg";
 import shibuya from "@/assets/tokyo-shibuya.jpg";
 import torii from "@/assets/torii.jpg";
-import { TripCard, type TripCardData } from "@/components/trips/TripCard";
+import { TripCard, TripCardSkeleton, type TripCardData } from "@/components/trips/TripCard";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTranslatedTable } from "@/hooks/useTranslated";
@@ -86,9 +86,15 @@ const Trips = () => {
       )}
 
       {loading ? (
-        <p className="text-foreground/60">Chargement…</p>
+        <div className="grid min-h-[650px] gap-6 sm:min-h-[700px] sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <TripCardSkeleton key={index} />
+          ))}
+        </div>
       ) : filtered.length === 0 ? (
-        <p className="text-foreground/60">Aucun départ disponible pour le moment. Revenez bientôt.</p>
+        <div className="flex min-h-[420px] items-center rounded-3xl border border-dashed border-border p-8">
+          <p className="text-foreground/60">Aucun départ disponible pour le moment. Revenez bientôt.</p>
+        </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {filtered.map((trip, i) => (

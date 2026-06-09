@@ -64,7 +64,7 @@ const About = () => {
           <motion.div {...fade(0.15)} className="lg:col-span-5">
             <div className="relative">
               <div className="aspect-[4/5] overflow-hidden rounded-3xl shadow-card">
-                <img src={fuji} alt="Mont Fuji au lever du soleil" className="w-full h-full object-cover" loading="eager" />
+                <img src={fuji} alt="Mont Fuji au lever du soleil" className="w-full h-full object-cover" width={800} height={1000} loading="eager" decoding="async" />
               </div>
               <div className="absolute -bottom-6 -left-6 hidden md:block bg-background border border-border rounded-2xl p-5 shadow-card max-w-[220px]">
                 <div className="flex items-center gap-2 text-accent mb-1">
@@ -83,7 +83,7 @@ const About = () => {
         <div className="grid lg:grid-cols-12 gap-12 lg:gap-20 items-center">
           <motion.div {...fade()} className="lg:col-span-5 order-2 lg:order-1">
             <div className="aspect-[4/5] overflow-hidden rounded-3xl shadow-card">
-              <img src={kyoto} alt="Ruelle traditionnelle de Kyoto" className="w-full h-full object-cover" loading="lazy" />
+              <img src={kyoto} alt="Ruelle traditionnelle de Kyoto" className="w-full h-full object-cover" width={800} height={1000} loading="lazy" decoding="async" />
             </div>
           </motion.div>
           <motion.div {...fade(0.1)} className="lg:col-span-7 order-1 lg:order-2">
@@ -110,7 +110,7 @@ const About = () => {
 
       {/* OMOTENASHI */}
       <section className="relative overflow-hidden bg-foreground text-background">
-        <img src={torii} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover opacity-20" loading="lazy" />
+        <img src={torii} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover opacity-20" width={1920} height={1280} loading="lazy" decoding="async" />
         <div className="absolute inset-0 bg-gradient-to-b from-foreground/95 via-foreground/85 to-foreground/95" />
         <div className="relative container-app py-24 md:py-36">
           <motion.div {...fade()} className="max-w-3xl mx-auto text-center">
@@ -187,7 +187,7 @@ const About = () => {
             </motion.div>
             <motion.div {...fade(0.15)} className="lg:col-span-5">
               <div className="aspect-square overflow-hidden rounded-3xl shadow-card">
-                <img src={tea} alt="Cérémonie du thé japonaise" className="w-full h-full object-cover" loading="lazy" />
+                <img src={tea} alt="Cérémonie du thé japonaise" className="w-full h-full object-cover" width={800} height={800} loading="lazy" decoding="async" />
               </div>
             </motion.div>
           </div>

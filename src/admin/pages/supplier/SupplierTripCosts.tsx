@@ -55,14 +55,6 @@ type OperationalState = {
   legacy_notes?: string | null;
 };
 
-type QuoteEngineDiagnostic = {
-  label: string;
-  ok: boolean;
-  code?: string | null;
-  message?: string | null;
-  details?: string | null;
-};
-
 type TripMessageAttachment = {
   id?: string;
   message_id: string;
@@ -270,8 +262,6 @@ export default function SupplierTripCosts() {
   const [participantActivitySelections, setParticipantActivitySelections] = useState<any[]>([]);
   const [sqlMissing, setSqlMissing] = useState(false);
   const [lastQuoteEngineError, setLastQuoteEngineError] = useState<string | null>(null);
-  const [diagnostics, setDiagnostics] = useState<QuoteEngineDiagnostic[]>([]);
-  const [diagnosticBusy, setDiagnosticBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<QuoteStatus>("draft");
   const [validationStatus, setValidationStatus] = useState<SupplierValidationStatus>("draft");
@@ -873,102 +863,6 @@ export default function SupplierTripCosts() {
     updateRows(section, [...rows[section], blankRow(section, rows[section].length)]);
   };
 
-  const runQuoteEngineDiagnostics = async () => {
-    if (!tripId || !isAdmin) return;
-    setDiagnosticBusy(true);
-    const next: QuoteEngineDiagnostic[] = [];
-    const addResult = (label: string, error: any, details?: string | null) => {
-      next.push({
-        label,
-        ok: !error,
-        code: error?.code ?? null,
-        message: error?.message ?? null,
-        details: details ?? error?.details ?? error?.hint ?? null,
-      });
-    };
-
-    const tables = ["supplier_trip_quotes", ...Object.values(tableBySection), "supplier_quote_comments"];
-    for (const table of tables) {
-      const { error } = await db.from(table).select("*").limit(1);
-      addResult(`SELECT ${table}`, error);
-    }
-
-    const diagnosticQuotePayload = {
-      trip_id: tripId,
-      supplier_id: null,
-      status: "draft",
-      commission_percentage: commissionPct,
-      exchange_rate_jpy_mad: exchangeRate,
-      participant_count: totals.participantCount,
-      total_hotels_jpy: 0,
-      total_transport_jpy: 0,
-      total_activities_jpy: 0,
-      total_guides_jpy: 0,
-      total_other_jpy: 0,
-      grand_total_jpy: 0,
-      commission_amount_jpy: 0,
-      final_total_jpy: 0,
-      final_total_mad: 0,
-      cost_per_person_jpy: 0,
-      cost_per_person_mad: 0,
-      supplier_notes: serializeOperationalState({ day_statuses: {}, day_comments: {}, legacy_notes: "diagnostic" }),
-      internal_notes: "diagnostic",
-      created_by: user?.id ?? null,
-      updated_by: user?.id ?? null,
-      metadata: { diagnostic: true },
-    };
-
-    const quoteInsert = await db.from("supplier_trip_quotes").insert(diagnosticQuotePayload).select("*").maybeSingle();
-    addResult("INSERT supplier_trip_quotes diagnostic payload", quoteInsert.error);
-    const diagnosticQuoteId = quoteInsert.data?.id;
-
-    if (diagnosticQuoteId) {
-      const hotelInsert = await db.from("supplier_quote_hotel_rows").insert({
-        quote_id: diagnosticQuoteId,
-        sort_order: 0,
-        city: "Diagnostic",
-        hotel_name: "Diagnostic",
-        check_in: null,
-        check_out: null,
-        nights: 1,
-        room_type: "double/twin",
-        rooms_count: 1,
-        unit_price_jpy: 1,
-        subtotal_jpy: 1,
-        status: "todo",
-        comment: "diagnostic",
-        metadata: { diagnostic: true },
-      });
-      addResult("INSERT supplier_quote_hotel_rows diagnostic payload", hotelInsert.error);
-
-      const guideInsert = await db.from("supplier_quote_guide_rows").insert({
-        quote_id: diagnosticQuoteId,
-        sort_order: 0,
-        service_date: null,
-        city: "Diagnostic",
-        guide_type: "francophone",
-        guides_count: 1,
-        daily_price_jpy: 1,
-        subtotal_jpy: 1,
-        status: "todo",
-        comment: "diagnostic",
-        metadata: { diagnostic: true },
-      });
-      addResult("INSERT supplier_quote_guide_rows diagnostic payload", guideInsert.error);
-
-      for (const table of [...Object.values(tableBySection), "supplier_quote_comments"]) {
-        await db.from(table).delete().eq("quote_id", diagnosticQuoteId);
-      }
-      const cleanup = await db.from("supplier_trip_quotes").delete().eq("id", diagnosticQuoteId);
-      addResult("DELETE diagnostic quote cleanup", cleanup.error);
-    }
-
-    setDiagnostics(next);
-    const firstError = next.find((item) => !item.ok);
-    setLastQuoteEngineError(firstError ? `${firstError.label}: ${firstError.code ?? ""} ${firstError.message ?? ""}`.trim() : null);
-    setDiagnosticBusy(false);
-  };
-
   const exportExcel = async (scope: "quote" | "operations" | "participants" | "rooms_extras" | "global" | "operational_book") => {
     const context = buildExportContext({
       trip,
@@ -1124,45 +1018,6 @@ export default function SupplierTripCosts() {
         <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
           Les tables dédiées au quote engine fournisseur sont absentes ou non accessibles. Appliquez la migration SQL V1 pour enregistrer les devis structurés.
           {lastQuoteEngineError && <p className="mt-2 font-mono text-xs">{lastQuoteEngineError}</p>}
-        </Card>
-      )}
-
-      {isAdmin && (
-        <Card className="border-dashed p-4 text-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="font-semibold">Diagnostic quote engine</h2>
-              <p className="text-muted-foreground">Visible admin uniquement. Teste les tables, RLS et colonnes utilisées par cette page.</p>
-            </div>
-            <Button type="button" variant="outline" onClick={runQuoteEngineDiagnostics} disabled={diagnosticBusy}>
-              {diagnosticBusy ? "Test en cours..." : "Tester accès SQL"}
-            </Button>
-          </div>
-          {lastQuoteEngineError && <p className="mt-3 rounded bg-muted px-3 py-2 font-mono text-xs">{lastQuoteEngineError}</p>}
-          {diagnostics.length > 0 && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-[720px] text-left text-xs">
-                <thead>
-                  <tr className="border-b">
-                    <th className="py-2 pr-3">Test</th>
-                    <th className="py-2 pr-3">Statut</th>
-                    <th className="py-2 pr-3">Code</th>
-                    <th className="py-2 pr-3">Erreur</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {diagnostics.map((item) => (
-                    <tr key={item.label} className="border-b last:border-0">
-                      <td className="py-2 pr-3 font-mono">{item.label}</td>
-                      <td className="py-2 pr-3">{item.ok ? <Badge variant="outline">OK</Badge> : <Badge variant="destructive">Erreur</Badge>}</td>
-                      <td className="py-2 pr-3 font-mono">{item.code || "—"}</td>
-                      <td className="py-2 pr-3">{item.message || item.details || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </Card>
       )}
 

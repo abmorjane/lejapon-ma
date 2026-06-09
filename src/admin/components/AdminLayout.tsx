@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
-  LayoutDashboard, Plane, CalendarCheck, Sparkles, Users, FileText, Wallet,
+  LayoutDashboard, Plane, CalendarCheck, Sparkles, Users, FileText, Wallet, Banknote,
   Image as ImageIcon, Building2, BookOpen, LogOut, ShieldCheck, Mail, Stamp, ListChecks, Menu, Map, Type, Send, HelpCircle, Languages, Settings, Archive, Palette, Hotel,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -24,6 +24,7 @@ const nav: AdminNavItem[] = [
   { to: "/admin/extras", icon: Sparkles, label: "Extras", module: "extras", section: "Sales" },
   { to: "/admin/suppliers", icon: Building2, label: "Fournisseurs", module: "suppliers", section: "Sales" },
   { to: "/admin/supplier-costs", icon: Wallet, label: "Coûts fournisseurs", module: "supplier_costs", section: "Sales" },
+  { to: "/admin/international-payments", icon: Banknote, label: "Paiements internationaux", module: "international_payments", section: "Sales" },
   { to: "/admin/visa", icon: Stamp, label: "Demandes de visa", module: "visa", section: "Sales" },
   { to: "/admin/visa-checklists", icon: ListChecks, label: "Documents requis", module: "visa_checklists", section: "Sales" },
   { to: "/admin/visa-settings", icon: ShieldCheck, label: "Paramètres visa", module: "visa_settings", section: "Sales" },

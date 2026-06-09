@@ -45,6 +45,31 @@ function formatDates(s?: string | null, e?: string | null) {
   return fmtDate((s ?? e) as string);
 }
 
+export function TripCardSkeleton() {
+  return (
+    <div className="h-full min-h-[650px] overflow-hidden rounded-[20px] border border-border bg-background shadow-soft sm:min-h-[700px]">
+      <div className="aspect-[4/5] min-h-[360px] animate-pulse bg-secondary sm:min-h-[420px]" />
+      <div className="flex min-h-[300px] flex-col gap-5 p-6">
+        <div className="flex min-h-[4.5rem] flex-wrap gap-2">
+          <span className="h-7 w-24 rounded-full bg-secondary" />
+          <span className="h-7 w-20 rounded-full bg-secondary" />
+          <span className="h-7 w-28 rounded-full bg-secondary" />
+        </div>
+        <div className="mt-auto min-h-[5.5rem] space-y-3">
+          <div className="h-3 w-24 rounded bg-secondary" />
+          <div className="h-9 w-40 rounded bg-secondary" />
+        </div>
+        <div className="min-h-[3.25rem] border-t border-border pt-4">
+          <div className="flex gap-2">
+            <span className="h-10 w-24 rounded-full bg-secondary" />
+            <span className="h-10 w-36 rounded-full bg-secondary" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardData; index?: number; fallbackImage?: string }) {
   const bookingHref = `/reserver?trip=${encodeURIComponent(trip.slug)}`;
   const programmeHref = trip.program_link || `/programme?trip=${trip.slug}`;
@@ -73,11 +98,11 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
       transition={{ duration: 0.5, delay: index * 0.1 }}
       className="h-full"
     >
-      <div className="group flex flex-col h-full bg-background rounded-[20px] overflow-hidden border border-border shadow-soft hover:shadow-2xl hover:-translate-y-1 transition-all duration-500">
+      <div className="group flex h-full min-h-[650px] flex-col overflow-hidden rounded-[20px] border border-border bg-background shadow-soft transition-all duration-500 hover:-translate-y-1 hover:shadow-2xl sm:min-h-[700px]">
         {/* IMAGE */}
         <Link
           to={bookingHref}
-          className="relative aspect-[4/5] overflow-hidden block"
+          className="relative block aspect-[4/5] min-h-[360px] overflow-hidden sm:min-h-[420px]"
           aria-label={`Réserver ${trip.title}`}
           onClick={() => trackReservationClick("trip_card_image")}
         >
@@ -87,6 +112,8 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
               alt={trip.cover_alt || trip.title}
               preset="card"
               widths={[400, 600, 800, 1000]}
+              width={800}
+              height={1000}
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-silk"
             />
@@ -96,7 +123,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
           <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
 
           {/* Badges - top left */}
-          <div className="absolute top-4 left-4 flex flex-col gap-2 items-start">
+          <div className="absolute top-4 left-4 flex min-h-[2rem] flex-col items-start gap-2">
             {showBadge && (
               <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full shadow-cta ${badgeStyles[badgeKey] || "bg-foreground text-background"}`}>
                 <Sparkles className="w-3 h-3" /> {badgeText}
@@ -125,13 +152,13 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
           )}
 
           {/* Text overlay - bottom of image */}
-          <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
+          <div className="absolute bottom-0 left-0 right-0 flex min-h-[8.25rem] flex-col justify-end p-6 text-white">
             {(trip.label || trip.season) && (
               <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-white/85 mb-2">
                 {[trip.label, trip.season].filter(Boolean).join(" · ")}
               </p>
             )}
-            <h3 className="font-display text-2xl md:text-[1.65rem] leading-tight mb-1.5">{trip.title}</h3>
+            <h3 className="font-display mb-1.5 min-h-[3.2rem] overflow-hidden text-2xl leading-tight md:text-[1.65rem]">{trip.title}</h3>
             {(trip.start_date || trip.end_date) && (
               <p className="text-sm text-white/85">{formatDates(trip.start_date, trip.end_date)}</p>
             )}
@@ -139,18 +166,20 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
         </Link>
 
         {/* BOTTOM - white panel */}
-        <div className="p-6 flex flex-col gap-5 flex-1">
-          {dests.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {dests.slice(0, 6).map((d) => (
+        <div className="flex min-h-[300px] flex-1 flex-col gap-5 p-6">
+          <div className="flex min-h-[4.5rem] flex-wrap gap-2">
+            {dests.length > 0 ? (
+              dests.slice(0, 6).map((d) => (
                 <span key={d} className="text-xs px-2.5 py-1 rounded-full bg-secondary text-foreground/70 inline-flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> {d}
                 </span>
-              ))}
-            </div>
-          )}
+              ))
+            ) : (
+              <span className="invisible text-xs px-2.5 py-1">Destination</span>
+            )}
+          </div>
 
-          <div className="flex items-end justify-between mt-auto pt-2">
+          <div className="mt-auto flex min-h-[5.5rem] items-end justify-between pt-2">
             <div>
               <p className="text-xs text-muted-foreground">{priceLabel}</p>
               {originalPrice && originalPrice > trip.base_price_mad && (
@@ -172,7 +201,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
               <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
-          <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+          <div className="flex min-h-[3.25rem] flex-wrap gap-2 border-t border-border pt-4">
             <Link to={bookingHref} className="btn-primary !px-4 !py-2 text-sm" onClick={() => trackReservationClick("trip_card_button")}>
               Réserver
             </Link>

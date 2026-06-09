@@ -116,7 +116,17 @@ export default function PartnerAcquisition() {
       />
 
       <section className="relative min-h-[78vh] overflow-hidden">
-        <img src={heroFuji} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <img
+          src={heroFuji}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          width={1920}
+          height={1280}
+          loading="eager"
+          decoding="async"
+          // @ts-expect-error fetchpriority is a valid HTML attribute
+          fetchpriority="high"
+        />
         <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/45 to-black/20" />
         <div className="container-app relative z-10 flex min-h-[78vh] items-center py-20 text-white">
           <div className="max-w-3xl">
@@ -200,7 +210,7 @@ export default function PartnerAcquisition() {
             </div>
           </div>
           <div className="overflow-hidden rounded-2xl">
-            <img src={kyotoAlley} alt="Voyage au Japon avec LeJapon.ma" className="aspect-[4/5] w-full object-cover" />
+            <img src={kyotoAlley} alt="Voyage au Japon avec LeJapon.ma" className="aspect-[4/5] w-full object-cover" width={800} height={1000} loading="lazy" decoding="async" />
           </div>
         </div>
       </section>

@@ -5,15 +5,16 @@ import { fmtMAD } from "@/lib/format";
 const db = supabase as any;
 
 export default function OpsSummary({ trip }: { trip: any }) {
-  const [stats, setStats] = useState({ regs: 0, sales: 0, paid: 0, supplierTotal: 0, sentJapan: 0 });
+  const [stats, setStats] = useState({ regs: 0, sales: 0, paid: 0, supplierTotal: 0, sentJapan: 0, internationalTotalJpy: 0, internationalPaidJpy: 0 });
 
   useEffect(() => {
     (async () => {
-      const [{ data: bks }, { data: parts }, { data: costs }, { data: jp }] = await Promise.all([
+      const [{ data: bks }, { data: parts }, { data: costs }, { data: jp }, { data: internationalFiles }] = await Promise.all([
         supabase.from("bookings").select("id,total_amount_mad,paid_amount_mad").eq("trip_id", trip.id),
         supabase.from("booking_participants").select("id").eq("trip_id", trip.id),
         db.from("supplier_trip_quotes").select("final_total_mad,grand_total_jpy,exchange_rate_jpy_mad").eq("trip_id", trip.id),
         supabase.from("trip_japan_payments").select("amount_mad").eq("trip_id", trip.id),
+        db.from("international_payment_files").select("total_invoice_amount,amount_already_paid,status").eq("trip_id", trip.id),
       ]);
       const supplierTotal = (costs ?? []).reduce((s: number, c: any) => {
         const mad = Number(c.final_total_mad || 0);
@@ -26,13 +27,17 @@ export default function OpsSummary({ trip }: { trip: any }) {
         paid: (bks ?? []).reduce((s, b) => s + Number(b.paid_amount_mad || 0), 0),
         supplierTotal,
         sentJapan: (jp ?? []).reduce((s, p) => s + Number(p.amount_mad || 0), 0),
+        internationalTotalJpy: (internationalFiles ?? []).filter((file: any) => file.status !== "cancelled").reduce((s: number, file: any) => s + Number(file.total_invoice_amount || 0), 0),
+        internationalPaidJpy: (internationalFiles ?? []).filter((file: any) => file.status !== "cancelled").reduce((s: number, file: any) => s + Number(file.amount_already_paid || 0), 0),
       });
     })();
   }, [trip.id]);
 
   const left = stats.sales - stats.paid;
   const leftJp = stats.supplierTotal - stats.sentJapan;
+  const internationalLeftJpy = stats.internationalTotalJpy - stats.internationalPaidJpy;
   const margin = stats.sales - stats.supplierTotal;
+  const fmtJPY = (value: number) => `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(Math.round(value || 0))} JPY`;
 
   const card = (label: string, value: string, tone?: string) => (
     <div className="bg-background border border-border rounded-xl p-5">
@@ -50,6 +55,9 @@ export default function OpsSummary({ trip }: { trip: any }) {
       {card("Coût Japon estimé", fmtMAD(stats.supplierTotal))}
       {card("Envoyé au Japon", fmtMAD(stats.sentJapan), "text-emerald-600")}
       {card("Reste à envoyer", fmtMAD(leftJp), "text-amber-600")}
+      {card("Dossiers banque JPY", fmtJPY(stats.internationalTotalJpy))}
+      {card("Payé banque JPY", fmtJPY(stats.internationalPaidJpy), "text-emerald-600")}
+      {card("Solde banque JPY", fmtJPY(internationalLeftJpy), "text-amber-600")}
       {card("Marge estimée", fmtMAD(margin), margin >= 0 ? "text-emerald-600" : "text-red-600")}
     </div>
   );

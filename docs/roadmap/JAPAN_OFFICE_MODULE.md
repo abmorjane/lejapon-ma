@@ -1,116 +1,113 @@
-# Japan Office / Supplier Module Roadmap
+# Japan Office Supplier Module Roadmap
 
-Goal: prepare a Japan-side operations workspace for suppliers and internal Japan office coordination without disrupting the stabilized V2 agency/admin/public flows.
+This roadmap describes the target Japan Office / Supplier architecture after the V2 checkpoint. It should be implemented incrementally without weakening the stabilized public, admin, agency, booking, and visa flows.
 
-## Supplier portal
+## 1. Supplier Portal
 
-- Supplier login at `/supplier/login`.
-- Supplier dashboard at `/supplier`.
-- Supplier profile scoped to the supplier organization/account.
-- Supplier types:
-  - hotel
-  - guide
-  - transport
-  - activity
-- Supplier sees only assigned trips, service requests, comments, documents, and operational tasks.
-- Admin creates and manages supplier accounts from `/admin/suppliers` or `/admin/users`.
+- Dedicated `/supplier` workspace for Japan office and local suppliers.
+- Supplier login through existing authentication and role checks.
+- Supplier profiles scoped by organization/member where possible.
+- Supplier types: hotel, guide, transport, activity, and internal Japan office.
+- Supplier users should see assigned trips and operational tasks only.
+- Admin users retain full read/write oversight.
 
-## Quote engine
+## 2. Japan Office Dashboard
 
-- Internal quote builder for Japan office costing.
-- Cost lines by supplier, destination, trip, departure, and service type.
-- Margin and commission visibility for admin only.
-- Comparison between supplier cost, client price, agency commission, and LeJapon.ma margin.
-- Versioned quote snapshots for approvals.
+- Dashboard of active trips and departures.
+- Quote status, operational readiness, pending confirmations, missing documents, and urgent messages.
+- High-level participant, room, hotel, transport, activity, guide, and document counters.
+- Filters by trip, departure date, status, supplier, and urgency.
 
-## Hotel costing
+## 3. Trip Cost Engine
 
-- Hotel supplier profiles with city, category, room types, contract rates, seasons, taxes, and cancellation rules.
-- Costing per room type:
-  - single
-  - double
-  - twin
-  - triple
-- Rooming-list integration.
-- Hotel confirmation status per departure.
+- Structured quote engine per trip/departure.
+- Section totals for hotels, transport, activities, guides, and other costs.
+- JPY totals, MAD conversion, commission, cost per passenger, and margin analysis.
+- Draft, submitted, reviewed, approved, and revision requested states.
+- Admin-only visibility for sales price, margin, and internal commercial notes.
 
-## Transport costing
+## 4. Hotel Cost Tables
 
-- Transport supplier profiles with vehicle types, routes, pickup/dropoff, luggage limits, and driver language.
-- Costing by route, date, vehicle, duration, and group size.
-- Assignment to trip departures and operational day blocks.
+- Hotel rows by city, hotel, check-in, check-out, nights, room type, participant count, unit cost, subtotal, status, and comment.
+- Default rows generated from itinerary and rooming list.
+- Room types: double/twin, single, triple, and tour leader.
+- Chronological ordering and export-ready formatting.
 
-## Guide costing
+## 5. Transport Cost Tables
 
-- Guide supplier profiles with languages, cities, day rates, half-day rates, overtime, and availability notes.
-- Assignment by programme day, city, and group.
-- Guide instructions and participant context.
+- Transport rows by programme day, route/city, service date, transport type, quantity, unit price, subtotal, status, and comment.
+- Transport types: bus, metro, taxi, train, shinkansen, boat, and other.
+- Links to operational itinerary and daily transport notes.
 
-## Activity costing
+## 6. Guide Cost Tables
 
-- Activity supplier profiles with ticket/activity cost, capacity, booking deadline, cancellation policy, and included/excluded notes.
-- Activity allocation by programme day and participant count.
-- Integration with selected extras where appropriate.
+- Guide rows by day, date, city, guide type, guide count, daily price, subtotal, status, and comment.
+- Guide types: francophone, anglophone, Japanese, assistant, and other.
+- Predefined Japan itinerary guide rows can seed the first quote.
 
-## Participant lists
+## 7. Activity Cost Tables
 
-- Shared read-only participant lists for selected suppliers when needed.
-- Privacy-controlled fields only:
-  - names
-  - room allocation where needed
-  - dietary/accessibility notes where needed
-  - no passport data unless explicitly required and policy-approved.
+- Activity rows by day, date, activity, required/optional flag, participant count, unit price, subtotal, status, and comment.
+- Required activities use total participant count.
+- Optional activities use selected extras/activities from bookings.
+- Aliases should normalize names such as USJ, Disney, tea ceremony, Maiko dinner, and meditation.
 
-## Rooming lists
+## 8. Rooming Lists
 
-- Exportable hotel rooming lists.
-- Copy allocation between hotels.
-- Supplier-facing rooming-list confirmation.
-- Admin override history.
+- Reuse the admin operations room allocation data.
+- Show hotel/stay, room number, room type, assigned participants, passport summary where allowed, and notes.
+- Support hotel-to-hotel room copy while preserving participant assignment rules.
+- Export rooming list to Excel/PDF for Japan office and hotels.
 
-## Collaboration and comments
+## 9. Participant Lists
 
-- Threaded comments by trip/departure/service.
-- Internal-only notes separated from supplier-visible comments.
-- Attachments for confirmations, invoices, vouchers, and operational docs.
-- Mentions and assigned follow-ups for Japan office/admin.
+- Reuse admin operations participants data.
+- Show names, booking references, nationality, passport number, date of birth, sex, passport issue/expiry, CIN/national ID, selected extras, room type, and special notes where permission allows.
+- Keep payment data, private admin notes, and visa documents hidden from supplier users unless explicitly approved.
 
-## Notifications
+## 10. Supplier Collaboration
 
-- Email notifications for supplier assignments, quote requests, confirmation requests, and changes.
-- Admin notifications for supplier replies, price changes, and missing confirmations.
-- Future WhatsApp/LINE integration can be added without changing core supplier records.
+- Trip-level message center with Morocco office, Japan office, and admin roles.
+- Message types: general, hotel, transport, activities, guides, and urgent.
+- Attachments, unread counters, search, and filters.
+- Optional row/day comments for quote and operational tasks.
 
-## Approval workflow
+## 11. Internal Notifications
 
-- Draft quote/costing.
-- Supplier submitted.
-- Japan office reviewed.
-- Admin approved.
-- Locked for departure.
-- Change request / revision.
-- Cancelled.
+- Notify supplier users when a quote request, task assignment, urgent message, or revision request is created.
+- Notify admin users when supplier quote is submitted, row status changes, or urgent issues are raised.
+- Use the admin email template system for notification copy.
+- Store notification events for future in-app notification center.
 
-## Suggested implementation order
+## 12. Quote Approval Workflow
 
-1. Supplier data model and admin supplier CRUD.
-2. Supplier portal authentication and scoped dashboard.
-3. Assignment model linking suppliers to trip departures/programme days.
-4. Hotel rooming-list confirmation.
-5. Quote/cost engine V1.
-6. Supplier comments/attachments.
-7. Notifications.
-8. Approval workflow and audit trail.
+- Quote states: draft, submitted, reviewed, revision requested, approved, cancelled.
+- Admin approval locks baseline totals.
+- Revisions create history entries rather than overwriting prior decisions silently.
+- Approval should require required operational sections to be complete when validation rules are enabled.
 
-## Data model direction
+## 13. Cost vs Sale Price Analysis
 
-- Prefer existing `organizations` / `organization_members` for supplier accounts if compatible.
-- Add supplier-specific profile tables only where metadata becomes too large or operational queries need indexing.
-- Keep supplier pricing/costing separate from public trip pricing.
-- Keep agency reservations and Japan supplier costing linked but not merged until conversion rules are explicit.
+- Admin-only dashboard comparing supplier cost with booking revenue.
+- Metrics: revenue MAD/JPY, supplier cost, gross margin, margin percentage, cost per passenger, revenue per passenger, and net profit.
+- Exclude client payments and internal notes from supplier view.
 
-## Safety notes
+## 14. Margin Tracking
 
-- Do not expose client passport, visa, payment, or internal margin data to suppliers by default.
-- Keep admin/internal notes separate from supplier-visible notes.
-- Keep Japan office costing out of public and agency portals unless explicitly approved.
+- Track final supplier totals, commission, exchange rate, final MAD cost, revenue, and margin by trip/departure.
+- Preserve historical exchange rates and approved quote snapshots.
+- Feed admin finance summaries and international payment preparation.
+
+## 15. Future Accounting Integration
+
+- Link approved supplier costs to international payment files.
+- Generate invoices, subrogation acts, participant lists, passport copy checklists, and bank dossier status.
+- Future export to accounting software should use stable IDs and immutable payment history.
+
+## Implementation Principles
+
+- Reuse existing trip operations data instead of duplicating participants, rooms, and extras.
+- Prefer dedicated costing/quote tables for indexed financial workflows.
+- Keep supplier visibility narrow and role-scoped.
+- Keep CRM, passport, visa, payment, and margin data protected by default.
+- Use idempotent SQL migrations and explicit RLS policies for every new table.

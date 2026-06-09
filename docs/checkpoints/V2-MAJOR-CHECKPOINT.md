@@ -1,113 +1,158 @@
-# V2 Major Checkpoint - before Japan Office supplier module
+# V2 Major Checkpoint - before Japan Office Supplier Module
 
-Date: 2026-06-04
+Date: 2026-06-09
 
-## Completed modules
+This checkpoint records the stabilized V2 baseline before new Japan Office supplier development continues. It is intended as a restore point for production, staging, and future module work.
 
-- V2 external users stabilized around `organization_members`, `organization_member_profiles`, and `organizations`.
-- Agency onboarding stabilized around `partner_onboarding_cases.form_data` and `partner_onboarding_documents`.
-- Admin organization validation drawer reads submitted onboarding data and documents.
-- Commission Engine V1 uses canonical `commission_engine_rules` columns and computed frontend labels.
-- Agency booking requests/reservations support trip-based requests, extras, commission preview, payment metadata, quote adjustments, and unified admin visibility.
-- Admin bookings/reservations show public/admin bookings and agency reservations in one list.
-- Agency portal includes reservations, profile, onboarding, trips, programmes, hotels, commissions, and PDF actions.
-- Agency logo management persists in organization metadata and is used by agency-issued PDFs.
-- Hotels catalog foundation exists for admin, agency, and public display.
-- Custom programmes support admin-only/public visibility, trip linkage, duplication, archive/delete safeguards, and dynamic visa programme PDFs.
-- Visa flow includes client signup edge function, passport lookup/prefill, OCR scanner UI, procuration PDF, checklist PDF, stricter validation, admin editability, and official PDF date/field fixes.
-- CRM client forms include passport OCR enrichment and professional situation fields.
-- Transactional email templates for booking/payment/visa have richer branded payloads.
-- Public homepage conversion sections, promotional pricing fields, lead popup, and hero mascot responsiveness were added.
-- Admin theme switcher and premium-dashboard theme shell were added.
-- Disaster recovery pack docs/artifacts were generated earlier in V2.
+## Core Modules Completed
 
-## Remaining known bugs / watch list
+- CRM: client list, client profile editing, import/export support, passport scan helper, professional situation fields, client history, and booking links.
+- Clients: structured contact fields, passport fields, OCR-assisted entry, address/city storage when supported, and role-aware sales/admin access.
+- Reservations: public booking flow, admin booking detail, agency reservation visibility, payments, quote adjustments, receipts, confirmation PDFs, participants, rooms, hotel allocation, and operations tabs.
+- Agency Portal: agency login, onboarding, reservations, editable requests, trip/programme/hotel libraries, commission visibility, agency profile, logo management, and agency-branded PDFs.
+- Visa Portal: visa client signup, authenticated visa form, passport lookup/prefill, OCR scanner, checklist/procuration generation, document upload, client downloads, and admin visa management.
+- OCR: `passport-ocr` Edge Function, CRM scanner, Visa form scanner, Moroccan passport visual/MRZ parsing, and safe metadata mapping.
+- PDF Generation: programme PDFs, trip/quote PDFs, payment receipts, travel confirmations, visa official PDF, visa checklist PDF, and procuration PDF.
+- Payment Receipts: admin and agency payment receipt generation with direct and agency branding paths.
+- Travel Confirmations: booking confirmation PDF generation with agency stamp placement support.
+- Translation System: admin translations coverage for trips, programmes, activities, FAQ, blog, pages, hotels, visa configuration, agency-facing content, and reusable public/business content.
+- Homepage V2: conversion sections, comparison block, Google reviews CTA, Omotenashi messaging, mascot responsiveness, responsive hero image optimization, popup lead capture, and analytics events.
+- Trip Management: trip catalog, departures, operations tabs, participants, rooms, extras, payments, hotel stays, supplier costs entry points, and international payment files.
+- Hotels: admin hotel catalog, image upload support, public `/hotels`, agency hotel read-only catalog, and translation-ready descriptions.
+- Programs: programme management, day content normalization, compact print/export support, public and agency views.
+- Activities: extras/activities catalog, booking extras, agency display, operations aggregation, and supplier-facing activity quantities.
+- Agencies: organizations, agency members, onboarding cases, partner documents, commission rules, agency settings, profile branding, and admin organization management.
+- Email Templates: admin-managed transactional templates, email settings, email logs, template rendering helpers, and cleaned LeJapon.ma/Moroccan Express branding.
+- Marketing and Analytics: GA4, Microsoft Clarity, public conversion event tracking, marketing campaigns, segments, templates, and unsubscribe route.
+- Backups: admin backup tooling and storage/database manifest support.
 
-- Verify staging RLS for agency logo metadata updates and storage writes under `media/{organization_id}/branding/*`.
-- Verify `passport-ocr`, `lookup-visa-prefill`, `visa-client-signup`, and `send-admin-notification` are redeployed after this checkpoint.
-- Verify CRM passport lookup behavior with real RLS in staging because direct client reads may be blocked and should fall back to secure lookup.
-- Verify all new hotel image upload/storage policies on staging if `hotel-images` or `media` policies differ.
-- Verify agency reservation audit/history persistence if metadata is used instead of a dedicated audit table.
-- Verify quote/receipt PDFs with and without agency logo, with private/public storage behavior.
-- Verify Japanese visa official PDF visually after any template or coordinate changes.
+## Edge Functions
 
-## SQL migrations applied / expected V2 schema
+- `admin-users`: manages admin-created users, role assignment, external/agency/supplier user provisioning, and password reset helpers. Deployment status: required in Supabase for admin user management.
+- `convert-partner-request`: converts partner onboarding requests into organizations/users. Deployment status: required for partner approval workflow.
+- `crm-export`: exports CRM data for authorized staff. Deployment status: required for CRM export action.
+- `lookup-visa-prefill`: service-role passport lookup for visa prefill without exposing CRM tables. Deployment status: required for visa passport prefill.
+- `passport-ocr`: reads passport uploads from storage and returns parsed OCR/MRZ fields. Deployment status: required for CRM and Visa scanner.
+- `process-marketing-queue`: processes queued marketing campaign emails. Deployment status: required for campaign sending.
+- `recaptcha`: exposes/verifies recaptcha configuration. Deployment status: required where recaptcha is enabled.
+- `send-admin-notification`: sends rich booking/payment/agency/admin notifications and template test emails. Deployment status: required for internal transactional emails.
+- `send-contact-email`: sends contact form notifications with recaptcha validation. Deployment status: required for public contact notifications.
+- `send-marketing-campaign`: starts marketing campaign sending and test sends. Deployment status: required for marketing campaigns.
+- `send-visa-email`: sends visa status emails through the email template system. Deployment status: required for visa client/admin notifications.
+- `send-visa-reminders`: sends visa reminder emails for pending documents. Deployment status: required if reminders are scheduled.
+- `track-email-open`: records marketing/email open events. Deployment status: required for email analytics pixels.
+- `translate-content`: generates EN/AR translations through Lovable translation API. Deployment status: required for admin translation generation.
+- `visa-client-signup`: creates visa client accounts and sends branded welcome emails. Deployment status: required for `/formulaire-visa/login` signup.
 
-- `organization_member_profiles`
-- `organization_members.metadata`
-- `partner_onboarding_cases.form_data`, `submitted_at`, `reviewed_at`, `reviewed_by`, `review_notes`
-- `partner_onboarding_documents`
-- `commission_engine_rules`
-- `agency_booking_requests`
-- `bookings.quote_adjustments` or `bookings.metadata.quote_adjustments`
-- Visa linked fields where applied: linked participant/client references and checklist/procuration metadata support
-- Trip promo fields: `original_price`, `promotional_price`/current price, promo label/active fields where applied
-- Hotels catalog table/columns where applied
-- Storage buckets/policies for passports, visa documents, media/hotel/agency assets where applied
+## Storage Buckets
 
-All production SQL should remain idempotent: `create table if not exists`, `add column if not exists`, safe policies with `drop policy if exists`, and `notify pgrst, 'reload schema'`.
+- `media`: public media, agency logos, trip/admin images where reused.
+- `visa-docs`: private visa documents, generated visa PDFs, checklist PDFs, procurations, and visa passport scans.
+- `passports`: private CRM/admin passport scan uploads.
+- `booking-docs`: booking PDFs and generated booking documents.
+- `programme-pdfs`: public programme PDF exports.
+- `programme-images`: public programme hero/day images.
+- `article-images`: public blog/article images.
+- `partner-onboarding`: private partner onboarding documents.
+- `trip-message-attachments`: trip communication center attachments.
+- `trip-documents`: operational trip document center files.
+- `international-payments`: private international payment files, invoices, contracts, tickets, payment proofs, and subrogations.
+- `hotel-images`: hotel catalog images if the environment uses the dedicated hotel bucket. If not present, use `media` or apply the hotel image storage migration/policy.
 
-## Edge functions deployed / changed in V2
-
-- `admin-users`
-- `convert-partner-request`
-- `passport-ocr`
-- `lookup-visa-prefill`
-- `visa-client-signup`
-- `send-visa-email`
-- `send-admin-notification`
-- `send-contact-email`
-- `send-visa-reminders`
-
-## Required redeploys before production
-
-- Redeploy changed Edge Functions from this checkpoint:
-  - `admin-users`
-  - `convert-partner-request`
-  - `passport-ocr`
-  - `lookup-visa-prefill`
-  - `send-admin-notification`
-  - `send-contact-email`
-- Redeploy frontend build to staging/production after `npm run build` succeeds.
-- Refresh Supabase schema cache after final SQL migrations.
-
-## Environment variables
+## Environment Variables
 
 Frontend:
+
 - `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-- Any public site URL / admin URL variables used by email links
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `VITE_SUPABASE_PROJECT_ID`
+- `VITE_ENABLE_RECAPTCHA`
+- `VITE_GA_MEASUREMENT_ID`
+- `VITE_CLARITY_PROJECT_ID`
 
-Edge Functions:
+Edge Functions / Supabase secrets:
+
 - `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- SMTP configuration from `email_settings` and/or secrets:
-  - SMTP host
-  - SMTP port
-  - SMTP user
-  - SMTP password
-  - SMTP from email/name
-  - reply-to where configured
+- `SITE_URL`
+- `PUBLIC_SITE_URL`
+- `ADMIN_BASE_URL`
+- `ADMIN_NOTIFICATION_EMAIL`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM`
 - `OCR_API_URL`
-- OCR provider credentials if required by the external OCR service
-- Recaptcha secrets where used by contact/lead forms
+- `OCR_API_KEY`
+- `OCR_DEBUG_RAW_TEXT`
+- `RECAPTCHA_SITE_KEY`
+- `RECAPTCHA_SECRET_KEY`
+- `LOVABLE_API_KEY`
+- `MARKETING_BATCH_SIZE`
+- `VISA_SIGNUP_ALLOWED_ORIGINS`
 
-## Current architecture
+SMTP can also be provided through the `email_settings` table where the relevant Edge Function reads active settings.
 
-- Supabase remains the system of record.
-- Public site reads public trips, programmes, hotels, homepage content, popups, FAQs, blog, and reusable marketing data.
-- Admin backoffice manages bookings, CRM clients, trips, programmes, hotels, organizations, agency onboarding, commission rules, users, translations, backups, email settings/logs, visa dossiers, and payments.
-- Agency extranet reads organization-scoped data through `organization_members` and `organization_member_profiles`.
-- Agency reservations are stored as `agency_booking_requests` until explicitly converted to real bookings.
-- Partner onboarding is stored in `partner_onboarding_cases.form_data` with documents in `partner_onboarding_documents`.
-- Agency branding is stored in `organizations.metadata` and used by quote/receipt PDF builders when the reservation source is agency.
-- Visa client signup uses a custom Edge Function instead of Supabase default confirmation email.
-- Passport lookup should use secure RPC/Edge Function flows to avoid exposing CRM/passport data through client-side RLS holes.
-- PDFs are generated client-side in frontend libraries where currently implemented, with Supabase Storage used for uploaded/generated assets where applicable.
+## SQL Migrations
 
-## Stabilization cleanup
+Applied/tracked in this repository:
 
-- Visible debug/diagnostic panels removed.
-- Temporary raw JSON accordions removed from admin/agency screens.
-- Temporary console diagnostics removed from frontend and changed Edge Functions.
-- Production-safe user-facing errors and server warnings remain.
+- Base schema migrations from `20260422170952_...sql` through `20260513180754_...sql`.
+- `20260519090000_admin_email_logs.sql`
+- `20260519093000_passport_ocr_admin.sql`
+- `20260519101500_fix_passports_bucket.sql`
+- `20260519103000_email_logs_internal_notifications.sql`
+- `20260520120000_fix_clients_schema_frontend_alignment.sql`
+- `20260520143000_add_client_personal_admin_fields.sql`
+- `20260520150000_secure_crm_export_logs.sql`
+- `20260520162000_add_crm_import_client_columns.sql`
+- `20260526090000_v101_visa_trip_defaults_and_ocr_manager.sql`
+- `20260526093000_v101_travel_docs_flights_hotels.sql`
+- `20260526103000_agency_settings_public_read.sql`
+- `20260526113000_admin_backup_logs.sql`
+- `20260529090000_v2_commission_engine_v1.sql`
+- `20260605090000_email_templates_runtime_integration.sql`
+- `20260606120000_email_templates_schema_test_fix.sql`
+- `20260606150000_trip_communication_center.sql`
+- `20260606153000_trip_document_center.sql`
+- `20260606154500_supplier_validation_workflow.sql`
+- `20260608153000_international_payments_v1.sql`
+
+Pending per environment:
+
+- None confirmed from local code inspection. Each staging/production database should still verify migration history before deployment.
+
+Deprecated:
+
+- None formally removed. Older legacy compatibility columns remain in place where migrations intentionally preserve data.
+
+## Current Architecture
+
+- Supabase is the system of record for public content, CRM, bookings, agency data, visa applications, emails, operations, and storage.
+- React/Vite frontend serves public site, admin backoffice, agency extranet, visa client portal, and supplier/Japan office routes.
+- Admin routes use module permissions from `RequireRole` and the shared auth hook.
+- Agency routes use organization membership guards and organization-scoped data.
+- Visa prefill uses service-role Edge Functions for passport lookup, avoiding direct client reads of CRM tables.
+- Passport OCR stores files in controlled buckets and returns only parsed fields to the user interface.
+- Transactional emails use `email_templates` where available, with production-safe LeJapon.ma fallback rendering.
+- PDFs are generated in frontend libraries and uploaded to storage where persistence is needed.
+- Analytics helpers load GA4 and Clarity only when IDs exist and avoid personal data in event payloads.
+
+## Stabilization Cleanup
+
+- Removed the temporary supplier quote engine SQL diagnostic panel.
+- Confirmed no `SOURCE_DEBUG`, `FRONTEND_DEBUG`, `ADMIN_BUILD_VERSION`, `FRONTEND_BUILD_visa-email-debug`, or `console.log` markers remain in `src` or `supabase/functions`.
+- Kept production-safe error messages, validation messages, audit history, activity logs, admin logs, and server error logging.
+
+## Known Issues After V2 Checkpoint
+
+- None confirmed in local build at checkpoint creation time.
+
+Items still requiring manual staging verification are deployment checks, not confirmed bugs:
+
+- Supabase migration history matches the repository.
+- Required storage buckets and policies exist in staging/production.
+- Changed Edge Functions are deployed from the current repository.
+- Email templates in the database match current transactional keys.

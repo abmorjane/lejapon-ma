@@ -118,11 +118,13 @@ const BlogPost = () => {
       {/* Cover */}
       {post.cover_url && (
         <div className="container-app mb-12">
-          <div className="aspect-[16/9] overflow-hidden rounded-sm">
+          <div className="aspect-[16/9] min-h-[220px] overflow-hidden rounded-sm md:min-h-[480px]">
             <Img
               src={post.cover_url}
               alt={post.cover_alt || post.title}
               preset="hero"
+              width={1600}
+              height={900}
               priority
               className="w-full h-full object-cover"
             />
@@ -150,6 +152,8 @@ const BlogPost = () => {
                     src={url}
                     alt={`${post.title} — image ${i + 1}`}
                     preset="card"
+                    width={600}
+                    height={600}
                     className="w-full h-full object-cover hover:scale-105 transition-transform duration-700 ease-silk"
                   />
                 </a>
@@ -182,12 +186,14 @@ const BlogPost = () => {
                   to={`/blog/${r.slug}`}
                   className="group block rounded-md overflow-hidden transition-all duration-500 hover:-translate-y-1"
                 >
-                  <div className="aspect-[4/3] overflow-hidden rounded-md bg-secondary/40">
+                  <div className="aspect-[4/3] min-h-[220px] overflow-hidden rounded-md bg-secondary/40">
                     {r.cover_url && (
                       <Img
                         src={r.cover_url}
                         alt={r.cover_alt || r.title}
                         preset="card"
+                        width={800}
+                        height={600}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-silk"
                       />
                     )}

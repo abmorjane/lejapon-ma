@@ -70,8 +70,8 @@ const Blog = () => {
         <div className="grid md:grid-cols-3 gap-px bg-border">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="bg-background">
-              <div className="aspect-[4/3] bg-secondary/40 animate-pulse" />
-              <div className="p-8 space-y-3">
+              <div className="aspect-[4/3] min-h-[230px] animate-pulse bg-secondary/40" />
+              <div className="min-h-[175px] space-y-3 p-8">
                 <div className="h-3 w-24 bg-secondary/60 animate-pulse rounded" />
                 <div className="h-6 w-3/4 bg-secondary/60 animate-pulse rounded" />
                 <div className="h-3 w-32 bg-secondary/60 animate-pulse rounded" />
@@ -85,17 +85,19 @@ const Blog = () => {
         <div className="grid md:grid-cols-3 gap-px bg-border">
           {localized.map((p) => (
             <Link key={p.id} to={`/blog/${p.slug}`} className="bg-background group cursor-pointer block">
-              <div className="aspect-[4/3] overflow-hidden bg-secondary/40">
+              <div className="aspect-[4/3] min-h-[230px] overflow-hidden bg-secondary/40">
                 {p.cover_url && (
                   <Img
                     src={p.cover_url}
                     alt={p.cover_alt || p.title}
                     preset="card"
+                    width={800}
+                    height={600}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-silk"
                   />
                 )}
               </div>
-              <div className="p-8">
+              <div className="min-h-[175px] p-8">
                 {parseCategories(p.category).length > 0 && (
                   <p className="eyebrow mb-3">{parseCategories(p.category).join(" · ")}</p>
                 )}

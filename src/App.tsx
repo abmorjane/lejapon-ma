@@ -57,6 +57,7 @@ const AdminClients = lazy(() => import("@/admin/pages/Clients"));
 const AdminExtras = lazy(() => import("@/admin/pages/Extras"));
 const AdminSuppliers = lazy(() => import("@/admin/pages/Suppliers"));
 const AdminSupplierCosts = lazy(() => import("@/admin/pages/SupplierCosts"));
+const AdminInternationalPayments = lazy(() => import("@/admin/pages/InternationalPayments"));
 const AdminArticles = lazy(() => import("@/admin/pages/Articles"));
 const AdminPages = lazy(() => import("@/admin/pages/Pages"));
 const AdminFrontend = lazy(() => import("@/admin/pages/Frontend"));
@@ -246,6 +247,7 @@ const AppRoutes = () => {
         <Route path="extras" element={<RequireRole module="extras"><AdminExtras /></RequireRole>} />
         <Route path="suppliers" element={<RequireRole module="suppliers"><AdminSuppliers /></RequireRole>} />
         <Route path="supplier-costs" element={<RequireRole module="supplier_costs"><AdminSupplierCosts /></RequireRole>} />
+        <Route path="international-payments" element={<RequireRole module="international_payments"><AdminInternationalPayments /></RequireRole>} />
         <Route path="articles" element={<RequireRole module="articles"><AdminArticles /></RequireRole>} />
         <Route path="pages" element={<RequireRole module="pages"><AdminPages /></RequireRole>} />
         <Route path="frontend" element={<RequireRole module="frontend"><AdminFrontend /></RequireRole>} />

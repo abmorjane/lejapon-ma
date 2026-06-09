@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ExternalLink, Loader2, MapPin, Phone } from "lucide-react";
+import { ArrowLeft, ExternalLink, MapPin, Phone } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -72,7 +72,7 @@ export default function HotelsPage() {
           </Button>
           <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
             <div className="overflow-hidden rounded-2xl border border-border bg-secondary/25">
-              <Img src={activeHotel.main_image_url || placeholderImage} alt={activeHotel.name} className="h-[420px] w-full object-cover" />
+              <Img src={activeHotel.main_image_url || placeholderImage} alt={activeHotel.name} width={960} height={560} className="h-[420px] w-full object-cover" />
             </div>
             <div className="space-y-5">
               <div>
@@ -126,7 +126,7 @@ export default function HotelsPage() {
           {gallery.length > 1 && (
             <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {gallery.slice(1).map((image) => (
-                <Img key={image} src={image} alt={activeHotel.name} className="h-48 w-full rounded-xl object-cover" />
+                <Img key={image} src={image} alt={activeHotel.name} width={480} height={320} className="h-48 w-full rounded-xl object-cover" />
               ))}
             </div>
           )}
@@ -159,9 +159,26 @@ export default function HotelsPage() {
 
         {error && <Card className="mt-8 border-amber-200 bg-amber-50 p-4 text-amber-950">{error}</Card>}
         {loading ? (
-          <div className="mt-12 flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Chargement des hôtels…
+          <div className="mt-10 space-y-12">
+            {Array.from({ length: 2 }).map((_, sectionIndex) => (
+              <section key={sectionIndex}>
+                <div className="h-9 w-40 rounded bg-secondary/70" />
+                <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                  {Array.from({ length: 3 }).map((_, cardIndex) => (
+                    <Card key={cardIndex} className="overflow-hidden">
+                      <div className="h-56 animate-pulse bg-secondary/70" />
+                      <div className="min-h-[220px] space-y-4 p-5">
+                        <div className="h-3 w-20 rounded bg-secondary/70" />
+                        <div className="h-7 w-2/3 rounded bg-secondary/70" />
+                        <div className="h-4 w-full rounded bg-secondary/70" />
+                        <div className="h-4 w-3/4 rounded bg-secondary/70" />
+                        <div className="h-10 w-full rounded-full bg-secondary/70" />
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </section>
+            ))}
           </div>
         ) : filteredHotels.length === 0 ? (
           <p className="mt-12 text-muted-foreground">Les hôtels seront bientôt disponibles.</p>
@@ -175,8 +192,8 @@ export default function HotelsPage() {
                     const text = getLocalizedHotelText(hotel, "short_description", i18n.language);
                     return (
                       <Card key={hotel.id} className="overflow-hidden">
-                        <Img src={hotel.main_image_url || placeholderImage} alt={hotel.name} className="h-56 w-full object-cover" />
-                        <div className="p-5">
+                        <Img src={hotel.main_image_url || placeholderImage} alt={hotel.name} width={640} height={420} className="h-56 w-full object-cover" />
+                        <div className="min-h-[220px] p-5">
                           <p className="text-xs font-medium uppercase tracking-[0.12em] text-accent">{hotel.category || "Hôtel"}</p>
                           <h3 className="mt-2 font-display text-2xl">{hotel.name}</h3>
                           <p className="mt-3 line-clamp-3 text-sm text-muted-foreground">{text || hotel.address || "Description bientôt disponible."}</p>

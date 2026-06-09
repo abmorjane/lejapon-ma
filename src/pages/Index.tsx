@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
 import { Img } from "@/components/ui/Img";
 import { NewsletterSection } from "@/components/site/NewsletterSection";
-import { TripCard, type TripCardData } from "@/components/trips/TripCard";
+import { TripCard, TripCardSkeleton, type TripCardData } from "@/components/trips/TripCard";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import hero from "@/assets/hero-fuji.jpg";
 import kyoto from "@/assets/kyoto-alley.jpg";
@@ -44,6 +44,18 @@ const expImages = [tea, shibuya, ramen, kyoto, torii, tea];
 
 const whyIcons = [Shield, Users, Heart, Zap];
 const advantageIcons = [Plane, Languages, Headphones, Building2, Hotel, Route, Heart, Star, Award];
+
+const ExperienceSkeleton = ({ dark = false }: { dark?: boolean }) => (
+  <article className={`overflow-hidden rounded-3xl ${dark ? "bg-background/5" : "bg-background"}`}>
+    <div className={`aspect-[16/10] min-h-[190px] animate-pulse ${dark ? "bg-white/10" : "bg-secondary"}`} />
+    <div className="min-h-[145px] space-y-4 p-6">
+      <div className={`h-6 w-3/5 rounded ${dark ? "bg-white/10" : "bg-secondary"}`} />
+      <div className={`h-4 w-24 rounded ${dark ? "bg-white/10" : "bg-secondary"}`} />
+      <div className={`h-4 w-full rounded ${dark ? "bg-white/10" : "bg-secondary"}`} />
+      <div className={`h-4 w-2/3 rounded ${dark ? "bg-white/10" : "bg-secondary"}`} />
+    </div>
+  </article>
+);
 
 const DEFAULT_TESTIMONIALS = [
   { name: "Kawtar B.", city: "Casablanca", quote: "Topissime ! Organisation juste parfaite. Une équipe passionnée, professionnelle et disponible. Je recommande vivement !" },
@@ -235,20 +247,25 @@ const Index = () => {
   const c = useSiteContent("site:home", HOME_DEFAULTS);
   const m = MARKETING_COPY[(i18n.language as keyof typeof MARKETING_COPY) || "fr"] ?? MARKETING_COPY.fr;
   const [trips, setTrips] = useState<Trip[]>([]);
-  const { extras } = useExtras();
+  const [tripsLoading, setTripsLoading] = useState(true);
+  const { extras, loading: extrasLoading } = useExtras();
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("trips")
-        .select("id,title,slug,label,season,start_date,end_date,duration_days,base_price_mad,currency,cover_url,cover_alt,slots_left,highlights,destinations,badge_type,badge_text,promo_percent,program_link,is_featured,sort_order")
-        .in("status", ["open", "completed"])
-        .eq("is_featured", true)
-        .order("sort_order", { ascending: true })
-        .order("is_featured", { ascending: false })
-        .order("start_date", { ascending: true, nullsFirst: false })
-        .limit(6);
-      setTrips((data ?? []) as Trip[]);
+      try {
+        const { data } = await supabase
+          .from("trips")
+          .select("id,title,slug,label,season,start_date,end_date,duration_days,base_price_mad,currency,cover_url,cover_alt,slots_left,highlights,destinations,badge_type,badge_text,promo_percent,program_link,is_featured,sort_order")
+          .in("status", ["open", "completed"])
+          .eq("is_featured", true)
+          .order("sort_order", { ascending: true })
+          .order("is_featured", { ascending: false })
+          .order("start_date", { ascending: true, nullsFirst: false })
+          .limit(6);
+        setTrips((data ?? []) as Trip[]);
+      } finally {
+        setTripsLoading(false);
+      }
     })();
   }, []);
 
@@ -270,81 +287,106 @@ const Index = () => {
         }}
       />
       {/* HERO */}
-      <section className="relative min-h-[88vh] flex items-center overflow-hidden pb-14 sm:pb-20 md:pb-0">
+      <section className="relative flex min-h-[760px] items-center overflow-hidden pb-14 sm:min-h-[820px] sm:pb-20 md:min-h-[780px] md:pb-0 lg:min-h-[88vh]">
         <div className="absolute inset-0">
-          <img
-            src={hero}
-            alt="Mont Fuji et pagode au lever du soleil"
-            className="w-full h-full object-cover"
-            width={1920}
-            height={1280}
-            loading="eager"
-            decoding="async"
-            // @ts-expect-error fetchpriority is a valid HTML attribute
-            fetchpriority="high"
-          />
+          <picture className="block h-full w-full">
+            <source
+              type="image/webp"
+              media="(max-width: 640px)"
+              srcSet="/optimized/hero-fuji-mobile.webp"
+            />
+            <source
+              type="image/webp"
+              media="(max-width: 1024px)"
+              srcSet="/optimized/hero-fuji-tablet.webp"
+            />
+            <source
+              type="image/webp"
+              srcSet="/optimized/hero-fuji-desktop.webp"
+            />
+            <img
+              src="/optimized/hero-fuji-desktop.webp"
+              alt="Mont Fuji et pagode au lever du soleil"
+              className="h-full w-full object-cover"
+              width={1920}
+              height={1080}
+              loading="eager"
+              decoding="async"
+              // @ts-expect-error fetchpriority is a valid HTML attribute
+              fetchpriority="high"
+            />
+          </picture>
           <div className="absolute inset-0 bg-gradient-hero" />
         </div>
 
-        <div className="relative container-app z-10 py-16 sm:py-20 md:pb-48 lg:py-20 lg:pr-64 xl:pr-80">
-          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }} className="relative z-20 max-w-3xl lg:max-w-[46rem] xl:max-w-3xl">
-            <span className="badge-pill bg-white/15 backdrop-blur-md text-white border border-white/20 mb-6">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-              {c.hero_badge}
-            </span>
-            <h1 className="font-display text-6xl md:text-7xl lg:text-[5.5rem] leading-[1] text-white text-balance">
-              {(c.hero_title_l1 || "").split(",").map((part, i, arr) => (
-                <span key={i} className="text-6xl">
-                  {part.trim()}{i < arr.length - 1 ? "," : ""}
-                  <br/>
-                </span>
-              ))}
-              <span className="text-gradient text-6xl">{c.hero_title_l2}</span>
-            </h1>
-            <p className="mt-8 text-lg md:text-xl max-w-2xl text-white/90 leading-relaxed">
-              {c.hero_subtitle}
-            </p>
+        <div className="relative container-app z-10 py-16 sm:py-20 md:py-24 lg:py-20">
+          <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,46rem)_minmax(250px,1fr)] lg:gap-8 xl:grid-cols-[minmax(0,50rem)_minmax(320px,1fr)]">
+            <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }} className="relative z-20 max-w-3xl lg:max-w-[46rem] xl:max-w-3xl">
+              <span className="badge-pill bg-white/15 backdrop-blur-md text-white border border-white/20 mb-6">
+                <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+                {c.hero_badge}
+              </span>
+              <h1 className="font-display text-6xl md:text-7xl lg:text-[5.5rem] leading-[1] text-white text-balance">
+                {(c.hero_title_l1 || "").split(",").map((part, i, arr) => (
+                  <span key={i} className="text-6xl">
+                    {part.trim()}{i < arr.length - 1 ? "," : ""}
+                    <br/>
+                  </span>
+                ))}
+                <span className="text-gradient text-6xl">{c.hero_title_l2}</span>
+              </h1>
+              <p className="mt-8 text-lg md:text-xl max-w-2xl text-white/90 leading-relaxed">
+                {c.hero_subtitle}
+              </p>
+            </motion.div>
 
-            <div className="relative z-30 mt-10 flex flex-wrap items-center gap-4">
-              <Link to="/reserver" className="btn-primary text-base">
-                {c.hero_cta_primary} <ArrowRight className="w-5 h-5" />
-              </Link>
-              <Link to="/voyages" className="btn-ghost text-base !bg-white/10 !backdrop-blur-md !text-white !border-white/30 hover:!bg-white hover:!text-foreground">
-                {c.hero_cta_secondary}
-              </Link>
-            </div>
+            <motion.div
+              initial={{ opacity: 0, x: 44, y: 12 }}
+              animate={{ opacity: 1, x: 0, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.28 }}
+              className="relative z-20 flex min-h-[150px] items-center justify-center lg:min-h-[360px] lg:justify-start xl:min-h-[430px]"
+              aria-hidden
+            >
+              <img
+                src={shiba}
+                alt=""
+                className="block w-[145px] max-w-[45vw] drop-shadow-2xl pointer-events-none sm:w-[165px] md:w-[190px] lg:w-[300px] lg:max-w-none xl:w-[375px]"
+                style={{ animation: "fade-up 0.8s both, slow-zoom 6s ease-in-out infinite alternate" }}
+                width={768}
+                height={768}
+                loading="eager"
+                decoding="async"
+              />
+            </motion.div>
+          </div>
 
-            {/* trust badges */}
-            <div className="relative z-30 mt-12 flex flex-wrap items-center gap-6 text-white/80 text-sm">
-              <div className="flex items-center gap-2">
-                <div className="flex -space-x-2">
-                  {[1,2,3,4].map(i => <div key={i} className="w-8 h-8 rounded-full bg-gradient-sunset border-2 border-white" />)}
-                </div>
-                <span><strong className="text-white">{c.hero_trust_count}</strong> {c.hero_trust_text}</span>
+          <div className="relative z-30 mt-8 flex flex-wrap items-center gap-4 lg:mt-2">
+            <Link to="/reserver" className="btn-primary text-base">
+              {c.hero_cta_primary} <ArrowRight className="w-5 h-5" />
+            </Link>
+            <Link to="/voyages" className="btn-ghost text-base !bg-white/10 !backdrop-blur-md !text-white !border-white/30 hover:!bg-white hover:!text-foreground">
+              {c.hero_cta_secondary}
+            </Link>
+          </div>
+
+          {/* trust badges */}
+          <div className="relative z-30 mt-8 flex flex-wrap items-center gap-6 text-white/80 text-sm lg:mt-10">
+            <div className="flex items-center gap-2">
+              <div className="flex -space-x-2">
+                {[1,2,3,4].map(i => <div key={i} className="w-8 h-8 rounded-full bg-gradient-sunset border-2 border-white" />)}
               </div>
-              <a
-                href="https://maps.app.goo.gl/MY3hSdMrbv6pVZLm7?g_st=ac"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 hover:text-white transition-colors"
-              >
-                <div className="flex text-accent">{[1,2,3,4,5].map(i => <Star key={i} className="w-4 h-4 fill-current" />)}</div>
-                <span><strong className="text-white">{c.hero_rating_value}</strong> {c.hero_rating_text}</span>
-              </a>
+              <span><strong className="text-white">{c.hero_trust_count}</strong> {c.hero_trust_text}</span>
             </div>
-          </motion.div>
-
-          {/* Shiba mascot floating */}
-          <motion.img
-            src={shiba}
-            alt="Mascotte Shiba lejapon.ma"
-            initial={{ opacity: 0, x: 60, y: 20 }}
-            animate={{ opacity: 1, x: 0, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.4 }}
-            className="relative z-10 mt-8 ml-auto block w-[110px] max-w-[120px] translate-x-1 drop-shadow-2xl pointer-events-none sm:w-[118px] md:absolute md:-right-2 md:bottom-0 md:mt-0 md:w-36 md:max-w-none md:translate-x-4 lg:right-4 lg:bottom-6 lg:w-52 xl:right-16 xl:w-72"
-            style={{ animation: "fade-up 0.8s both, slow-zoom 6s ease-in-out infinite alternate" }}
-            width={768} height={768}
-          />
+            <a
+              href="https://maps.app.goo.gl/MY3hSdMrbv6pVZLm7?g_st=ac"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 hover:text-white transition-colors"
+            >
+              <div className="flex text-accent">{[1,2,3,4,5].map(i => <Star key={i} className="w-4 h-4 fill-current" />)}</div>
+              <span><strong className="text-white">{c.hero_rating_value}</strong> {c.hero_rating_text}</span>
+            </a>
+          </div>
         </div>
 
         {/* scroll hint */}
@@ -424,8 +466,16 @@ const Index = () => {
           </Link>
         </div>
 
-        {trips.length === 0 ? (
-          <p className="text-foreground/60">{c.trips_empty}</p>
+        {tripsLoading ? (
+          <div className="grid min-h-[650px] gap-6 sm:min-h-[700px] sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <TripCardSkeleton key={index} />
+            ))}
+          </div>
+        ) : trips.length === 0 ? (
+          <div className="flex min-h-[420px] items-center rounded-3xl border border-dashed border-border p-8">
+            <p className="text-foreground/60">{c.trips_empty}</p>
+          </div>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {trips.map((trip, i) => (
@@ -557,18 +607,22 @@ const Index = () => {
               {c.exp_link} <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {extras.slice(0, 6).map((e, i) => (
-              <article key={e.id} className="group rounded-3xl overflow-hidden bg-background/5 hover:bg-background/10 transition-all">
-                <div className="aspect-[16/10] overflow-hidden">
+          <div className="grid min-h-[380px] gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {extrasLoading ? (
+              Array.from({ length: 6 }).map((_, index) => <ExperienceSkeleton key={index} dark />)
+            ) : extras.slice(0, 6).map((e, i) => (
+              <article key={e.id} className="group overflow-hidden rounded-3xl bg-background/5 transition-all hover:bg-background/10">
+                <div className="aspect-[16/10] min-h-[190px] overflow-hidden">
                   <Img
                     src={e.image_url || extraFallbackImgs[i % extraFallbackImgs.length]}
                     alt={e.alt_text || e.name}
                     preset="card"
+                    width={800}
+                    height={500}
                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-silk"
                   />
                 </div>
-                <div className="p-6">
+                <div className="min-h-[145px] p-6">
                   <div className="flex items-baseline justify-between mb-2 gap-3">
                     <h3 className="font-display text-xl">{e.name}</h3>
                     <span className="text-accent font-semibold whitespace-nowrap">{fmtExtraPrice(e.price_mad)}</span>
@@ -577,8 +631,10 @@ const Index = () => {
                 </div>
               </article>
             ))}
-            {extras.length === 0 && (
-              <p className="text-background/60 text-sm col-span-full">{c.exp_empty}</p>
+            {!extrasLoading && extras.length === 0 && (
+              <div className="col-span-full flex min-h-[260px] items-center rounded-3xl border border-white/10 bg-white/[0.03] p-8">
+                <p className="text-sm text-background/60">{c.exp_empty}</p>
+              </div>
             )}
           </div>
         </div>
@@ -593,11 +649,11 @@ const Index = () => {
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
           {(c.testimonials ?? DEFAULT_TESTIMONIALS).map((tm: any, i: number) => (
             <motion.figure key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.4, delay: i * 0.08 }}
-              className="card-modern p-6 flex flex-col">
+              className="card-modern flex min-h-[260px] flex-col p-6">
               <div className="flex gap-0.5 text-accent mb-4">
                 {Array.from({ length: 5 }).map((_, j) => <Star key={j} className="w-4 h-4 fill-current" />)}
               </div>
-              <blockquote className="text-foreground/80 leading-relaxed mb-5 text-sm flex-1">« {tm.quote} »</blockquote>
+              <blockquote className="mb-5 min-h-[6.5rem] flex-1 overflow-hidden text-sm leading-relaxed text-foreground/80">« {tm.quote} »</blockquote>
               <figcaption className="flex items-center gap-3 pt-4 border-t border-border">
                 <div className="w-10 h-10 rounded-full bg-gradient-sunset flex items-center justify-center text-white font-semibold text-sm">
                   {(tm.name || "?")[0]}
@@ -610,7 +666,7 @@ const Index = () => {
             </motion.figure>
           ))}
         </div>
-        <div className="mt-10 rounded-3xl border border-border bg-background p-6 text-center shadow-soft">
+        <div className="mt-10 flex min-h-[190px] flex-col items-center justify-center rounded-3xl border border-border bg-background p-6 text-center shadow-soft">
           <h3 className="font-display text-2xl">{m.reviewsTitle}</h3>
           <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{m.reviewsText}</p>
           <a
@@ -649,8 +705,8 @@ const Index = () => {
 
       {/* FINAL CTA */}
       <section className="container-app pb-24 md:pb-32">
-        <div className="relative overflow-hidden rounded-3xl">
-          <img src={torii} alt="Torii vermillion" className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
+        <div className="relative min-h-[520px] overflow-hidden rounded-3xl">
+          <img src={torii} alt="Torii vermillion" className="absolute inset-0 w-full h-full object-cover" width={1920} height={1280} loading="lazy" decoding="async" />
           <div className="absolute inset-0 bg-gradient-to-r from-foreground/95 via-foreground/80 to-foreground/40" />
           <div className="relative px-8 md:px-16 py-20 md:py-28 text-background max-w-2xl">
             <span className="badge-pill bg-accent text-accent-foreground mb-6">
