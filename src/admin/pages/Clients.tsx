@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertTriangle, ChevronDown, Download, FileScan, Plus, Search, User, Upload, Trash2 } from "lucide-react";
 import { fmtDate } from "@/lib/format";
 import { fmtMAD } from "@/lib/format";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { LoyaltyBadge, tierLabel } from "../components/LoyaltyBadge";
@@ -157,6 +157,7 @@ const fadeIn = {
 
 export default function Clients() {
   const { id: routeClientId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, isAdmin, isSuperAdmin, session, roles, can } = useAuth();
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState("");
@@ -183,6 +184,9 @@ export default function Clients() {
   const [rewards, setRewards] = useState<any[]>([]);
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
+  const [clientPayments, setClientPayments] = useState<any[]>([]);
+  const [clientVisas, setClientVisas] = useState<any[]>([]);
+  const [clientDocuments, setClientDocuments] = useState<any[]>([]);
 
   const fetchClients = async () => {
     const { data, error } = await supabase
@@ -324,18 +328,37 @@ export default function Clients() {
 
   const openClient = async (c: any) => {
     setSelected(c);
-    const [{ data: n }, { data: r }, { data: h }] = await Promise.all([
+    const [{ data: n }, { data: r }, { data: h }, visaResult] = await Promise.all([
       supabase.from("client_notes").select("*").eq("client_id", c.id).order("created_at", { ascending: false }),
       supabase.from("client_rewards" as any).select("*").eq("client_id", c.id).order("created_at", { ascending: false }),
       supabase
         .from("bookings")
-        .select("id, reference, status, total_amount_mad, paid_amount_mad, created_at, trip_id, trips:trip_id(title, season, start_date), booking_extras(name_snapshot, qty)")
+        .select("id, reference, status, total_amount_mad, paid_amount_mad, created_at, trip_id, trips:trip_id(title, season, start_date, end_date), booking_extras(name_snapshot, qty)")
+        .eq("client_id", c.id)
+        .order("created_at", { ascending: false }),
+      (supabase as any)
+        .from("visa_applications")
+        .select("id, reference, status, selected_trip_id, trip_id, created_at")
         .eq("client_id", c.id)
         .order("created_at", { ascending: false }),
     ]);
     setNotes(n ?? []);
     setRewards((r as any) ?? []);
-    setHistory((h as any) ?? []);
+    const bookingRows = (h as any) ?? [];
+    setHistory(bookingRows);
+    const bookingIds = bookingRows.map((booking: any) => booking.id);
+    if (bookingIds.length) {
+      const [{ data: paymentRows }, { data: docRows }] = await Promise.all([
+        supabase.from("payments").select("*, bookings(reference, trip_id)").in("booking_id", bookingIds).order("created_at", { ascending: false }),
+        (supabase as any).from("booking_documents").select("*").in("booking_id", bookingIds).order("created_at", { ascending: false }),
+      ]);
+      setClientPayments(paymentRows ?? []);
+      setClientDocuments(docRows ?? []);
+    } else {
+      setClientPayments([]);
+      setClientDocuments([]);
+    }
+    setClientVisas(visaResult.data ?? []);
   };
 
   const openClientById = async (id: string) => {
@@ -353,6 +376,13 @@ export default function Clients() {
     if (!routeClientId || selected?.id === routeClientId) return;
     openClientById(routeClientId);
   }, [routeClientId]);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") return;
+    setEdit(empty);
+    setOpen(true);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const save = async () => {
     const payload = normalizeClientDateFields({
@@ -889,6 +919,22 @@ export default function Clients() {
                   </div>
                 </details>
               )}
+              <div className="mb-4 rounded-xl border border-border bg-muted/20 p-3 text-xs">
+                <p className="mb-2 font-semibold uppercase text-muted-foreground">Passeport</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><p className="text-muted-foreground">N° passeport</p><p className="font-medium">{selected.passport_number || selectedPassportOcr.passport_number || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Nationalité</p><p className="font-medium">{selected.nationality || selectedPassportOcr.nationality || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Naissance</p><p className="font-medium">{selected.birthdate ? fmtDate(selected.birthdate) : selectedPassportOcr.birthdate ? fmtDate(selectedPassportOcr.birthdate) : "—"}</p></div>
+                  <div><p className="text-muted-foreground">Sexe</p><p className="font-medium">{selected.sex || selectedPassportOcr.sex || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Émission</p><p className="font-medium">{selected.passport_issue_date ? fmtDate(selected.passport_issue_date) : selectedPassportOcr.passport_issue_date ? fmtDate(selectedPassportOcr.passport_issue_date) : "—"}</p></div>
+                  <div><p className="text-muted-foreground">Expiration</p><p className="font-medium">{selected.passport_expiry ? fmtDate(selected.passport_expiry) : selectedPassportOcr.passport_expiry_date ? fmtDate(selectedPassportOcr.passport_expiry_date) : "—"}</p></div>
+                  <div><p className="text-muted-foreground">CIN</p><p className="font-medium">{selectedPassportOcr.cin || selectedPassportOcr.national_id_number || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Autorité</p><p className="font-medium">{selectedPassportOcr.passport_authority || "—"}</p></div>
+                  {selected.passport_file_path && (
+                    <div className="col-span-2"><p className="text-muted-foreground">Image passeport</p><p className="truncate font-mono text-[10px]">{selected.passport_file_path}</p></div>
+                  )}
+                </div>
+              </div>
               {checkPassportExpiry(selected.passport_expiry).warning && (
                 <div className="mb-4 flex items-start gap-2 rounded-xl border border-orange-300 bg-orange-50 p-3 text-xs text-orange-900">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -933,6 +979,57 @@ export default function Clients() {
                       </Link>
                     );
                   })}
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <Label className="text-xs mb-2 block">Paiements</Label>
+                <div className="space-y-2 max-h-52 overflow-y-auto">
+                  {clientPayments.length === 0 && <p className="text-xs text-muted-foreground">Aucun paiement lié.</p>}
+                  {clientPayments.map((payment: any) => (
+                    <Link key={payment.id} to={`/admin/bookings/${payment.booking_id}`} className="block rounded-lg bg-muted p-3 text-xs transition-colors hover:bg-muted/70">
+                      <div className="flex justify-between gap-2">
+                        <p className="font-medium">{fmtMAD(payment.amount_mad)}</p>
+                        <span className="text-muted-foreground">{payment.status}</span>
+                      </div>
+                      <p className="text-muted-foreground">{payment.bookings?.reference || "Réservation"} · {fmtDate(payment.paid_at || payment.created_at)}</p>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <Label className="text-xs mb-2 block">Demandes visa</Label>
+                <div className="space-y-2 max-h-52 overflow-y-auto">
+                  {clientVisas.length === 0 && <p className="text-xs text-muted-foreground">Aucune demande visa liée.</p>}
+                  {clientVisas.map((visa: any) => (
+                    <Link key={visa.id} to={`/admin/visa/${visa.id}`} className="block rounded-lg bg-muted p-3 text-xs transition-colors hover:bg-muted/70">
+                      <div className="flex justify-between gap-2">
+                        <p className="font-medium">{visa.reference || "Dossier visa"}</p>
+                        <span className="text-muted-foreground">{visa.status}</span>
+                      </div>
+                      <p className="text-muted-foreground">Créé le {fmtDate(visa.created_at)}</p>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <Label className="text-xs mb-2 block">Documents</Label>
+                <div className="space-y-2 max-h-52 overflow-y-auto">
+                  {clientDocuments.length === 0 && !selected.passport_file_path && <p className="text-xs text-muted-foreground">Aucun document lié.</p>}
+                  {selected.passport_file_path && (
+                    <div className="rounded-lg bg-muted p-3 text-xs">
+                      <p className="font-medium">Scan passeport</p>
+                      <p className="truncate font-mono text-[10px] text-muted-foreground">{selected.passport_file_path}</p>
+                    </div>
+                  )}
+                  {clientDocuments.map((doc: any) => (
+                    <div key={doc.id} className="rounded-lg bg-muted p-3 text-xs">
+                      <p className="font-medium">{doc.title || doc.number || doc.file_name || doc.kind || doc.document_type}</p>
+                      <p className="truncate font-mono text-[10px] text-muted-foreground">{doc.storage_path}</p>
+                    </div>
+                  ))}
                 </div>
               </div>
 

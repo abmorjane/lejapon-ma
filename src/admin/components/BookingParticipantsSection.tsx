@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Plus, UserPlus, Trash2, Pencil, Save, X, ExternalLink, AlertTriangle, ChevronDown } from "lucide-react";
+import { Plus, UserPlus, Trash2, Pencil, Save, X, ExternalLink, AlertTriangle, ChevronDown, UserCheck } from "lucide-react";
 import { AddTravelerDialog } from "./AddTravelerDialog";
 import { LinkExistingClientDialog } from "./LinkExistingClientDialog";
 import { QuickActions } from "./QuickActions";
@@ -31,16 +31,34 @@ type Props = {
   bookingId: string;
   tripId?: string | null;
   expectedTravelers: number;
+  onChanged?: () => void;
 };
 
-export function BookingParticipantsSection({ bookingId, tripId, expectedTravelers }: Props) {
+export function BookingParticipantsSection({ bookingId, tripId, expectedTravelers, onChanged }: Props) {
   const [list, setList] = useState<any[]>([]);
+  const [booking, setBooking] = useState<any>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<any>({});
   const [openAdd, setOpenAdd] = useState(false);
   const [openLink, setOpenLink] = useState(false);
+  const [choosingResponsible, setChoosingResponsible] = useState(false);
 
   const load = async () => {
+    const bookingWithMetadata = await (supabase as any)
+      .from("bookings")
+      .select("id,client_id,contact_name,contact_email,contact_phone,trip_id,metadata")
+      .eq("id", bookingId)
+      .maybeSingle();
+    if (bookingWithMetadata.error && /metadata/i.test(bookingWithMetadata.error.message ?? "")) {
+      const { data } = await supabase
+        .from("bookings")
+        .select("id,client_id,contact_name,contact_email,contact_phone,trip_id")
+        .eq("id", bookingId)
+        .maybeSingle();
+      setBooking(data ?? null);
+    } else {
+      setBooking(bookingWithMetadata.data ?? null);
+    }
     const { data } = await supabase
       .from("booking_participants")
       .select("*")
@@ -50,6 +68,72 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
     setList(data ?? []);
   };
   useEffect(() => { load(); }, [bookingId]);
+  useEffect(() => {
+    if (!editing) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [editing]);
+
+  const normalizePassport = (value?: string | null) => String(value ?? "").replace(/[\s-]+/g, "").toUpperCase();
+  const normalizeText = (value?: string | null) => String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+  const normalizeName = (p: any) => normalizeText(`${p.first_name ?? ""} ${p.last_name ?? ""}`);
+  const normalizeEmail = (value?: string | null) => String(value ?? "").trim().toLowerCase();
+  const normalizePhone = (value?: string | null) => String(value ?? "").replace(/[^\d+]/g, "");
+  const splitContactName = (name?: string | null) => {
+    const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean);
+    return { first_name: parts[0] ?? "", last_name: parts.slice(1).join(" ") };
+  };
+  const bookingMetadata = (booking?.metadata && typeof booking.metadata === "object") ? booking.metadata : {};
+  const responsibleDeleted = bookingMetadata.responsible_traveller_deleted === true;
+  const participantMatchesBookingContact = (participant: any) => {
+    if (!booking) return false;
+    const sameClient = Boolean(booking.client_id && participant.client_id === booking.client_id);
+    const sameEmail = Boolean(normalizeEmail(booking.contact_email) && normalizeEmail(participant.email) === normalizeEmail(booking.contact_email));
+    const samePhone = Boolean(normalizePhone(booking.contact_phone) && normalizePhone(participant.phone) === normalizePhone(booking.contact_phone));
+    const sameName = Boolean(normalizeText(booking.contact_name) && normalizeName(participant) === normalizeText(booking.contact_name));
+    return sameClient || sameEmail || samePhone || sameName;
+  };
+  const hasResponsibleEquivalent = (excludeId?: string) =>
+    list.some((participant) => participant.id !== excludeId && participantMatchesBookingContact(participant));
+  const updateBookingMetadata = async (patch: Record<string, unknown>) => {
+    const nextMetadata = { ...bookingMetadata, ...patch };
+    const { data, error } = await (supabase as any)
+      .from("bookings")
+      .update({ metadata: nextMetadata })
+      .eq("id", bookingId)
+      .select("id,client_id,contact_name,contact_email,contact_phone,trip_id,metadata")
+      .maybeSingle();
+    if (error) {
+      toast.error(/metadata/i.test(error.message ?? "") ? "Migration SQL requise : bookings.metadata est absent." : error.message);
+      return false;
+    }
+    setBooking(data ?? { ...booking, metadata: nextMetadata });
+    return true;
+  };
+
+  const leadCount = list.filter((participant) => participant.is_lead).length;
+  const hasResponsible = leadCount > 0;
+  const duplicateWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    const seen = new Map<string, any>();
+    const check = (key: string, label: string, participant: any) => {
+      if (!key) return;
+      const previous = seen.get(`${label}:${key}`);
+      if (previous) warnings.push(`${label}: ${[participant.first_name, participant.last_name].filter(Boolean).join(" ")} ressemble à ${[previous.first_name, previous.last_name].filter(Boolean).join(" ")}`);
+      else seen.set(`${label}:${key}`, participant);
+    };
+    list.forEach((participant) => {
+      check(normalizePassport(participant.passport_no), "Passeport identique", participant);
+      check(participant.client_id ?? "", "Même fiche CRM", participant);
+      if (normalizeName(participant) && participant.date_of_birth) check(`${normalizeName(participant)}|${participant.date_of_birth}`, "Même nom + naissance", participant);
+    });
+    if (leadCount > 1) warnings.push(`${leadCount} responsables détectés`);
+    return warnings;
+  }, [list, leadCount]);
 
   const startEdit = (p: any) => { setEditing(p.id); setDraft({ ...p }); };
   const cancelEdit = () => { setEditing(null); setDraft({}); };
@@ -60,16 +144,162 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
     const { error } = await supabase.from("booking_participants").update(clean).eq("id", id);
     if (error) return toast.error(error.message);
     toast.success("Voyageur mis à jour");
-    setEditing(null); load();
+    setEditing(null);
+    load();
+    onChanged?.();
   };
 
   const remove = async (p: any) => {
     if (p.is_lead && !confirm("Ce voyageur est le responsable de réservation. Supprimer quand même ?")) return;
     if (!p.is_lead && !confirm("Supprimer ce voyageur de la réservation ?")) return;
+    await supabase.from("room_assignments").delete().eq("participant_id", p.id);
+    await supabase.from("booking_participant_activities").delete().eq("participant_id", p.id);
     const { error } = await supabase.from("booking_participants").delete().eq("id", p.id);
     if (error) return toast.error(error.message);
+    if (p.is_lead) {
+      await updateBookingMetadata({ responsible_traveller_deleted: true, responsible_traveller_deleted_at: new Date().toISOString() });
+    }
+    if (p.client_id) {
+      const { count } = await supabase
+        .from("booking_participants")
+        .select("id", { count: "exact", head: true })
+        .eq("booking_id", bookingId)
+        .eq("client_id", p.client_id);
+      const { data: booking } = await supabase.from("bookings").select("client_id").eq("id", bookingId).maybeSingle();
+      if ((count ?? 0) === 0 && booking?.client_id === p.client_id) {
+        await supabase.from("bookings").update({ client_id: null } as any).eq("id", bookingId);
+      }
+    }
+    const { count: stillExists } = await supabase
+      .from("booking_participants")
+      .select("id", { count: "exact", head: true })
+      .eq("id", p.id);
+    if ((stillExists ?? 0) > 0) return toast.error("La suppression n'a pas été persistée.");
     toast.success("Voyageur retiré");
     load();
+    onChanged?.();
+  };
+
+  const restoreResponsible = async () => {
+    if (!booking) return toast.error("Réservation introuvable.");
+    if (hasResponsibleEquivalent()) {
+      await updateBookingMetadata({ responsible_traveller_deleted: false, responsible_traveller_restored_at: new Date().toISOString() });
+      toast.info("Le responsable est déjà représenté par un voyageur existant.");
+      load();
+      onChanged?.();
+      return;
+    }
+    const name = splitContactName(booking.contact_name);
+    const { error } = await supabase.from("booking_participants").insert({
+      booking_id: bookingId,
+      trip_id: tripId || booking.trip_id || null,
+      first_name: name.first_name,
+      last_name: name.last_name,
+      email: booking.contact_email || null,
+      phone: booking.contact_phone || null,
+      client_id: booking.client_id || null,
+      relation: "self",
+      is_lead: true,
+    } as any);
+    if (error) return toast.error(error.message);
+    await updateBookingMetadata({ responsible_traveller_deleted: false, responsible_traveller_restored_at: new Date().toISOString() });
+    toast.success("Responsable restauré.");
+    load();
+    onChanged?.();
+  };
+
+  const setAsResponsible = async (participant: any) => {
+    if (!participant?.id) return;
+    const fullName = [participant.first_name, participant.last_name].filter(Boolean).join(" ").trim();
+    const patch: any = {};
+    const hasEmptyContactField = !booking?.contact_name || !booking?.contact_email || !booking?.contact_phone;
+    const contactIsDifferent =
+      (fullName && fullName !== booking?.contact_name) ||
+      (participant.email && participant.email !== booking?.contact_email) ||
+      (participant.phone && participant.phone !== booking?.contact_phone);
+
+    if (hasEmptyContactField || (contactIsDifferent && confirm("Mettre à jour le contact de réservation avec ce voyageur ?"))) {
+      if (!booking?.contact_name || contactIsDifferent) patch.contact_name = fullName || booking?.contact_name;
+      if ((!booking?.contact_email || contactIsDifferent) && participant.email) patch.contact_email = participant.email;
+      if ((!booking?.contact_phone || contactIsDifferent) && participant.phone) patch.contact_phone = participant.phone;
+    }
+    if (participant.client_id && !booking?.client_id) patch.client_id = participant.client_id;
+
+    const { error: unsetError } = await supabase
+      .from("booking_participants")
+      .update({ is_lead: false } as any)
+      .eq("booking_id", bookingId)
+      .neq("id", participant.id);
+    if (unsetError) return toast.error(unsetError.message);
+
+    const { error: setError } = await supabase
+      .from("booking_participants")
+      .update({ is_lead: true, relation: participant.relation || "self" } as any)
+      .eq("id", participant.id);
+    if (setError) return toast.error(setError.message);
+
+    const nextMetadata = {
+      ...bookingMetadata,
+      responsible_traveller_deleted: false,
+      responsible_traveller_selected_at: new Date().toISOString(),
+      responsible_traveller_participant_id: participant.id,
+    };
+    const bookingPatch = { ...patch, metadata: nextMetadata };
+    const { data, error: bookingError } = await (supabase as any)
+      .from("bookings")
+      .update(bookingPatch)
+      .eq("id", bookingId)
+      .select("id,client_id,contact_name,contact_email,contact_phone,trip_id,metadata")
+      .maybeSingle();
+    if (bookingError) return toast.error(bookingError.message);
+
+    setBooking(data ?? { ...booking, ...bookingPatch });
+    setChoosingResponsible(false);
+    toast.success("Responsable défini.");
+    load();
+    onChanged?.();
+  };
+
+  const repairDuplicates = async () => {
+    if (!confirm("Nettoyer les doublons de voyageurs pour cette réservation ?")) return;
+    const grouped = new Map<string, any[]>();
+    list.forEach((participant) => {
+      const keys = [
+        normalizePassport(participant.passport_no) ? `passport:${normalizePassport(participant.passport_no)}` : "",
+        participant.client_id ? `client:${participant.client_id}` : "",
+        normalizeName(participant) && participant.date_of_birth ? `name_birth:${normalizeName(participant)}|${participant.date_of_birth}` : "",
+      ].filter(Boolean);
+      keys.forEach((key) => grouped.set(key, [...(grouped.get(key) ?? []), participant]));
+    });
+    const duplicates = new Set<string>();
+    grouped.forEach((participants) => {
+      if (participants.length < 2) return;
+      const keep = [...participants].sort((a, b) => {
+        const score = (item: any) => (item.client_id ? 8 : 0) + (item.passport_no ? 2 : 0) + (item.is_lead ? 1 : 0);
+        const scoreDiff = score(b) - score(a);
+        if (scoreDiff) return scoreDiff;
+        return new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime();
+      })[0];
+      participants.forEach((participant) => {
+        if (participant.id !== keep.id) duplicates.add(participant.id);
+      });
+    });
+    if (duplicates.size === 0) {
+      toast.info("Aucun doublon détecté.");
+      return;
+    }
+    const ids = Array.from(duplicates);
+    const deletedLeadFallback = list.some((participant) => ids.includes(participant.id) && participant.is_lead);
+    await supabase.from("room_assignments").delete().in("participant_id", ids);
+    await supabase.from("booking_participant_activities").delete().in("participant_id", ids);
+    const { error } = await supabase.from("booking_participants").delete().in("id", ids);
+    if (error) return toast.error(error.message);
+    if (deletedLeadFallback) {
+      await updateBookingMetadata({ responsible_traveller_deleted: true, responsible_traveller_deleted_at: new Date().toISOString() });
+    }
+    toast.success(`${ids.length} doublon(s) supprimé(s).`);
+    load();
+    onChanged?.();
   };
 
   const filled = list.length;
@@ -84,17 +314,56 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
           <div className="mt-2 grid grid-cols-3 gap-2 text-xs sm:flex sm:flex-wrap">
             <Badge variant="outline">Prévus : {expectedTravelers}</Badge>
             <Badge variant="outline">Renseignés : {filled}</Badge>
+            <Badge variant="outline">Stockés DB : {list.length}</Badge>
             <Badge variant={remaining === 0 ? "default" : "secondary"}>Restant : {remaining}</Badge>
             {overflow && (
               <Badge variant="destructive" className="gap-1"><AlertTriangle className="w-3 h-3" /> Dépassement</Badge>
             )}
+            {duplicateWarnings.length > 0 && (
+              <Badge variant="destructive" className="gap-1"><AlertTriangle className="w-3 h-3" /> Doublons possibles</Badge>
+            )}
+            {responsibleDeleted && list.length === 0 && (
+              <Badge variant="secondary">Responsable supprimé</Badge>
+            )}
+            {!hasResponsible && list.length > 0 && (
+              <Badge variant="destructive" className="gap-1"><AlertTriangle className="w-3 h-3" /> Aucun responsable</Badge>
+            )}
           </div>
         </div>
         <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:flex">
+          {!hasResponsible && list.length > 0 && (
+            <Button size="sm" variant="outline" className="min-h-11" onClick={() => setChoosingResponsible(true)}>
+              <UserCheck className="w-4 h-4" /> Choisir un responsable
+            </Button>
+          )}
+          {responsibleDeleted && list.length === 0 && <Button size="sm" variant="outline" className="min-h-11" onClick={restoreResponsible}>Restaurer responsable</Button>}
+          <Button size="sm" variant="outline" className="min-h-11" onClick={repairDuplicates}>Nettoyer les doublons</Button>
           <Button size="sm" variant="outline" className="min-h-11" onClick={() => setOpenLink(true)}><UserPlus className="w-4 h-4" /> Associer</Button>
           <Button size="sm" className="min-h-11" onClick={() => setOpenAdd(true)}><Plus className="w-4 h-4" /> Nouveau</Button>
         </div>
       </div>
+
+      {editing && (
+        <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          Modifications non enregistrées. Utilisez “Enregistrer les modifications” avant de quitter.
+        </div>
+      )}
+
+      {!hasResponsible && list.length > 0 && (
+        <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          <p className="font-medium">Aucun responsable défini</p>
+          <p className="mt-1">Choisissez le voyageur qui doit servir de contact principal pour cette réservation.</p>
+        </div>
+      )}
+
+      {duplicateWarnings.length > 0 && (
+        <div className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          <p className="font-medium">Diagnostics intégrité</p>
+          <ul className="mt-1 list-disc space-y-1 pl-4">
+            {duplicateWarnings.slice(0, 4).map((warning, index) => <li key={index}>{warning}</li>)}
+          </ul>
+        </div>
+      )}
 
       {list.length === 0 && <p className="text-sm text-muted-foreground">Aucun voyageur renseigné.</p>}
 
@@ -136,7 +405,7 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                 <Textarea className="sm:col-span-2 md:col-span-4" placeholder="Adresse complète" value={draft.address ?? ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
                 <div className="flex gap-1 justify-end sm:col-span-2 md:col-span-4">
                   <Button size="sm" variant="outline" className="min-h-11" onClick={cancelEdit}><X className="w-4 h-4" /></Button>
-                  <Button size="sm" className="min-h-11" onClick={saveEdit}><Save className="w-4 h-4" /> Enregistrer</Button>
+                  <Button size="sm" className="min-h-11" onClick={saveEdit}><Save className="w-4 h-4" /> Enregistrer les modifications</Button>
                 </div>
               </div>
             );
@@ -162,7 +431,17 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                   {p.profession || "—"} · {maritalStatusLabel(p.marital_status)}
                 </p>
               </div>
-              <div className="flex shrink-0 gap-1">
+              <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                {!p.is_lead && (
+                  <Button
+                    size="sm"
+                    variant={choosingResponsible ? "default" : "outline"}
+                    className="min-h-11"
+                    onClick={() => setAsResponsible(p)}
+                  >
+                    <UserCheck className="w-4 h-4" /> Définir comme responsable
+                  </Button>
+                )}
                 <Button size="icon" variant="ghost" className="h-11 w-11" onClick={() => startEdit(p)}><Pencil className="w-4 h-4" /></Button>
                 <Button size="icon" variant="ghost" className="h-11 w-11" onClick={() => remove(p)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
               </div>
@@ -186,8 +465,8 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
         })}
       </div>
 
-      <AddTravelerDialog open={openAdd} onOpenChange={setOpenAdd} bookingId={bookingId} tripId={tripId} onSaved={load} />
-      <LinkExistingClientDialog open={openLink} onOpenChange={setOpenLink} bookingId={bookingId} tripId={tripId} onSaved={load} />
+      <AddTravelerDialog open={openAdd} onOpenChange={setOpenAdd} bookingId={bookingId} tripId={tripId} onSaved={() => { load(); onChanged?.(); }} />
+      <LinkExistingClientDialog open={openLink} onOpenChange={setOpenLink} bookingId={bookingId} tripId={tripId} onSaved={() => { load(); onChanged?.(); }} />
     </section>
   );
 }

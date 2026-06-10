@@ -14,6 +14,19 @@ const DEFAULT_HOTELS = [
   "Tokyo 1er séjour", "Kamakura", "Hakone", "Kyoto", "Osaka", "Tokyo 2ème séjour",
 ];
 const ROOM_TYPES = ["Single", "Twin", "Double", "Triple"];
+const roomLabel = (room: any) => String(room?.room_number ?? room?.room_name ?? "").trim();
+const roomNumberValue = (room: any) => {
+  const match = roomLabel(room).match(/\d+(?:[.,]\d+)?/);
+  return match ? Number(match[0].replace(",", ".")) : Number.POSITIVE_INFINITY;
+};
+const compareRoomsNaturally = (a: any, b: any) => {
+  const numericDiff = roomNumberValue(a) - roomNumberValue(b);
+  if (numericDiff !== 0 && Number.isFinite(numericDiff)) return numericDiff;
+  return roomLabel(a).localeCompare(roomLabel(b), "fr", { numeric: true, sensitivity: "base" })
+    || String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
+    || String(a.id ?? "").localeCompare(String(b.id ?? ""));
+};
+const sortRoomsNaturally = (roomList: any[]) => [...roomList].sort(compareRoomsNaturally);
 
 export default function OpsRooms({ trip }: { trip: any }) {
   const [hotels, setHotels] = useState<any[]>([]);
@@ -106,8 +119,8 @@ export default function OpsRooms({ trip }: { trip: any }) {
     load();
   };
 
-  const hotelRooms = rooms.filter((r) => r.trip_hotel_id === activeHotel);
-  const getHotelRooms = (hotelId: string) => rooms.filter((r) => r.trip_hotel_id === hotelId);
+  const hotelRooms = sortRoomsNaturally(rooms.filter((r) => r.trip_hotel_id === activeHotel));
+  const getHotelRooms = (hotelId: string) => sortRoomsNaturally(rooms.filter((r) => r.trip_hotel_id === hotelId));
   const openCopyRooms = (sourceHotelId = activeHotel) => {
     const fallbackTarget = hotels.find((hotel) => hotel.id !== sourceHotelId)?.id ?? "";
     setCopyForm({
@@ -151,7 +164,7 @@ export default function OpsRooms({ trip }: { trip: any }) {
   const doExportAll = () => {
     const out: any[] = [];
     for (const h of hotels) {
-      const hr = rooms.filter((r) => r.trip_hotel_id === h.id);
+      const hr = getHotelRooms(h.id);
       for (const r of hr) {
         const ass = assignments.filter((a) => a.room_id === r.id);
         for (const a of ass) {
@@ -172,13 +185,7 @@ export default function OpsRooms({ trip }: { trip: any }) {
     if (!sourceHotelId || !targetHotelId) return toast.error("Sélectionnez un hôtel source et un hôtel cible.");
     if (sourceHotelId === targetHotelId) return toast.error("La source et la cible doivent être deux hôtels différents.");
 
-    const sourceRooms = getHotelRooms(sourceHotelId)
-      .slice()
-      .sort((a, b) =>
-        String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")) ||
-        String(a.room_number ?? "").localeCompare(String(b.room_number ?? ""), "fr", { numeric: true }) ||
-        String(a.id ?? "").localeCompare(String(b.id ?? ""))
-      );
+    const sourceRooms = getHotelRooms(sourceHotelId);
     const targetRooms = getHotelRooms(targetHotelId);
     if (sourceRooms.length === 0) return toast.error("Aucune chambre à copier dans l'hôtel source.");
 
@@ -257,7 +264,7 @@ export default function OpsRooms({ trip }: { trip: any }) {
     }
   };
 
-  const activeHotelRoomIds = rooms.filter((r) => r.trip_hotel_id === activeHotel).map((r) => r.id);
+  const activeHotelRoomIds = getHotelRooms(activeHotel).map((r) => r.id);
   const unassignedParticipants = participants.filter((p) => !assignments.some((a) => a.participant_id === p.id && activeHotelRoomIds.includes(a.room_id)));
 
   return (
@@ -371,7 +378,9 @@ export default function OpsRooms({ trip }: { trip: any }) {
           <TabsList className="flex-wrap h-auto mb-4">
             {hotels.map((h) => <TabsTrigger key={h.id} value={h.id}>{h.name}</TabsTrigger>)}
           </TabsList>
-          {hotels.map((h) => (
+          {hotels.map((h) => {
+            const currentHotelRooms = getHotelRooms(h.id);
+            return (
             <TabsContent key={h.id} value={h.id}>
               <div className="flex justify-between items-center mb-3">
                 <div>
@@ -405,8 +414,8 @@ export default function OpsRooms({ trip }: { trip: any }) {
               </div>
 
               <div className="space-y-3">
-                {hotelRooms.length === 0 && <p className="text-sm text-muted-foreground">Aucune chambre dans cet hôtel.</p>}
-                {hotelRooms.map((r) => {
+                {currentHotelRooms.length === 0 && <p className="text-sm text-muted-foreground">Aucune chambre dans cet hôtel.</p>}
+                {currentHotelRooms.map((r) => {
                   const ass = assignments.filter((a) => a.room_id === r.id);
                   return (
                     <div key={r.id} className="bg-background border border-border rounded-xl p-4">
@@ -449,7 +458,8 @@ export default function OpsRooms({ trip }: { trip: any }) {
                 })}
               </div>
             </TabsContent>
-          ))}
+          );
+          })}
         </Tabs>
       )}
     </div>

@@ -11,13 +11,14 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { StatusBadge } from "../components/StatusBadge";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck, Save } from "lucide-react";
+import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck, Save, Upload } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { generateQuotePdf, generateReceiptPdf, downloadBytes } from "@/lib/booking-pdfs";
 import { PdfPreviewDialog } from "../components/PdfPreviewDialog";
 import { EditBookingDialog } from "../components/EditBookingDialog";
 import { useNavigate } from "react-router-dom";
 import { BookingParticipantsSection } from "../components/BookingParticipantsSection";
+import { LinkExistingClientDialog } from "../components/LinkExistingClientDialog";
 import { QuickActions } from "../components/QuickActions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, useReducedMotion } from "framer-motion";
@@ -50,6 +51,7 @@ export default function BookingDetail() {
   const [preview, setPreview] = useState<null | { kind: "quote" | "receipt"; payment?: any }>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [linkClientOpen, setLinkClientOpen] = useState(false);
   const [auditLog, setAuditLog] = useState<any[]>([]);
   const [messageExpanded, setMessageExpanded] = useState(false);
   const [agency, setAgency] = useState<AgencySettings | null>(null);
@@ -59,6 +61,7 @@ export default function BookingDetail() {
   const [selectedAgencyUserId, setSelectedAgencyUserId] = useState("");
   const [assignmentNotes, setAssignmentNotes] = useState("");
   const [assignmentBusy, setAssignmentBusy] = useState(false);
+  const [docDraft, setDocDraft] = useState({ type: "autre", title: "", notes: "", file: null as File | null });
   const canEdit = isAdmin || isSuperAdmin || roles.includes("manager");
   const reduceMotion = useReducedMotion();
 
@@ -387,6 +390,49 @@ export default function BookingDetail() {
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
+  const uploadBookingDocument = async () => {
+    if (!b || !docDraft.file) return toast.error("Choisissez un fichier.");
+    setBusy(true);
+    try {
+      const file = docDraft.file;
+      const safeName = file.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.]+/g, "-");
+      const path = `${b.id}/documents/${Date.now()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage.from("booking-docs").upload(path, file, {
+        upsert: false,
+        contentType: file.type || "application/octet-stream",
+      });
+      if (uploadError) throw uploadError;
+      const { error } = await (supabase as any).from("booking_documents").insert({
+        booking_id: b.id,
+        kind: docDraft.type,
+        document_type: docDraft.type,
+        title: docDraft.title || file.name,
+        file_name: file.name,
+        notes: docDraft.notes || null,
+        number: docDraft.title || file.name,
+        storage_path: path,
+        created_by: user?.id ?? null,
+      });
+      if (error) throw error;
+      setDocDraft({ type: "autre", title: "", notes: "", file: null });
+      toast.success("Document ajouté.");
+      load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Upload impossible.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteBookingDocument = async (doc: any) => {
+    if (!confirm("Supprimer ce document ?")) return;
+    const { error } = await (supabase as any).from("booking_documents").delete().eq("id", doc.id);
+    if (error) return toast.error(error.message);
+    if (doc.storage_path) void supabase.storage.from("booking-docs").remove([doc.storage_path]);
+    toast.success("Document supprimé.");
+    load();
+  };
+
   const totalTravelers = Number(b.num_adults || 0) + Number(b.num_children || 0);
   const quoteSummary = summarizeQuoteAdjustments(quoteAdjustments, Number(b.total_amount_mad || 0));
   const displayedQuoteTotal = quoteSummary.finalTotal;
@@ -448,6 +494,17 @@ export default function BookingDetail() {
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">Résumé réservation</p>
               <h2 className="mt-1 truncate font-display text-xl">{b.contact_name}</h2>
               <p className="truncate text-xs text-muted-foreground">{b.reference} · {b.trips?.title ?? "Voyage non défini"}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {b.client_id ? (
+                  <Button asChild size="sm" variant="outline" className="h-8">
+                    <Link to={`/admin/clients/${b.client_id}`}>Fiche client liée</Link>
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" className="h-8" onClick={() => setLinkClientOpen(true)}>
+                    Associer à un client
+                  </Button>
+                )}
+              </div>
             </div>
             <StatusBadge value={b.status} />
           </div>
@@ -529,6 +586,7 @@ export default function BookingDetail() {
             bookingId={b.id}
             tripId={b.trip_id}
             expectedTravelers={Number(b.num_adults || 0) + Number(b.num_children || 0)}
+            onChanged={load}
           />
 
           <Card className="rounded-2xl shadow-sm">
@@ -746,7 +804,7 @@ export default function BookingDetail() {
 
           <Card className="rounded-2xl shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="font-display text-lg">Documents PDF</CardTitle>
+              <CardTitle className="font-display text-lg">Documents réservation</CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
             <div className="grid grid-cols-2 gap-2 mb-4">
@@ -763,17 +821,42 @@ export default function BookingDetail() {
                 <Eye className="w-4 h-4" /> Aperçu
               </Button>
             </div>
+            <div className="mb-4 space-y-2 rounded-xl border border-border bg-muted/30 p-3">
+              <div>
+                <Label className="text-xs">Type document</Label>
+                <Select value={docDraft.type} onValueChange={(value) => setDocDraft((current) => ({ ...current, type: value }))}>
+                  <SelectTrigger className="min-h-10"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="billet_avion">Billet avion</SelectItem>
+                    <SelectItem value="reservation_hotel_extra">Réservation hôtel extra</SelectItem>
+                    <SelectItem value="reservation_activite_extra">Réservation activité extra</SelectItem>
+                    <SelectItem value="assurance">Assurance</SelectItem>
+                    <SelectItem value="visa">Visa</SelectItem>
+                    <SelectItem value="passeport">Passeport</SelectItem>
+                    <SelectItem value="autre">Autre</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label className="text-xs">Titre</Label><Input value={docDraft.title} onChange={(event) => setDocDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Titre visible" /></div>
+              <div><Label className="text-xs">Notes</Label><Textarea rows={2} value={docDraft.notes} onChange={(event) => setDocDraft((current) => ({ ...current, notes: event.target.value }))} /></div>
+              <Input type="file" onChange={(event) => setDocDraft((current) => ({ ...current, file: event.target.files?.[0] ?? null }))} />
+              <Button className="w-full min-h-10" onClick={uploadBookingDocument} disabled={busy || !docDraft.file}>
+                <Upload className="h-4 w-4" /> Ajouter document
+              </Button>
+            </div>
             <div className="space-y-1.5 max-h-72 overflow-auto">
               {docs.length === 0 && <p className="text-xs text-muted-foreground">Aucun document généré.</p>}
               {docs.map((d) => (
-                <button key={d.id} onClick={() => openDoc(d)} className="w-full flex items-center gap-2 p-2 border border-border rounded hover:bg-secondary text-left">
-                  {d.kind === "quote" ? <FileText className="w-4 h-4 text-muted-foreground shrink-0" /> : <Receipt className="w-4 h-4 text-muted-foreground shrink-0" />}
+                <div key={d.id} className="flex w-full items-center gap-2 rounded border border-border p-2 text-left">
+                  {d.kind === "receipt" ? <Receipt className="w-4 h-4 text-muted-foreground shrink-0" /> : <FileText className="w-4 h-4 text-muted-foreground shrink-0" />}
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium truncate">{d.number}</p>
-                    <p className="text-[10px] text-muted-foreground">{fmtDateTime(d.created_at)}</p>
+                    <p className="text-xs font-medium truncate">{d.title || d.number || d.file_name || d.kind}</p>
+                    <p className="text-[10px] text-muted-foreground">{d.document_type || d.kind} · {fmtDateTime(d.created_at)}</p>
+                    {d.notes && <p className="truncate text-[10px] text-muted-foreground">{d.notes}</p>}
                   </div>
-                  <Download className="w-3.5 h-3.5 text-muted-foreground" />
-                </button>
+                  <Button size="sm" variant="ghost" onClick={() => openDoc(d)} title="Télécharger"><Download className="w-3.5 h-3.5" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => deleteBookingDocument(d)} title="Supprimer"><Trash2 className="w-3.5 h-3.5 text-destructive" /></Button>
+                </div>
               ))}
             </div>
             </CardContent>
@@ -915,6 +998,13 @@ export default function BookingDetail() {
           onSaved={load}
         />
       )}
+      <LinkExistingClientDialog
+        open={linkClientOpen}
+        onOpenChange={setLinkClientOpen}
+        bookingId={b.id}
+        tripId={b.trip_id}
+        onSaved={load}
+      />
     </motion.div>
   );
 }

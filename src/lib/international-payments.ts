@@ -3,7 +3,9 @@ import { sanitizePdfText } from "@/lib/booking-pdfs";
 
 export type InternationalPaymentFile = {
   id?: string;
+  supplier_id?: string | null;
   supplier_name?: string | null;
+  supplier_snapshot?: Record<string, unknown> | null;
   payment_reference?: string | null;
   invoice_number?: string | null;
   issue_date?: string | null;
@@ -14,37 +16,61 @@ export type InternationalPaymentFile = {
   amount_to_pay_now?: number | string | null;
   amount_already_paid?: number | string | null;
   remaining_balance?: number | string | null;
+  unit_price_jpy?: number | string | null;
+  tax_percent?: number | string | null;
   notes?: string | null;
   status?: string | null;
 };
 
-export type JapanPartnerSettings = {
-  partner_name?: string | null;
+export type JapanSupplier = {
+  id?: string;
+  name?: string | null;
+  category?: string | null;
   address?: string | null;
   email?: string | null;
   phone?: string | null;
-  registration_number?: string | null;
-  corporate_number?: string | null;
+  website?: string | null;
+  notes?: string | null;
   bank_name?: string | null;
+  branch_name?: string | null;
   bank_code?: string | null;
   branch_code?: string | null;
-  branch_name?: string | null;
   account_type?: string | null;
   account_number?: string | null;
+  account_holder?: string | null;
+  logo_path?: string | null;
+  logo_url?: string | null;
+  stamp_path?: string | null;
+  stamp_url?: string | null;
+  contract_path?: string | null;
+  contract_url?: string | null;
+  invoice_template_path?: string | null;
+  invoice_template_url?: string | null;
+  status?: string | null;
+};
+
+export type JapanPartnerSettings = JapanSupplier & {
+  partner_name?: string | null;
+  registration_number?: string | null;
+  corporate_number?: string | null;
   account_name?: string | null;
 };
 
 export type InternationalPaymentParticipant = {
   id?: string;
+  payment_file_id?: string;
+  source_participant_id?: string | null;
   full_name: string;
   passport_no?: string | null;
   nationality?: string | null;
   date_of_birth?: string | null;
+  birth_date?: string | null;
   booking_reference?: string | null;
   room_type?: string | null;
   cin?: string | null;
   address?: string | null;
   city?: string | null;
+  passport_copy_path?: string | null;
 };
 
 const ORANGE = rgb(0.91, 0.31, 0.08);
@@ -113,14 +139,14 @@ const footer = (page: PDFPage, font: PDFFont) => {
 
 export async function generateInternationalInvoicePdf({
   file,
-  partner,
+  supplier,
   tripTitle,
   participantCount,
   unitPriceJpy,
   taxPercent,
 }: {
   file: InternationalPaymentFile;
-  partner: JapanPartnerSettings;
+  supplier: JapanSupplier | JapanPartnerSettings;
   tripTitle: string;
   participantCount: number;
   unitPriceJpy: number;
@@ -141,11 +167,11 @@ export async function generateInternationalInvoicePdf({
   page.drawText(text(tripTitle), { x: 36, y: 720, size: 11, font, color: GREY });
 
   page.drawRectangle({ x: 36, y: 575, width: 255, height: 120, color: LIGHT, borderColor: BORDER, borderWidth: 0.5 });
-  drawText(page, "Partenaire Japon", 50, 672, bold, 11);
-  drawText(page, partner.partner_name, 50, 650, bold, 10, BLACK, 220);
-  drawText(page, partner.address, 50, 632, font, 9, GREY, 220);
-  drawText(page, partner.email, 50, 606, font, 9, GREY, 220);
-  drawText(page, partner.phone, 50, 590, font, 9, GREY, 220);
+  drawText(page, "Fournisseur Japon", 50, 672, bold, 11);
+  drawText(page, supplier.name || (supplier as JapanPartnerSettings).partner_name, 50, 650, bold, 10, BLACK, 220);
+  drawText(page, supplier.address, 50, 632, font, 9, GREY, 220);
+  drawText(page, supplier.email, 50, 606, font, 9, GREY, 220);
+  drawText(page, supplier.phone, 50, 590, font, 9, GREY, 220);
 
   row(page, "N facture", file.invoice_number, 315, 676, font, bold, 244);
   row(page, "Date emission", fmtDate(file.issue_date), 315, 646, font, bold, 244);
@@ -174,12 +200,12 @@ export async function generateInternationalInvoicePdf({
 
   page.drawText("Coordonnees bancaires", { x: 36, y: 430, size: 12, font: bold });
   [
-    ["Banque", partner.bank_name],
-    ["Code banque", partner.bank_code],
-    ["Agence", [partner.branch_name, partner.branch_code].filter(Boolean).join(" - ")],
-    ["Type compte", partner.account_type],
-    ["Numero compte", partner.account_number],
-    ["Nom compte", partner.account_name],
+    ["Banque", supplier.bank_name],
+    ["Code banque", supplier.bank_code],
+    ["Agence", [supplier.branch_name, supplier.branch_code].filter(Boolean).join(" - ")],
+    ["Type compte", supplier.account_type],
+    ["Numero compte", supplier.account_number],
+    ["Nom compte", supplier.account_holder || (supplier as JapanPartnerSettings).account_name],
   ].forEach(([label, value], index) => row(page, label, value, 36, 400 - index * 30, font, bold, 250));
 
   if (file.notes) {
@@ -196,8 +222,9 @@ export async function generateParticipantsListPdf(tripTitle: string, participant
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   let page = pdf.addPage(pageSize);
   let y = 730;
-  header(page, "Liste participants", tripTitle, font, bold);
+  header(page, "Liste des participants", tripTitle, font, bold);
   page.drawText(`Participants: ${participants.length}`, { x: 36, y: 748, size: 11, font: bold });
+  page.drawText("Moroccan Express Travel and Events", { x: 380, y: 748, size: 9, font: bold, color: ORANGE });
 
   const drawHeader = () => {
     page.drawRectangle({ x: 36, y, width: 523, height: 24, color: LIGHT, borderColor: BORDER, borderWidth: 0.5 });
@@ -217,7 +244,7 @@ export async function generateParticipantsListPdf(tripTitle: string, participant
       drawHeader();
     }
     page.drawRectangle({ x: 36, y, width: 523, height: 24, borderColor: BORDER, borderWidth: 0.35 });
-    const values = [participant.full_name, participant.passport_no, participant.nationality, fmtDate(participant.date_of_birth), participant.booking_reference, participant.room_type];
+    const values = [participant.full_name, participant.passport_no, participant.nationality, fmtDate(participant.birth_date || participant.date_of_birth), participant.booking_reference, participant.room_type];
     const xs = [42, 184, 270, 345, 420, 500];
     values.forEach((value, index) => drawText(page, value || "-", xs[index], y + 8, font, 7.5, BLACK, index === 0 ? 132 : 72));
     y -= 24;
@@ -266,7 +293,8 @@ export async function generateSubrogationPdf({
   page.drawText("Signature du participant", { x: 70, y: 215, size: 9, font, color: GREY });
   page.drawRectangle({ x: 330, y: 150, width: 185, height: 86, borderColor: BORDER, borderWidth: 0.7 });
   page.drawText("Cachet agence", { x: 345, y: 215, size: 9, font, color: GREY });
-  page.drawText(`Signe le ${fmtDate(signatureDate)} a ${place || "________________"}`, { x: 58, y: 108, size: 10, font: bold });
+  page.drawText(`Signe electroniquement le ${fmtDate(signatureDate)} a ${place || "________________"}`, { x: 58, y: 108, size: 10, font: bold });
+  page.drawText("Moroccan Express Travel & Events", { x: 58, y: 88, size: 9, font, color: GREY });
   footer(page, font);
   return await pdf.save();
 }

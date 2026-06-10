@@ -12,6 +12,9 @@ import { fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import { PAYMENT_METHOD_OPTIONS } from "@/lib/payment-methods";
+import { findOrCreateClientForBooking } from "@/lib/crm-client";
+import { PassportScannerDialog, type PassportOcrFields } from "./PassportScannerDialog";
+import { FileScan, Search, UserCheck } from "lucide-react";
 
 type Props = {
   open: boolean;
@@ -23,11 +26,24 @@ export function CreateBookingDialog({ open, onOpenChange, onCreated }: Props) {
   const navigate = useNavigate();
   const { extras: catalog } = useExtras();
   const [trips, setTrips] = useState<any[]>([]);
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientResults, setClientResults] = useState<any[]>([]);
+  const [selectedClient, setSelectedClient] = useState<any>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [form, setForm] = useState<any>({
     contact_name: "",
     contact_email: "",
     contact_phone: "",
     contact_city: "",
+    address: "",
+    nationality: "",
+    passport_number: "",
+    passport_issue_date: "",
+    passport_expiry: "",
+    birthdate: "",
+    sex: "",
+    profession: "",
+    passport_file_path: "",
     trip_id: "",
     preferred_dates: "",
     num_adults: 1,
@@ -49,6 +65,25 @@ export function CreateBookingDialog({ open, onOpenChange, onCreated }: Props) {
     supabase.from("trips").select("id,title,season,start_date,end_date,base_price_mad").order("title").then(({ data }) => setTrips(data ?? []));
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(async () => {
+      const term = clientSearch.trim();
+      if (term.length < 2) {
+        setClientResults([]);
+        return;
+      }
+      const like = `%${term}%`;
+      const { data } = await (supabase as any)
+        .from("clients")
+        .select("id,full_name,email,phone,city,country,address,nationality,passport_number,passport_issue_date,passport_expiry,birthdate,sex,profession,passport_file_path,metadata")
+        .or(`full_name.ilike.${like},email.ilike.${like},phone.ilike.${like},passport_number.ilike.${like}`)
+        .limit(12);
+      setClientResults(data ?? []);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [clientSearch, open]);
+
   const trip = trips.find((t) => t.id === form.trip_id);
   const basePrice = Number(trip?.base_price_mad ?? 0);
   const adults = Number(form.num_adults || 0);
@@ -63,6 +98,43 @@ export function CreateBookingDialog({ open, onOpenChange, onCreated }: Props) {
   const remaining = Math.max(0, total - paid);
 
   const setField = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+
+  const applyClient = (client: any) => {
+    setSelectedClient(client);
+    setForm((current: any) => ({
+      ...current,
+      contact_name: client.full_name || current.contact_name,
+      contact_email: client.email || current.contact_email,
+      contact_phone: client.phone || current.contact_phone,
+      contact_city: client.city || current.contact_city,
+      address: client.address || current.address,
+      nationality: client.nationality || current.nationality,
+      passport_number: client.passport_number || current.passport_number,
+      passport_issue_date: client.passport_issue_date || current.passport_issue_date,
+      passport_expiry: client.passport_expiry || current.passport_expiry,
+      birthdate: client.birthdate || current.birthdate,
+      sex: client.sex || current.sex,
+      profession: client.profession || current.profession,
+      passport_file_path: client.passport_file_path || current.passport_file_path,
+    }));
+  };
+
+  const applyPassportFields = (fields: PassportOcrFields) => {
+    setSelectedClient(null);
+    setForm((current: any) => ({
+      ...current,
+      contact_name: fields.full_name || [fields.first_name, fields.last_name].filter(Boolean).join(" ") || current.contact_name,
+      passport_number: fields.passport_no || current.passport_number,
+      passport_issue_date: fields.passport_issue_date || current.passport_issue_date,
+      passport_expiry: fields.passport_expiry || current.passport_expiry,
+      birthdate: fields.date_of_birth || current.birthdate,
+      nationality: fields.nationality || current.nationality,
+      sex: fields.sex || current.sex,
+      address: fields.residence_address || fields.address || current.address,
+      contact_city: fields.residence_city || fields.city || current.contact_city,
+      profession: fields.profession || current.profession,
+    }));
+  };
 
   const addExtra = (id: string) => {
     const ex = catalog.find((e) => e.id === id);
@@ -79,20 +151,31 @@ export function CreateBookingDialog({ open, onOpenChange, onCreated }: Props) {
     }
     setBusy(true);
     try {
-      // 1. Upsert client (CRM)
-      const { data: clientId, error: clientErr } = await supabase.rpc("upsert_client_from_booking", {
-        _name: form.contact_name,
-        _email: form.contact_email,
-        _phone: form.contact_phone || null,
-        _city: form.contact_city || null,
+      const { clientId } = selectedClient?.id ? { clientId: selectedClient.id } : await findOrCreateClientForBooking({
+        full_name: form.contact_name,
+        email: form.contact_email,
+        phone: form.contact_phone,
+        city: form.contact_city,
+        country: "Maroc",
+        address: form.address,
+        nationality: form.nationality,
+        passport_number: form.passport_number,
+        birthdate: form.birthdate,
+        sex: form.sex,
+        profession: form.profession,
+        source: "admin_booking",
+        metadata: {
+          passport_issue_date: form.passport_issue_date || null,
+          passport_expiry: form.passport_expiry || null,
+          passport_file_path: form.passport_file_path || null,
+        },
       });
-      if (clientErr) throw clientErr;
 
       // 2. Insert booking
       const bookingId = crypto.randomUUID();
       const insertRow: any = {
         id: bookingId,
-        client_id: clientId,
+        client_id: clientId || null,
         trip_id: form.trip_id || null,
         contact_name: form.contact_name,
         contact_email: form.contact_email,
@@ -179,12 +262,53 @@ export function CreateBookingDialog({ open, onOpenChange, onCreated }: Props) {
         <div className="space-y-6 py-2">
           <section>
             <h3 className="font-display text-sm uppercase tracking-wide text-muted-foreground mb-3">Client</h3>
+            <div className="mb-3 space-y-2 rounded-xl border border-border bg-secondary/30 p-3">
+              <Label className="text-xs">Rechercher client existant</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input className="pl-9" value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Nom, email, téléphone, passeport…" />
+              </div>
+              {selectedClient && (
+                <div className="flex items-center gap-2 rounded-lg bg-emerald-50 p-2 text-xs text-emerald-900">
+                  <UserCheck className="h-4 w-4" />
+                  Client lié : {selectedClient.full_name}
+                  <Button type="button" size="sm" variant="ghost" className="ml-auto h-7" onClick={() => setSelectedClient(null)}>Changer</Button>
+                </div>
+              )}
+              {clientResults.length > 0 && !selectedClient && (
+                <div className="max-h-40 overflow-auto rounded-lg border border-border bg-background">
+                  {clientResults.map((client) => (
+                    <button type="button" key={client.id} className="block w-full border-b border-border p-2 text-left text-xs hover:bg-secondary" onClick={() => applyClient(client)}>
+                      <span className="font-medium">{client.full_name}</span>
+                      <span className="block text-muted-foreground">{client.email || "—"} · {client.phone || "—"} · {client.passport_number || "—"}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <Button type="button" variant="outline" className="h-10 w-full" onClick={() => setScannerOpen(true)}>
+                <FileScan className="h-4 w-4" /> Scanner passeport
+              </Button>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label className="text-xs">Nom complet *</Label><Input value={form.contact_name} onChange={(e) => setField("contact_name", e.target.value)} /></div>
               <div><Label className="text-xs">Email *</Label><Input type="email" value={form.contact_email} onChange={(e) => setField("contact_email", e.target.value)} /></div>
               <div><Label className="text-xs">Téléphone</Label><Input value={form.contact_phone} onChange={(e) => setField("contact_phone", e.target.value)} /></div>
               <div><Label className="text-xs">Ville</Label><Input value={form.contact_city} onChange={(e) => setField("contact_city", e.target.value)} /></div>
+              <div><Label className="text-xs">Nationalité</Label><Input value={form.nationality} onChange={(e) => setField("nationality", e.target.value)} /></div>
+              <div><Label className="text-xs">N° passeport</Label><Input value={form.passport_number} onChange={(e) => setField("passport_number", e.target.value)} /></div>
+              <div><Label className="text-xs">Date naissance</Label><Input type="date" value={form.birthdate} onChange={(e) => setField("birthdate", e.target.value)} /></div>
+              <div><Label className="text-xs">Sexe</Label><Input value={form.sex} onChange={(e) => setField("sex", e.target.value)} /></div>
+              <div><Label className="text-xs">Profession</Label><Input value={form.profession} onChange={(e) => setField("profession", e.target.value)} /></div>
+              <div><Label className="text-xs">Expiration passeport</Label><Input type="date" value={form.passport_expiry} onChange={(e) => setField("passport_expiry", e.target.value)} /></div>
+              <div className="col-span-2"><Label className="text-xs">Adresse</Label><Input value={form.address} onChange={(e) => setField("address", e.target.value)} /></div>
             </div>
+            <PassportScannerDialog
+              open={scannerOpen}
+              onOpenChange={setScannerOpen}
+              currentPath={form.passport_file_path}
+              onStoredPathChange={(path) => setField("passport_file_path", path ?? "")}
+              onApply={applyPassportFields}
+            />
           </section>
 
           <section>

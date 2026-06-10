@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Download, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, Download, Pencil, Trash2, Search, RefreshCw } from "lucide-react";
 import { fmtMAD } from "@/lib/format";
 import { exportCsv } from "@/admin/lib/export-csv";
 import { toast } from "sonner";
@@ -15,6 +15,11 @@ type Row = {
   booking: any;
 };
 
+const normalizeText = (value?: string | null) =>
+  String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+const normalizeEmail = (value?: string | null) => String(value ?? "").trim().toLowerCase();
+const normalizePhone = (value?: string | null) => String(value ?? "").replace(/[^\d+]/g, "");
+
 export default function OpsParticipants({ trip }: { trip: any }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
@@ -23,32 +28,13 @@ export default function OpsParticipants({ trip }: { trip: any }) {
   const [edit, setEdit] = useState<any>(null);
 
   const load = async () => {
-    const { data: bks } = await supabase.from("bookings").select("*").eq("trip_id", trip.id).order("created_at");
+    const { data: bks } = await supabase.from("bookings").select("*").eq("trip_id", trip.id).neq("status", "cancelled").order("created_at");
     const list = bks ?? [];
     setBookings(list);
     if (list.length === 0) { setRows([]); return; }
     const ids = list.map((b) => b.id);
     const { data: parts } = await supabase.from("booking_participants").select("*").in("booking_id", ids);
-
-    // Auto-create lead participant for bookings missing one
-    const missing = list.filter((b) => !(parts ?? []).some((p) => p.booking_id === b.id && p.is_lead));
-    if (missing.length > 0) {
-      const inserts = missing.map((b) => {
-        const [first, ...rest] = (b.contact_name || "").split(" ");
-        return {
-          booking_id: b.id,
-          trip_id: trip.id,
-          first_name: first || "",
-          last_name: rest.join(" "),
-          is_lead: true,
-        };
-      });
-      await supabase.from("booking_participants").insert(inserts);
-      const { data: refreshed } = await supabase.from("booking_participants").select("*").in("booking_id", ids);
-      buildRows(list, refreshed ?? []);
-    } else {
-      buildRows(list, parts ?? []);
-    }
+    buildRows(list, parts ?? []);
   };
 
   const buildRows = (bks: any[], parts: any[]) => {
@@ -61,6 +47,63 @@ export default function OpsParticipants({ trip }: { trip: any }) {
   };
 
   useEffect(() => { load(); }, [trip.id]);
+
+  const syncWithBookings = async () => {
+    const { data: activeBookings, error: bookingError } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("trip_id", trip.id)
+      .in("status", ["lead", "confirmed", "paid", "completed"]);
+    if (bookingError) return toast.error(bookingError.message);
+
+    const bookingIds = (activeBookings ?? []).map((booking) => booking.id);
+    const { data: existing, error: participantError } = await supabase.from("booking_participants").select("*").eq("trip_id", trip.id);
+    if (participantError) return toast.error(participantError.message);
+
+    const stale = (existing ?? []).filter((participant: any) => !bookingIds.includes(participant.booking_id));
+    if (stale.length) {
+      const { error } = await supabase.from("booking_participants").delete().in("id", stale.map((participant: any) => participant.id));
+      if (error) return toast.error(error.message);
+    }
+
+    const existingParticipants = existing ?? [];
+    const participantRepresentsBookingContact = (participant: any, booking: any) => {
+      if (participant.booking_id !== booking.id) return false;
+      const participantName = normalizeText(`${participant.first_name ?? ""} ${participant.last_name ?? ""}`);
+      return Boolean(
+        participant.is_lead ||
+        (booking.client_id && participant.client_id === booking.client_id) ||
+        (normalizeEmail(booking.contact_email) && normalizeEmail(participant.email) === normalizeEmail(booking.contact_email)) ||
+        (normalizePhone(booking.contact_phone) && normalizePhone(participant.phone) === normalizePhone(booking.contact_phone)) ||
+        (normalizeText(booking.contact_name) && participantName === normalizeText(booking.contact_name))
+      );
+    };
+
+    const inserts = (activeBookings ?? [])
+      .filter((booking: any) => booking.metadata?.responsible_traveller_deleted !== true)
+      .filter((booking: any) => !existingParticipants.some((participant: any) => participantRepresentsBookingContact(participant, booking)))
+      .map((booking: any) => {
+        const [first, ...rest] = (booking.contact_name || "").split(" ");
+        return {
+          booking_id: booking.id,
+          trip_id: trip.id,
+          first_name: first || "",
+          last_name: rest.join(" "),
+          email: booking.contact_email || null,
+          phone: booking.contact_phone || null,
+          client_id: booking.client_id || null,
+          relation: "self",
+          is_lead: true,
+        };
+      });
+    if (inserts.length) {
+      const { error } = await supabase.from("booking_participants").insert(inserts);
+      if (error) return toast.error(error.message);
+    }
+
+    toast.success("Inscrits synchronisés avec les réservations.");
+    load();
+  };
 
   const filtered = rows.filter(({ participant: p, booking: b }) => {
     const s = q.toLowerCase().trim();
@@ -109,6 +152,7 @@ export default function OpsParticipants({ trip }: { trip: any }) {
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher…" className="pl-9" />
         </div>
         <Button variant="outline" onClick={doExport}><Download className="w-4 h-4" /> Export CSV</Button>
+        <Button variant="outline" onClick={syncWithBookings}><RefreshCw className="w-4 h-4" /> Synchroniser avec les réservations</Button>
         <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setEdit(null); }}>
           <DialogTrigger asChild>
             <Button onClick={() => setEdit({ first_name: "", last_name: "", booking_id: bookings[0]?.id })}>

@@ -59,15 +59,38 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
         .select("id", { count: "exact", head: true })
         .eq("booking_id", bookingId)
         .eq("client_id", selected.id);
-      if ((count ?? 0) > 0) { toast.error("Ce client est déjà associé à la réservation"); setBusy(false); return; }
+
+      const { error: bookingError } = await supabase.from("bookings").update({ client_id: selected.id } as any).eq("id", bookingId);
+      if (bookingError) throw bookingError;
+
+      if ((count ?? 0) > 0) {
+        toast.success("Réservation associée au client.");
+        onOpenChange(false);
+        onSaved?.();
+        setBusy(false);
+        return;
+      }
 
       const parts = (selected.full_name || "").trim().split(/\s+/);
       const first = parts[0] || "";
       const last = parts.slice(1).join(" ") || "";
+      const { data: existingParticipants } = await supabase
+        .from("booking_participants")
+        .select("*")
+        .eq("booking_id", bookingId)
+        .order("is_lead", { ascending: false })
+        .order("created_at", { ascending: true });
 
-      const { error } = await supabase.from("booking_participants").insert({
-        booking_id: bookingId,
-        trip_id: tripId ?? null,
+      const normalize = (value?: string | null) => String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+      const selectedName = normalize(selected.full_name);
+      const selectedPassport = String(selected.passport_number ?? "").replace(/[\s-]+/g, "").toUpperCase();
+      const matchingParticipant = (existingParticipants ?? []).find((participant: any) => {
+        const participantName = normalize(`${participant.first_name ?? ""} ${participant.last_name ?? ""}`);
+        const participantPassport = String(participant.passport_no ?? "").replace(/[\s-]+/g, "").toUpperCase();
+        return participant.is_lead || (selectedPassport && participantPassport === selectedPassport) || (selectedName && participantName === selectedName);
+      });
+
+      const payload = {
         client_id: selected.id,
         first_name: first,
         last_name: last,
@@ -84,10 +107,18 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
         passport_expiry: selected.passport_expiry || null,
         passport_file_path: selected.passport_file_path || null,
         relation,
-        is_lead: false,
-      } as any);
+        is_lead: matchingParticipant?.is_lead ?? false,
+      } as any;
+
+      const { error } = matchingParticipant?.id
+        ? await supabase.from("booking_participants").update(payload).eq("id", matchingParticipant.id)
+        : await supabase.from("booking_participants").insert({
+            ...payload,
+            booking_id: bookingId,
+            trip_id: tripId ?? null,
+          });
       if (error) throw error;
-      toast.success("Voyageur associé");
+      toast.success("Client associé à la réservation");
       onOpenChange(false);
       onSaved?.();
     } catch (e: any) {

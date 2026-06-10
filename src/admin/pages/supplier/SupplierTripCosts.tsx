@@ -162,6 +162,20 @@ const tripDocumentCategoryLabel: Record<TripDocumentCategory, string> = {
   other: "Other",
 };
 
+const roomLabel = (room: any) => String(room?.room_number ?? room?.room_name ?? "").trim();
+const roomNumberValue = (room: any) => {
+  const match = roomLabel(room).match(/\d+(?:[.,]\d+)?/);
+  return match ? Number(match[0].replace(",", ".")) : Number.POSITIVE_INFINITY;
+};
+const compareRoomsNaturally = (a: any, b: any) => {
+  const numericDiff = roomNumberValue(a) - roomNumberValue(b);
+  if (numericDiff !== 0 && Number.isFinite(numericDiff)) return numericDiff;
+  return roomLabel(a).localeCompare(roomLabel(b), "fr", { numeric: true, sensitivity: "base" })
+    || String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
+    || String(a.id ?? "").localeCompare(String(b.id ?? ""));
+};
+const sortRoomsNaturally = (roomList: any[]) => [...(roomList ?? [])].sort(compareRoomsNaturally);
+
 const tripDocumentCategories = Object.keys(tripDocumentCategoryLabel) as TripDocumentCategory[];
 const tripDocumentBucket = "trip-documents";
 
@@ -2463,7 +2477,7 @@ function RoomsAndExtras({
         <div className="mt-4 space-y-4">
           {hotels.length === 0 && <p className="text-sm text-muted-foreground">Aucun hôtel configuré.</p>}
           {hotels.map((hotel) => {
-            const hotelRooms = rooms.filter((room) => room.trip_hotel_id === hotel.id);
+            const hotelRooms = sortRoomsNaturally(rooms.filter((room) => room.trip_hotel_id === hotel.id));
             return (
               <div key={hotel.id} className="rounded-lg border border-border p-3">
                 <p className="font-semibold">{hotel.name || hotel.hotel_name || "Hôtel"} · {hotel.city || "Ville à confirmer"}</p>
@@ -3033,7 +3047,7 @@ const buildRoomRows = ({ hotels, rooms, assignments, participants, bookings }: a
   const participantById = new Map((participants ?? []).map((participant: any) => [participant.id, participant]));
   const bookingById = new Map((bookings ?? []).map((booking: any) => [booking.id, booking]));
   return (hotels ?? []).flatMap((hotel: any) =>
-    (rooms ?? []).filter((room: any) => room.trip_hotel_id === hotel.id).flatMap((room: any) => {
+    sortRoomsNaturally((rooms ?? []).filter((room: any) => room.trip_hotel_id === hotel.id)).flatMap((room: any) => {
       const roomAssignments = (assignments ?? []).filter((assignment: any) => assignment.room_id === room.id);
       if (roomAssignments.length === 0) return [{
         hotel: hotel.name ?? "Hôtel",

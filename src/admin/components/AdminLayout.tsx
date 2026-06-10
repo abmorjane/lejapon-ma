@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { ModuleKey, ROLE_LABELS, Role } from "../lib/permissions";
 import { PLATFORM_BADGE_LABEL } from "@/config/version";
 import { ADMIN_THEMES, type AdminThemeId, isAdminThemeId, readAdminTheme } from "@/admin/theme";
+import { AdminQuickActionBar } from "./AdminQuickActionBar";
 
 type NavSection = "Core" | "Sales" | "Content" | "Partners" | "System";
 type AdminNavItem = { to: string; icon: any; label: string; end?: boolean; module: ModuleKey; section: NavSection };
@@ -27,7 +28,7 @@ const nav: AdminNavItem[] = [
   { to: "/admin/international-payments", icon: Banknote, label: "Paiements internationaux", module: "international_payments", section: "Sales" },
   { to: "/admin/visa", icon: Stamp, label: "Demandes de visa", module: "visa", section: "Sales" },
   { to: "/admin/visa-checklists", icon: ListChecks, label: "Documents requis", module: "visa_checklists", section: "Sales" },
-  { to: "/admin/visa-settings", icon: ShieldCheck, label: "Paramètres visa", module: "visa_settings", section: "Sales" },
+  { to: "/admin/visa-settings", icon: ShieldCheck, label: "Bureau Japon", module: "visa_settings", section: "Sales" },
   { to: "/admin/articles", icon: BookOpen, label: "Articles", module: "articles", section: "Content" },
   { to: "/admin/pages", icon: FileText, label: "Pages", module: "pages", section: "Content" },
   { to: "/admin/faqs", icon: HelpCircle, label: "FAQ", module: "faqs", section: "Content" },
@@ -218,6 +219,7 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
         </header>
 
         <div className={cn("admin-content w-full max-w-7xl mx-auto px-3 py-4 pb-28 sm:p-6", isPremium ? "lg:p-8" : "lg:p-10")}>
+          <AdminQuickActionBar />
           {children ?? <Outlet />}
         </div>
       </main>

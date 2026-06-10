@@ -1,18 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import {
   Banknote,
   CheckCircle2,
   Download,
+  Edit3,
+  Eye,
   FileArchive,
   FileText,
   Loader2,
   Plane,
   Plus,
+  RefreshCw,
   Save,
-  Settings,
+  Trash2,
   Upload,
+  Users,
   XCircle,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -40,7 +44,7 @@ import {
   mergePdfBytes,
   type InternationalPaymentFile,
   type InternationalPaymentParticipant,
-  type JapanPartnerSettings,
+  type JapanSupplier,
 } from "@/lib/international-payments";
 
 const db = supabase as any;
@@ -50,7 +54,9 @@ const statuses = [
   "draft",
   "created",
   "submitted_to_bank",
-  "waiting_payment",
+  "bank_review",
+  "approved",
+  "partially_paid",
   "paid",
   "rejected",
   "cancelled",
@@ -60,6 +66,9 @@ const statusLabels: Record<string, string> = {
   draft: "Brouillon",
   created: "Créé",
   submitted_to_bank: "Déposé banque",
+  bank_review: "Revue banque",
+  approved: "Approuvé",
+  partially_paid: "Partiellement payé",
   waiting_payment: "En attente paiement",
   paid: "Payé",
   rejected: "Rejeté",
@@ -92,38 +101,64 @@ const checklistItems = [
 
 const emptyFile = {
   trip_id: "",
-  supplier_name: "Tapis Volant LLC",
+  supplier_id: "",
+  supplier_name: "",
   payment_reference: "",
   invoice_number: "",
   issue_date: new Date().toISOString().slice(0, 10),
   due_date: "",
   currency: "JPY",
   total_invoice_amount: 0,
+  unit_price_jpy: 0,
+  tax_percent: 0,
   payment_percentage: 50,
   amount_already_paid: 0,
   notes: "",
   status: "draft",
 };
 
-const emptyPartner: JapanPartnerSettings = {
-  partner_name: "Tapis Volant LLC",
+const emptyParticipant: InternationalPaymentParticipant = {
+  full_name: "",
+  passport_no: "",
+  nationality: "",
+  birth_date: "",
+  booking_reference: "",
+  room_type: "",
+  cin: "",
   address: "",
-  email: "",
-  phone: "",
-  registration_number: "",
-  corporate_number: "",
-  bank_name: "",
-  bank_code: "",
-  branch_code: "",
-  branch_name: "",
-  account_type: "",
-  account_number: "",
-  account_name: "",
+  city: "",
+  passport_copy_path: "",
+};
+
+const supplierCategoryLabels: Record<string, string> = {
+  main_partner: "Bureau Japon principal",
+  hotel: "Hôtel",
+  bus: "Bus / transport",
+  transport: "Transport",
+  guide: "Guide",
+  activity: "Activité",
+  restaurant: "Restaurant",
+  other: "Autre fournisseur",
 };
 
 const numberValue = (value: unknown) => Number(value || 0);
 const fullName = (p: any) => [p.first_name, p.last_name].filter(Boolean).join(" ").trim() || p.full_name || "Participant";
 const fileNameSafe = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "dossier";
+
+const bookingRoomPreference = (booking: any) => {
+  const metadata = booking?.metadata && typeof booking.metadata === "object" ? booking.metadata : {};
+  return metadata.room_preference || metadata.room_type || metadata.accommodation_type || booking?.room_type || null;
+};
+
+const conflictTargetMissing = (error: any) =>
+  /on conflict|matching unique|unique constraint|42P10/i.test(`${error?.code ?? ""} ${error?.message ?? ""}`);
+
+const samePassport = (left?: string | null, right?: string | null) => {
+  const normalize = (value?: string | null) => String(value ?? "").replace(/[\s-]+/g, "").toUpperCase();
+  const a = normalize(left);
+  const b = normalize(right);
+  return Boolean(a && b && a === b);
+};
 
 function passportCopyPath(participant: any) {
   const metadata = participant?.metadata ?? {};
@@ -142,7 +177,7 @@ function passportCopyPath(participant: any) {
 function completion(file: any, docs: any[], participants: InternationalPaymentParticipant[]) {
   const docTypes = new Set(docs.map((doc) => doc.document_type));
   const complete = {
-    contract: docTypes.has("contract") || Boolean(file?.metadata?.partner_contract_path),
+    contract: docTypes.has("contract") || Boolean(file?.metadata?.partner_contract_path || file?.supplier_snapshot?.contract_path),
     invoice: docTypes.has("invoice"),
     participants: docTypes.has("participants_pdf") || docTypes.has("participants_excel"),
     passports: participants.length > 0 && participants.every((participant: any) => Boolean((participant as any).passport_copy_path)),
@@ -164,15 +199,27 @@ export default function InternationalPayments() {
   const [loading, setLoading] = useState(true);
   const [trips, setTrips] = useState<any[]>([]);
   const [files, setFiles] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<JapanSupplier[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [participants, setParticipants] = useState<InternationalPaymentParticipant[]>([]);
-  const [partner, setPartner] = useState<any>(emptyPartner);
+  const [participantDraft, setParticipantDraft] = useState<InternationalPaymentParticipant>(emptyParticipant);
+  const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
+  const [participantsSqlMissing, setParticipantsSqlMissing] = useState(false);
   const [selectedTripId, setSelectedTripId] = useState<string>("all");
   const [selectedFileId, setSelectedFileId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [fileDraft, setFileDraft] = useState<any>(emptyFile);
-  const [invoiceDraft, setInvoiceDraft] = useState({ participant_count: "0", unit_price_jpy: "0", tax_percent: "0" });
+  const [invoiceDraft, setInvoiceDraft] = useState({
+    invoice_number: "",
+    issue_date: new Date().toISOString().slice(0, 10),
+    due_date: "",
+    participant_count: "0",
+    unit_price_jpy: "0",
+    tax_percent: "0",
+    payment_percentage: "50",
+    override_count: false,
+  });
   const [subrogationDraft, setSubrogationDraft] = useState({
     amount_mad: "0",
     place: "Temara",
@@ -185,9 +232,16 @@ export default function InternationalPayments() {
 
   const selectedFile = files.find((file) => file.id === selectedFileId) ?? files[0] ?? null;
   const selectedTrip = trips.find((trip) => trip.id === (selectedFile?.trip_id || selectedTripId));
+  const selectedSupplier = suppliers.find((supplier) => supplier.id === selectedFile?.supplier_id)
+    ?? suppliers.find((supplier) => supplier.name === selectedFile?.supplier_name)
+    ?? (selectedFile?.supplier_snapshot && Object.keys(selectedFile.supplier_snapshot).length ? selectedFile.supplier_snapshot as JapanSupplier : null);
   const currentDocuments = documents.filter((doc) => doc.payment_file_id === selectedFile?.id);
   const currentHistory = history.filter((row) => row.payment_file_id === selectedFile?.id);
   const currentCompletion = completion(selectedFile, currentDocuments, participants);
+  const passportCompletion = participants.length ? Math.round((participants.filter((participant) => participant.passport_copy_path).length / participants.length) * 100) : 0;
+  const paymentProgress = numberValue(selectedFile?.total_invoice_amount) > 0
+    ? Math.min(100, Math.round((numberValue(selectedFile?.amount_already_paid) / numberValue(selectedFile?.total_invoice_amount)) * 100))
+    : 0;
 
   const filteredFiles = useMemo(() => {
     if (selectedTripId === "all") return files;
@@ -214,14 +268,19 @@ export default function InternationalPayments() {
 
   const load = async () => {
     setLoading(true);
-    const [tripResult, fileResult, partnerResult] = await Promise.all([
+    const [tripResult, fileResult, supplierResult] = await Promise.all([
       supabase.from("trips").select("id,title,season,start_date,end_date,duration_days").order("start_date", { ascending: false, nullsFirst: false }),
       db.from("international_payment_files").select("*").order("created_at", { ascending: false }),
-      db.from("japan_partner_settings").select("*").order("created_at", { ascending: true }).limit(1).maybeSingle(),
+      db.from("japan_suppliers").select("*").order("status", { ascending: true }).order("name", { ascending: true }),
     ]);
     setTrips(tripResult.data ?? []);
     setFiles(fileResult.data ?? []);
-    setPartner(partnerResult.data ?? emptyPartner);
+    if (supplierResult.error) {
+      toast.error("Migration fournisseurs Bureau Japon requise.");
+      setSuppliers([]);
+    } else {
+      setSuppliers(supplierResult.data ?? []);
+    }
     const firstFile = fileResult.data?.[0];
     if (!selectedFileId && firstFile) setSelectedFileId(firstFile.id);
     setLoading(false);
@@ -234,38 +293,34 @@ export default function InternationalPayments() {
       setParticipants([]);
       return;
     }
-    const [{ data: docs }, { data: events }, { data: bookings }] = await Promise.all([
+    const [{ data: docs }, { data: events }, participantResult] = await Promise.all([
       db.from("international_payment_file_documents").select("*").eq("payment_file_id", file.id).order("created_at", { ascending: false }),
       db.from("international_payment_history").select("*").eq("payment_file_id", file.id).order("created_at", { ascending: false }),
-      supabase.from("bookings").select("id,reference,contact_name,contact_email,contact_phone,trip_id,room_type,room_preference").eq("trip_id", file.trip_id),
+      db.from("international_payment_participants").select("*").eq("payment_file_id", file.id).order("created_at", { ascending: true }),
     ]);
     setDocuments(docs ?? []);
     setHistory(events ?? []);
-    const bookingRows = bookings ?? [];
-    const bookingIds = bookingRows.map((booking: any) => booking.id);
-    if (!bookingIds.length) {
+    if (participantResult.error) {
+      setParticipantsSqlMissing(true);
       setParticipants([]);
       return;
     }
-    const { data: partRows } = await db.from("booking_participants").select("*").in("booking_id", bookingIds);
-    const mapped = (partRows ?? []).map((participant: any) => {
-      const booking = bookingRows.find((item: any) => item.id === participant.booking_id);
-      return {
-        id: participant.id,
-        full_name: fullName(participant),
-        passport_no: participant.passport_no || participant.passport_number || participant.document_number,
-        nationality: participant.nationality,
-        date_of_birth: participant.date_of_birth || participant.birthdate,
-        booking_reference: booking?.reference,
-        room_type: participant.room_type || booking?.room_type || booking?.room_preference,
-        cin: participant.cin || participant.national_id_number,
-        address: participant.address,
-        city: participant.city,
-        passport_copy_path: passportCopyPath(participant),
-      } as InternationalPaymentParticipant & { passport_copy_path?: string | null };
-    });
+    setParticipantsSqlMissing(false);
+    const mapped = (participantResult.data ?? []).map((participant: any) => ({
+      ...participant,
+      date_of_birth: participant.birth_date,
+    })) as InternationalPaymentParticipant[];
     setParticipants(mapped);
-    setInvoiceDraft((current) => ({ ...current, participant_count: String(mapped.length) }));
+    setInvoiceDraft((current) => ({
+      ...current,
+      invoice_number: file.invoice_number ?? current.invoice_number,
+      issue_date: file.issue_date ?? current.issue_date,
+      due_date: file.due_date ?? current.due_date,
+      participant_count: current.override_count ? current.participant_count : String(mapped.length),
+      unit_price_jpy: String(file.unit_price_jpy ?? current.unit_price_jpy ?? "0"),
+      tax_percent: String(file.tax_percent ?? current.tax_percent ?? "0"),
+      payment_percentage: String(file.payment_percentage ?? current.payment_percentage ?? "50"),
+    }));
   };
 
   useEffect(() => { void load(); }, []);
@@ -282,11 +337,74 @@ export default function InternationalPayments() {
     });
   };
 
+  const syncImportedParticipants = async (rows: any[]) => {
+    const { error: upsertError } = await db
+      .from("international_payment_participants")
+      .upsert(rows, { onConflict: "payment_file_id,source_participant_id" });
+
+    if (!upsertError) return;
+    if (!conflictTargetMissing(upsertError)) throw upsertError;
+
+    const paymentFileId = rows[0]?.payment_file_id;
+    if (!paymentFileId) throw upsertError;
+
+    const { data: existingRows, error: existingError } = await db
+      .from("international_payment_participants")
+      .select("*")
+      .eq("payment_file_id", paymentFileId);
+    if (existingError) throw existingError;
+
+    for (const row of rows) {
+      const existing = (existingRows ?? []).find((item: any) =>
+        (row.source_participant_id && item.source_participant_id === row.source_participant_id)
+        || (!row.source_participant_id && samePassport(item.passport_no, row.passport_no))
+      );
+      if (existing?.id) {
+        const { error } = await db.from("international_payment_participants").update(row).eq("id", existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await db.from("international_payment_participants").insert(row);
+        if (error) throw error;
+      }
+    }
+  };
+
+  const supplierSnapshot = (supplierId?: string | null) => {
+    const supplier = suppliers.find((item) => item.id === supplierId);
+    if (!supplier) return {};
+    return {
+      id: supplier.id,
+      name: supplier.name,
+      category: supplier.category,
+      address: supplier.address,
+      email: supplier.email,
+      phone: supplier.phone,
+      website: supplier.website,
+      bank_name: supplier.bank_name,
+      branch_name: supplier.branch_name,
+      bank_code: supplier.bank_code,
+      branch_code: supplier.branch_code,
+      account_type: supplier.account_type,
+      account_number: supplier.account_number,
+      account_holder: supplier.account_holder,
+      logo_path: supplier.logo_path,
+      stamp_path: supplier.stamp_path,
+      contract_path: supplier.contract_path,
+      invoice_template_path: supplier.invoice_template_path,
+    };
+  };
+
   const saveFile = async () => {
     if (!fileDraft.trip_id) return toast.error("Choisissez un voyage.");
+    if (!fileDraft.supplier_id) return toast.error("Choisissez un fournisseur Japon.");
+    const supplier = suppliers.find((item) => item.id === fileDraft.supplier_id);
     const payload = {
       ...fileDraft,
+      supplier_name: supplier?.name ?? fileDraft.supplier_name ?? "",
+      supplier_snapshot: supplierSnapshot(fileDraft.supplier_id),
       total_invoice_amount: numberValue(fileDraft.total_invoice_amount),
+      unit_price_jpy: numberValue(fileDraft.unit_price_jpy),
+      tax_percent: numberValue(fileDraft.tax_percent),
       payment_percentage: numberValue(fileDraft.payment_percentage),
       amount_already_paid: numberValue(fileDraft.amount_already_paid),
       participants_count: participants.length || 0,
@@ -305,16 +423,128 @@ export default function InternationalPayments() {
     await load();
   };
 
-  const savePartner = async () => {
-    setBusy("partner");
-    const request = partner.id
-      ? db.from("japan_partner_settings").update(partner).eq("id", partner.id).select("*").single()
-      : db.from("japan_partner_settings").insert(partner).select("*").single();
-    const { data, error } = await request;
+  const importParticipantsFromTrip = async () => {
+    if (!selectedFile?.id || !selectedFile.trip_id) return;
+    setBusy("import-participants");
+    try {
+      let bookingResult = await supabase
+        .from("bookings")
+        .select("id,reference,contact_name,trip_id,room_type,metadata")
+        .eq("trip_id", selectedFile.trip_id);
+      if (bookingResult.error && /metadata|column .* does not exist|schema cache/i.test(bookingResult.error.message)) {
+        bookingResult = await supabase
+          .from("bookings")
+          .select("id,reference,contact_name,trip_id,room_type")
+          .eq("trip_id", selectedFile.trip_id);
+      }
+      if (bookingResult.error) throw bookingResult.error;
+      const bookingRows = bookingResult.data ?? [];
+      const bookingIds = bookingRows.map((booking: any) => booking.id);
+      if (!bookingIds.length) {
+        toast.warning("Aucune réservation trouvée pour ce voyage.");
+        setBusy(null);
+        return;
+      }
+
+      const { data: partRows, error: partError } = await db.from("booking_participants").select("*").in("booking_id", bookingIds);
+      if (partError) throw partError;
+
+      const { data: hotelRows } = await db.from("trip_hotels").select("id").eq("trip_id", selectedFile.trip_id);
+      const hotelIds = (hotelRows ?? []).map((hotel: any) => hotel.id);
+      const { data: roomRows } = hotelIds.length
+        ? await db.from("trip_rooms").select("*").in("trip_hotel_id", hotelIds)
+        : { data: [] as any[] };
+      const roomIds = (roomRows ?? []).map((room: any) => room.id);
+      const { data: assignmentRows } = roomIds.length
+        ? await db.from("room_assignments").select("*").in("room_id", roomIds)
+        : { data: [] as any[] };
+
+      const mapped = (partRows ?? []).map((participant: any) => {
+        const booking = bookingRows.find((item: any) => item.id === participant.booking_id);
+        const assignment = (assignmentRows ?? []).find((item: any) => item.participant_id === participant.id);
+        const room = (roomRows ?? []).find((item: any) => item.id === assignment?.room_id);
+        return {
+          payment_file_id: selectedFile.id,
+          source_participant_id: participant.id,
+          full_name: fullName(participant),
+          passport_no: participant.passport_no || participant.passport_number || participant.document_number || null,
+          nationality: participant.nationality || null,
+          birth_date: participant.date_of_birth || participant.birthdate || null,
+          booking_reference: booking?.reference || null,
+          room_type: room?.room_type || participant.room_type || bookingRoomPreference(booking) || null,
+          cin: participant.cin || participant.national_id_number || null,
+          address: participant.address || null,
+          city: participant.city || null,
+          passport_copy_path: passportCopyPath(participant),
+          created_by: user?.id ?? null,
+          metadata: {
+            imported_from_trip_operations: true,
+            booking_id: participant.booking_id,
+            room_id: room?.id ?? null,
+            room_number: room?.room_number ?? room?.room_name ?? null,
+          },
+        };
+      });
+
+      if (!mapped.length) {
+        toast.warning("Aucun participant opérationnel trouvé pour ce voyage.");
+        setBusy(null);
+        return;
+      }
+
+      await syncImportedParticipants(mapped);
+
+      await db.from("international_payment_files").update({ participants_count: mapped.length }).eq("id", selectedFile.id);
+      await saveHistory(selectedFile.id, "participants_imported_from_trip", null, { count: mapped.length });
+      toast.success(`${mapped.length} participant(s) importé(s).`);
+      await loadFileDetails(selectedFile);
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Import participants impossible.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveParticipant = async () => {
+    if (!selectedFile?.id) return;
+    if (!participantDraft.full_name?.trim()) return toast.error("Nom participant requis.");
+    setBusy("participant");
+    const payload = {
+      payment_file_id: selectedFile.id,
+      source_participant_id: participantDraft.source_participant_id ?? null,
+      full_name: participantDraft.full_name,
+      passport_no: participantDraft.passport_no || null,
+      nationality: participantDraft.nationality || null,
+      birth_date: participantDraft.birth_date || participantDraft.date_of_birth || null,
+      booking_reference: participantDraft.booking_reference || null,
+      room_type: participantDraft.room_type || null,
+      cin: participantDraft.cin || null,
+      address: participantDraft.address || null,
+      city: participantDraft.city || null,
+      passport_copy_path: participantDraft.passport_copy_path || null,
+      created_by: user?.id ?? null,
+    };
+    const request = participantDraft.id
+      ? db.from("international_payment_participants").update(payload).eq("id", participantDraft.id)
+      : db.from("international_payment_participants").insert(payload);
+    const { error } = await request;
     setBusy(null);
     if (error) return toast.error(error.message);
-    setPartner(data);
-    toast.success("Paramètres partenaire enregistrés.");
+    await saveHistory(selectedFile.id, participantDraft.id ? "participant_updated" : "participant_added", null, payload);
+    setParticipantDialogOpen(false);
+    setParticipantDraft(emptyParticipant);
+    toast.success("Participant enregistré.");
+    await loadFileDetails(selectedFile);
+  };
+
+  const deleteParticipant = async (participant: InternationalPaymentParticipant) => {
+    if (!selectedFile?.id || !participant.id) return;
+    const { error } = await db.from("international_payment_participants").delete().eq("id", participant.id);
+    if (error) return toast.error(error.message);
+    await saveHistory(selectedFile.id, "participant_deleted", participant, null);
+    toast.success("Participant supprimé.");
+    await loadFileDetails(selectedFile);
   };
 
   const uploadDocument = async (file: File, type: string, folder: string, participantId?: string | null) => {
@@ -374,23 +604,69 @@ export default function InternationalPayments() {
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
+  const openSupplierAsset = async (path?: string | null) => {
+    if (!path) return;
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 120);
+    if (error) return toast.error(error.message);
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
   const generateInvoice = async () => {
     if (!selectedFile) return;
+    if (!selectedSupplier) return toast.error("Choisissez un fournisseur avant de générer la facture.");
     setBusy("invoice");
     try {
+      const participantCount = numberValue(invoiceDraft.participant_count || participants.length);
+      const unitPriceJpy = numberValue(invoiceDraft.unit_price_jpy);
+      const taxPercent = numberValue(invoiceDraft.tax_percent);
+      const subtotal = participantCount * unitPriceJpy;
+      const tax = Math.round(subtotal * taxPercent / 100);
+      const total = subtotal + tax;
+      const paymentPercentage = numberValue(invoiceDraft.payment_percentage);
+      const amountToPayNow = Math.round(total * paymentPercentage / 100);
+      const fileForPdf = {
+        ...selectedFile,
+        invoice_number: invoiceDraft.invoice_number || selectedFile.invoice_number,
+        issue_date: invoiceDraft.issue_date || selectedFile.issue_date,
+        due_date: invoiceDraft.due_date || selectedFile.due_date,
+        unit_price_jpy: unitPriceJpy,
+        tax_percent: taxPercent,
+        total_invoice_amount: total,
+        payment_percentage: paymentPercentage,
+        amount_to_pay_now: amountToPayNow,
+        remaining_balance: Math.max(0, total - numberValue(selectedFile.amount_already_paid)),
+      };
+      const { data: updatedFile, error: updateError } = await db
+        .from("international_payment_files")
+        .update({
+          invoice_number: fileForPdf.invoice_number,
+          issue_date: fileForPdf.issue_date,
+          due_date: fileForPdf.due_date,
+          unit_price_jpy: unitPriceJpy,
+          tax_percent: taxPercent,
+          total_invoice_amount: total,
+          payment_percentage: paymentPercentage,
+          amount_already_paid: numberValue(selectedFile.amount_already_paid),
+          participants_count: participantCount,
+        })
+        .eq("id", selectedFile.id)
+        .select("*")
+        .single();
+      if (updateError) throw updateError;
       const pdf = await generateInternationalInvoicePdf({
-        file: selectedFile,
-        partner,
+        file: updatedFile ?? fileForPdf,
+        supplier: selectedSupplier,
         tripTitle: selectedTrip?.title ?? "Voyage Japon",
-        participantCount: numberValue(invoiceDraft.participant_count),
-        unitPriceJpy: numberValue(invoiceDraft.unit_price_jpy),
-        taxPercent: numberValue(invoiceDraft.tax_percent),
+        participantCount,
+        unitPriceJpy,
+        taxPercent,
       });
-      const filename = `facture-${selectedFile.invoice_number || selectedFile.payment_reference || selectedFile.id}.pdf`;
+      const filename = `facture-${fileForPdf.invoice_number || selectedFile.payment_reference || selectedFile.id}.pdf`;
       downloadBytes(pdf, filename);
       await uploadGeneratedBytes(pdf, filename, "invoice", "invoices");
-      await saveHistory(selectedFile.id, "invoice_generated", null, { filename });
+      await saveHistory(selectedFile.id, "invoice_generated", null, { filename, total, amount_to_pay_now: amountToPayNow });
       toast.success("Facture générée.");
+      await load();
       await loadFileDetails(selectedFile);
     } catch (error: any) {
       toast.error(error.message ?? "Impossible de générer la facture.");
@@ -415,9 +691,10 @@ export default function InternationalPayments() {
             Nom: participant.full_name,
             Passeport: participant.passport_no,
             Nationalite: participant.nationality,
-            Naissance: fmtDate(participant.date_of_birth),
+            Naissance: fmtDate(participant.birth_date || participant.date_of_birth),
             Reservation: participant.booking_reference,
             Chambre: participant.room_type,
+            Passeport_manquant: participant.passport_copy_path ? "Non" : "Oui",
           })) },
         ]);
       }
@@ -431,11 +708,16 @@ export default function InternationalPayments() {
 
   const generateSubrogations = async () => {
     if (!selectedFile || !participants.length) return;
+    if (participants.some((participant) => !participant.id)) {
+      toast.error("Participant non enregistré dans le dossier paiement.");
+      return;
+    }
     setBusy("subrogations");
     try {
       const zip = new JSZip();
       const pdfs: Uint8Array[] = [];
       for (const participant of participants) {
+        if (!participant.id) throw new Error("Participant non enregistré dans le dossier paiement.");
         const pdf = await generateSubrogationPdf({
           participant,
           amountMad: numberValue(subrogationDraft.amount_mad),
@@ -448,9 +730,9 @@ export default function InternationalPayments() {
         const filename = `subrogation-${fileNameSafe(participant.full_name)}.pdf`;
         zip.file(filename, pdf);
         const path = await uploadGeneratedBytes(pdf, filename, "subrogation", "subrogations", participant.id);
-        await db.from("international_payment_subrogations").insert({
+        const { error: subrogationError } = await db.from("international_payment_subrogations").insert({
           payment_file_id: selectedFile.id,
-          participant_id: participant.id ?? null,
+          participant_id: participant.id,
           participant_name: participant.full_name,
           amount_mad: numberValue(subrogationDraft.amount_mad),
           place: subrogationDraft.place,
@@ -459,6 +741,7 @@ export default function InternationalPayments() {
           notes: subrogationDraft.notes || null,
           generated_by: user?.id ?? null,
         });
+        if (subrogationError) throw subrogationError;
       }
       const zipBlob = await zip.generateAsync({ type: "blob" });
       const zipBytes = new Uint8Array(await zipBlob.arrayBuffer());
@@ -487,24 +770,6 @@ export default function InternationalPayments() {
     }
   };
 
-  const uploadPartnerAsset = async (file: File, field: "logo" | "stamp" | "default_contract") => {
-    setBusy(field);
-    const folder = field === "default_contract" ? "contracts" : "partner-assets";
-    const path = `${folder}/${Date.now()}-${fileNameSafe(file.name)}`;
-    const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false, contentType: file.type || "application/octet-stream" });
-    if (error) {
-      setBusy(null);
-      return toast.error(error.message);
-    }
-    setPartner((current: any) => ({
-      ...current,
-      [`${field}_path`]: path,
-      [`${field}_url`]: path,
-    }));
-    setBusy(null);
-    toast.success("Fichier partenaire prêt à enregistrer.");
-  };
-
   const selectedFilesStats = {
     total: filteredFiles.reduce((sum, file) => sum + numberValue(file.total_invoice_amount), 0),
     paid: filteredFiles.reduce((sum, file) => sum + numberValue(file.amount_already_paid), 0),
@@ -530,11 +795,21 @@ export default function InternationalPayments() {
         }}
       />
 
+      <Dialog open={participantDialogOpen} onOpenChange={setParticipantDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader><DialogTitle>{participantDraft.id ? "Modifier" : "Ajouter"} un participant</DialogTitle></DialogHeader>
+          <ParticipantForm draft={participantDraft} setDraft={setParticipantDraft} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setParticipantDialogOpen(false)}>Annuler</Button>
+            <Button onClick={saveParticipant} disabled={busy === "participant"}><Save className="h-4 w-4" /> Enregistrer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Tabs defaultValue="files" className="space-y-6">
         <TabsList className="flex h-auto flex-wrap justify-start">
           <TabsTrigger value="files"><Banknote className="h-4 w-4" /> Dossiers paiement</TabsTrigger>
           <TabsTrigger value="dashboard"><Plane className="h-4 w-4" /> Dashboard voyages</TabsTrigger>
-          <TabsTrigger value="settings"><Settings className="h-4 w-4" /> Partenaire Japon</TabsTrigger>
         </TabsList>
 
         <TabsContent value="files" className="space-y-6">
@@ -561,7 +836,7 @@ export default function InternationalPayments() {
               </DialogTrigger>
               <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
                 <DialogHeader><DialogTitle>{fileDraft.id ? "Modifier" : "Créer"} un dossier paiement international</DialogTitle></DialogHeader>
-                <PaymentFileForm draft={fileDraft} setDraft={setFileDraft} trips={trips} />
+                <PaymentFileForm draft={fileDraft} setDraft={setFileDraft} trips={trips} suppliers={suppliers} />
                 <DialogFooter><Button onClick={saveFile}><Save className="h-4 w-4" /> Enregistrer</Button></DialogFooter>
               </DialogContent>
             </Dialog>
@@ -620,6 +895,37 @@ export default function InternationalPayments() {
                       <Metric label="Déjà payé" value={fmtJPY(selectedFile.amount_already_paid)} />
                       <Metric label="Reste" value={fmtJPY(selectedFile.remaining_balance)} />
                     </div>
+                    <div className="grid gap-3 md:grid-cols-4">
+                      <Metric label="Participants" value={participants.length} />
+                      <Metric label="Passeports complets" value={`${passportCompletion}%`} />
+                      <Metric label="Checklist dossier" value={`${currentCompletion.percent}%`} />
+                      <Metric label="Paiement" value={`${paymentProgress}%`} />
+                    </div>
+                    <div className="grid gap-4 rounded-xl border border-border bg-secondary/20 p-4 md:grid-cols-[96px_1fr_1fr]">
+                      <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-lg border bg-background">
+                        {selectedSupplier?.logo_url || selectedSupplier?.logo_path ? (
+                          <img src={String(selectedSupplier.logo_url || selectedSupplier.logo_path)} alt="Logo fournisseur" className="h-full w-full object-contain p-2" />
+                        ) : (
+                          <Users className="h-7 w-7 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="text-sm">
+                        <p className="font-semibold">{selectedSupplier?.name || selectedFile.supplier_name || "Fournisseur non renseigné"}</p>
+                        <p className="text-muted-foreground">{supplierCategoryLabels[String(selectedSupplier?.category || "other")] ?? selectedSupplier?.category ?? "Fournisseur"}</p>
+                        <p className="mt-2 text-muted-foreground">{selectedSupplier?.email || "Email non renseigné"} · {selectedSupplier?.phone || "Téléphone non renseigné"}</p>
+                      </div>
+                      <div className="text-sm">
+                        <p className="font-medium">Contrat fournisseur</p>
+                        {selectedSupplier?.contract_path ? (
+                          <Button variant="outline" size="sm" className="mt-2" onClick={() => openSupplierAsset(selectedSupplier.contract_path)}>
+                            <Eye className="h-4 w-4" /> Aperçu contrat
+                          </Button>
+                        ) : (
+                          <p className="mt-1 text-amber-700">Contrat non renseigné</p>
+                        )}
+                        <p className="mt-2 text-muted-foreground">Banque: {selectedSupplier?.bank_name || "Non renseignée"}</p>
+                      </div>
+                    </div>
                     <div>
                       <div className="mb-2 flex items-center justify-between text-sm">
                         <span className="font-medium">Checklist bancaire</span>
@@ -653,11 +959,24 @@ export default function InternationalPayments() {
                   <TabsContent value="invoice">
                     <Card>
                       <CardHeader><CardTitle className="text-base">Génération facture fournisseur</CardTitle></CardHeader>
-                      <CardContent className="grid gap-4 md:grid-cols-4">
-                        <Field label="Participants"><Input type="number" value={invoiceDraft.participant_count} onChange={(event) => setInvoiceDraft((current) => ({ ...current, participant_count: event.target.value }))} /></Field>
-                        <Field label="Prix unitaire JPY"><Input type="number" value={invoiceDraft.unit_price_jpy} onChange={(event) => setInvoiceDraft((current) => ({ ...current, unit_price_jpy: event.target.value }))} /></Field>
-                        <Field label="Taxe %"><Input type="number" value={invoiceDraft.tax_percent} onChange={(event) => setInvoiceDraft((current) => ({ ...current, tax_percent: event.target.value }))} /></Field>
-                        <div className="flex items-end"><Button className="w-full" onClick={generateInvoice} disabled={busy === "invoice"}><FileText className="h-4 w-4" /> Générer facture</Button></div>
+                      <CardContent className="space-y-4">
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <Field label="N° facture"><Input value={invoiceDraft.invoice_number} onChange={(event) => setInvoiceDraft((current) => ({ ...current, invoice_number: event.target.value }))} /></Field>
+                          <Field label="Date facture"><Input type="date" value={invoiceDraft.issue_date} onChange={(event) => setInvoiceDraft((current) => ({ ...current, issue_date: event.target.value }))} /></Field>
+                          <Field label="Date échéance"><Input type="date" value={invoiceDraft.due_date} onChange={(event) => setInvoiceDraft((current) => ({ ...current, due_date: event.target.value }))} /></Field>
+                          <Field label="Participants">
+                            <Input type="number" value={invoiceDraft.participant_count} onChange={(event) => setInvoiceDraft((current) => ({ ...current, participant_count: event.target.value, override_count: true }))} />
+                          </Field>
+                          <Field label="Prix unitaire JPY"><Input type="number" value={invoiceDraft.unit_price_jpy} onChange={(event) => setInvoiceDraft((current) => ({ ...current, unit_price_jpy: event.target.value }))} /></Field>
+                          <Field label="Taxe %"><Input type="number" value={invoiceDraft.tax_percent} onChange={(event) => setInvoiceDraft((current) => ({ ...current, tax_percent: event.target.value }))} /></Field>
+                          <Field label="% paiement"><Input type="number" value={invoiceDraft.payment_percentage} onChange={(event) => setInvoiceDraft((current) => ({ ...current, payment_percentage: event.target.value }))} /></Field>
+                          <div className="rounded-lg border border-border p-3 text-sm md:col-span-2">
+                            <p>Sous-total: <strong>{fmtJPY(numberValue(invoiceDraft.participant_count) * numberValue(invoiceDraft.unit_price_jpy))}</strong></p>
+                            <p>Taxe: <strong>{fmtJPY(Math.round(numberValue(invoiceDraft.participant_count) * numberValue(invoiceDraft.unit_price_jpy) * numberValue(invoiceDraft.tax_percent) / 100))}</strong></p>
+                            <p>Montant dû maintenant: <strong>{fmtJPY(Math.round((numberValue(invoiceDraft.participant_count) * numberValue(invoiceDraft.unit_price_jpy) * (1 + numberValue(invoiceDraft.tax_percent) / 100)) * numberValue(invoiceDraft.payment_percentage) / 100))}</strong></p>
+                          </div>
+                        </div>
+                        <Button onClick={generateInvoice} disabled={busy === "invoice"}><FileText className="h-4 w-4" /> Générer facture</Button>
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -665,14 +984,32 @@ export default function InternationalPayments() {
                   <TabsContent value="participants">
                     <Card>
                       <CardHeader className="flex-row items-center justify-between space-y-0">
-                        <CardTitle className="text-base">Liste participants</CardTitle>
+                        <div>
+                          <CardTitle className="text-base">Liste participants</CardTitle>
+                          <p className="mt-1 text-sm text-muted-foreground">{participants.length} participant(s) · passeports {passportCompletion}%</p>
+                        </div>
                         <div className="flex flex-wrap gap-2">
+                          <Button variant="outline" size="sm" onClick={importParticipantsFromTrip} disabled={busy === "import-participants"}>
+                            <RefreshCw className="h-4 w-4" /> Importer depuis le voyage
+                          </Button>
+                          <Button size="sm" onClick={() => { setParticipantDraft(emptyParticipant); setParticipantDialogOpen(true); }}>
+                            <Plus className="h-4 w-4" /> Ajouter
+                          </Button>
                           <Button variant="outline" size="sm" onClick={() => exportParticipants("pdf")}><Download className="h-4 w-4" /> PDF</Button>
                           <Button variant="outline" size="sm" onClick={() => exportParticipants("excel")}><Download className="h-4 w-4" /> Excel</Button>
                         </div>
                       </CardHeader>
                       <CardContent>
-                        <ParticipantsTable participants={participants} />
+                        {participantsSqlMissing && (
+                          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                            Migration SQL V2 requise pour enregistrer les participants du dossier bancaire.
+                          </div>
+                        )}
+                        <ParticipantsTable
+                          participants={participants}
+                          onEdit={(participant) => { setParticipantDraft(participant); setParticipantDialogOpen(true); }}
+                          onDelete={deleteParticipant}
+                        />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -766,43 +1103,6 @@ export default function InternationalPayments() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="settings">
-          <Card>
-            <CardHeader><CardTitle>Paramètres partenaire Japon</CardTitle></CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 md:grid-cols-3">
-                {[
-                  ["partner_name", "Nom partenaire"],
-                  ["email", "Email"],
-                  ["phone", "Téléphone"],
-                  ["registration_number", "N° enregistrement"],
-                  ["corporate_number", "Corporate number"],
-                  ["bank_name", "Banque"],
-                  ["bank_code", "Code banque"],
-                  ["branch_code", "Code agence"],
-                  ["branch_name", "Nom agence"],
-                  ["account_type", "Type compte"],
-                  ["account_number", "N° compte"],
-                  ["account_name", "Nom compte"],
-                ].map(([key, label]) => (
-                  <Field key={key} label={label}><Input value={partner?.[key] ?? ""} onChange={(event) => setPartner((current: any) => ({ ...current, [key]: event.target.value }))} /></Field>
-                ))}
-                <Field label="Adresse" className="md:col-span-3"><Textarea rows={3} value={partner?.address ?? ""} onChange={(event) => setPartner((current: any) => ({ ...current, address: event.target.value }))} /></Field>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <PartnerUpload label="Logo" onFile={(file) => uploadPartnerAsset(file, "logo")} />
-                <PartnerUpload label="Cachet" onFile={(file) => uploadPartnerAsset(file, "stamp")} />
-                <PartnerUpload label="Contrat PDF par défaut" onFile={(file) => uploadPartnerAsset(file, "default_contract")} />
-              </div>
-              <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
-                <p>Logo: {partner.logo_path || "Non renseigné"}</p>
-                <p>Cachet: {partner.stamp_path || "Non renseigné"}</p>
-                <p>Contrat: {partner.default_contract_path || "Non renseigné"}</p>
-              </div>
-              <Button onClick={savePartner} disabled={busy === "partner"}><Save className="h-4 w-4" /> Enregistrer partenaire</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
     </div>
   );
@@ -823,8 +1123,16 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function PaymentFileForm({ draft, setDraft, trips }: { draft: any; setDraft: (updater: any) => void; trips: any[] }) {
+function PaymentFileForm({ draft, setDraft, trips, suppliers }: { draft: any; setDraft: (updater: any) => void; trips: any[]; suppliers: JapanSupplier[] }) {
   const update = (key: string, value: unknown) => setDraft((current: any) => ({ ...current, [key]: value }));
+  const updateSupplier = (supplierId: string) => {
+    const supplier = suppliers.find((item) => item.id === supplierId);
+    setDraft((current: any) => ({
+      ...current,
+      supplier_id: supplierId,
+      supplier_name: supplier?.name ?? current.supplier_name ?? "",
+    }));
+  };
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <Field label="Voyage" className="md:col-span-2">
@@ -833,12 +1141,25 @@ function PaymentFileForm({ draft, setDraft, trips }: { draft: any; setDraft: (up
           <SelectContent>{trips.map((trip) => <SelectItem key={trip.id} value={trip.id}>{trip.title}</SelectItem>)}</SelectContent>
         </Select>
       </Field>
-      <Field label="Partenaire / fournisseur"><Input value={draft.supplier_name ?? ""} onChange={(event) => update("supplier_name", event.target.value)} /></Field>
+      <Field label="Fournisseur Japon" className="md:col-span-2">
+        <Select value={draft.supplier_id ?? ""} onValueChange={updateSupplier}>
+          <SelectTrigger><SelectValue placeholder="Choisir un fournisseur" /></SelectTrigger>
+          <SelectContent>
+            {suppliers.filter((supplier) => supplier.status !== "inactive").map((supplier) => (
+              <SelectItem key={supplier.id} value={supplier.id!}>
+                {supplier.name} · {supplierCategoryLabels[String(supplier.category || "other")] ?? supplier.category}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
       <Field label="Référence paiement"><Input value={draft.payment_reference ?? ""} onChange={(event) => update("payment_reference", event.target.value)} /></Field>
       <Field label="N° facture"><Input value={draft.invoice_number ?? ""} onChange={(event) => update("invoice_number", event.target.value)} /></Field>
       <Field label="Devise"><Input value={draft.currency ?? "JPY"} onChange={(event) => update("currency", event.target.value)} /></Field>
       <Field label="Date émission"><Input type="date" value={draft.issue_date ?? ""} onChange={(event) => update("issue_date", event.target.value || null)} /></Field>
       <Field label="Date échéance"><Input type="date" value={draft.due_date ?? ""} onChange={(event) => update("due_date", event.target.value || null)} /></Field>
+      <Field label="Prix unitaire JPY"><Input type="number" value={draft.unit_price_jpy ?? 0} onChange={(event) => update("unit_price_jpy", event.target.value)} /></Field>
+      <Field label="Taxe %"><Input type="number" value={draft.tax_percent ?? 0} onChange={(event) => update("tax_percent", event.target.value)} /></Field>
       <Field label="Montant facture JPY"><Input type="number" value={draft.total_invoice_amount ?? 0} onChange={(event) => update("total_invoice_amount", event.target.value)} /></Field>
       <Field label="% paiement"><Input type="number" value={draft.payment_percentage ?? 100} onChange={(event) => update("payment_percentage", event.target.value)} /></Field>
       <Field label="Déjà payé JPY"><Input type="number" value={draft.amount_already_paid ?? 0} onChange={(event) => update("amount_already_paid", event.target.value)} /></Field>
@@ -853,26 +1174,64 @@ function PaymentFileForm({ draft, setDraft, trips }: { draft: any; setDraft: (up
   );
 }
 
-function ParticipantsTable({ participants }: { participants: InternationalPaymentParticipant[] }) {
+function ParticipantForm({
+  draft,
+  setDraft,
+}: {
+  draft: InternationalPaymentParticipant;
+  setDraft: Dispatch<SetStateAction<InternationalPaymentParticipant>>;
+}) {
+  const update = (key: keyof InternationalPaymentParticipant, value: string) => setDraft((current) => ({ ...current, [key]: value }));
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <Field label="Nom complet" className="md:col-span-2"><Input value={draft.full_name ?? ""} onChange={(event) => update("full_name", event.target.value)} /></Field>
+      <Field label="Passeport"><Input value={draft.passport_no ?? ""} onChange={(event) => update("passport_no", event.target.value)} /></Field>
+      <Field label="Nationalité"><Input value={draft.nationality ?? ""} onChange={(event) => update("nationality", event.target.value)} /></Field>
+      <Field label="Date de naissance"><Input type="date" value={draft.birth_date || draft.date_of_birth || ""} onChange={(event) => update("birth_date", event.target.value)} /></Field>
+      <Field label="Type chambre"><Input value={draft.room_type ?? ""} onChange={(event) => update("room_type", event.target.value)} /></Field>
+      <Field label="Référence réservation"><Input value={draft.booking_reference ?? ""} onChange={(event) => update("booking_reference", event.target.value)} /></Field>
+      <Field label="CIN"><Input value={draft.cin ?? ""} onChange={(event) => update("cin", event.target.value)} /></Field>
+      <Field label="Adresse" className="md:col-span-2"><Input value={draft.address ?? ""} onChange={(event) => update("address", event.target.value)} /></Field>
+      <Field label="Ville"><Input value={draft.city ?? ""} onChange={(event) => update("city", event.target.value)} /></Field>
+      <Field label="Chemin copie passeport"><Input value={draft.passport_copy_path ?? ""} onChange={(event) => update("passport_copy_path", event.target.value)} /></Field>
+    </div>
+  );
+}
+
+function ParticipantsTable({
+  participants,
+  onEdit,
+  onDelete,
+}: {
+  participants: InternationalPaymentParticipant[];
+  onEdit: (participant: InternationalPaymentParticipant) => void;
+  onDelete: (participant: InternationalPaymentParticipant) => void;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[1000px] text-sm">
         <thead className="bg-secondary/60 text-left">
           <tr>
-            <th className="p-3">Nom</th><th className="p-3">Passeport</th><th className="p-3">Nationalité</th><th className="p-3">Naissance</th><th className="p-3">Réservation</th><th className="p-3">Chambre</th><th className="p-3">Copie passeport</th>
+            <th className="p-3">Nom</th><th className="p-3">Passeport</th><th className="p-3">Nationalité</th><th className="p-3">Naissance</th><th className="p-3">Réservation</th><th className="p-3">Chambre</th><th className="p-3">Copie passeport</th><th className="p-3"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
-          {participants.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">Aucun participant trouvé pour ce voyage.</td></tr>}
+          {participants.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">Aucun participant. Importez depuis le voyage ou ajoutez une ligne manuellement.</td></tr>}
           {participants.map((participant: any) => (
             <tr key={participant.id || participant.full_name}>
               <td className="p-3 font-medium">{participant.full_name}</td>
               <td className="p-3">{participant.passport_no || "—"}</td>
               <td className="p-3">{participant.nationality || "—"}</td>
-              <td className="p-3">{fmtDate(participant.date_of_birth)}</td>
+              <td className="p-3">{fmtDate(participant.birth_date || participant.date_of_birth)}</td>
               <td className="p-3">{participant.booking_reference || "—"}</td>
               <td className="p-3">{participant.room_type || "—"}</td>
-              <td className="p-3">{participant.passport_copy_path ? <Badge variant="secondary">OK</Badge> : <Badge variant="destructive">Copie passeport manquante</Badge>}</td>
+              <td className="p-3">{participant.passport_copy_path ? <Badge variant="secondary">OK</Badge> : <Badge variant="destructive">Passeport manquant</Badge>}</td>
+              <td className="p-3">
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" size="icon" onClick={() => onEdit(participant)} aria-label="Modifier participant"><Edit3 className="h-4 w-4" /></Button>
+                  <Button variant="outline" size="icon" onClick={() => onDelete(participant)} aria-label="Supprimer participant"><Trash2 className="h-4 w-4" /></Button>
+                </div>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -901,15 +1260,5 @@ function DocumentsList({ docs, onDownload }: { docs: any[]; onDownload: (doc: an
         </tbody>
       </table>
     </div>
-  );
-}
-
-function PartnerUpload({ label, onFile }: { label: string; onFile: (file: File) => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  return (
-    <>
-      <input ref={ref} type="file" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onFile(file); }} />
-      <Button type="button" variant="outline" onClick={() => ref.current?.click()}><Upload className="h-4 w-4" /> {label}</Button>
-    </>
   );
 }

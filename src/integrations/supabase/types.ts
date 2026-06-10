@@ -349,6 +349,7 @@ export type Database = {
           formula: string | null
           id: string
           message: string | null
+          metadata: Json
           num_adults: number
           num_children: number
           paid_amount_mad: number
@@ -372,6 +373,7 @@ export type Database = {
           formula?: string | null
           id?: string
           message?: string | null
+          metadata?: Json
           num_adults?: number
           num_children?: number
           paid_amount_mad?: number
@@ -395,6 +397,7 @@ export type Database = {
           formula?: string | null
           id?: string
           message?: string | null
+          metadata?: Json
           num_adults?: number
           num_children?: number
           paid_amount_mad?: number
@@ -1327,6 +1330,7 @@ export type Database = {
         Row: {
           amount_mad: number
           booking_id: string
+          client_id: string | null
           created_at: string
           id: string
           method: string | null
@@ -1339,6 +1343,7 @@ export type Database = {
         Insert: {
           amount_mad: number
           booking_id: string
+          client_id?: string | null
           created_at?: string
           id?: string
           method?: string | null
@@ -1351,6 +1356,7 @@ export type Database = {
         Update: {
           amount_mad?: number
           booking_id?: string
+          client_id?: string | null
           created_at?: string
           id?: string
           method?: string | null

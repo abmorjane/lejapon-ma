@@ -11,6 +11,7 @@ import { fmtDate } from "@/lib/format";
 import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
 import { useRecaptcha } from "@/hooks/useRecaptcha";
 import { trackEvent } from "@/lib/analytics";
+import { findOrCreateClientForBooking } from "@/lib/crm-client";
 import {
   CHILD_DISCOUNT_MAD,
   HOTEL_SUPPLEMENT,
@@ -226,16 +227,20 @@ const Booking = () => {
         ? (tripMeta.season || tripMeta.title) +
           (tripMeta.start_date ? ` — ${fmtDate(tripMeta.start_date)}` : "")
         : null;
-      // Auto-add to CRM via SECURITY DEFINER RPC (anti-doublon email/phone)
       let clientId: string | null = null;
       try {
-        const { data: upsertedId } = await supabase.rpc("upsert_client_from_booking" as any, {
-          _name: info.name || "",
-          _email: info.email || "",
-          _phone: info.phone || "",
-          _city: info.city || "",
+        const result = await findOrCreateClientForBooking({
+          full_name: info.name || "",
+          email: info.email || "",
+          phone: info.phone || "",
+          city: info.city || "",
+          source: "website_booking",
+          metadata: {
+            booking_notes: info.notes || null,
+            selected_trip_id: tripMeta?.id ?? null,
+          },
         });
-        clientId = (upsertedId as string) ?? null;
+        clientId = result.clientId ?? null;
       } catch {
         clientId = null;
       }
