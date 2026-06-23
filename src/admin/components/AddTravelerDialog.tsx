@@ -18,6 +18,7 @@ type Props = {
   onOpenChange: (v: boolean) => void;
   bookingId: string;
   tripId?: string | null;
+  expectedTravelers?: number;
   onSaved?: () => void;
 };
 
@@ -45,7 +46,7 @@ const schema = z.object({
   passport_no: z.string().trim().max(40).optional().or(z.literal("")),
 });
 
-export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSaved }: Props) {
+export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expectedTravelers = 0, onSaved }: Props) {
   const { isAdmin } = useAuth();
   const [form, setForm] = useState<any>({
     first_name: "", last_name: "", sex: "", date_of_birth: "",
@@ -80,6 +81,16 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
     if (!parsed.success) { toast.error(parsed.error.errors[0].message); return; }
     setBusy(true);
     try {
+      const { count: participantCount } = await supabase
+        .from("booking_participants")
+        .select("id", { count: "exact", head: true })
+        .eq("booking_id", bookingId);
+      if (expectedTravelers > 0 && (participantCount ?? 0) >= expectedTravelers) {
+        toast.error("Le nombre de voyageurs prévus est déjà atteint.");
+        setBusy(false);
+        return;
+      }
+
       const fullName = `${form.first_name} ${form.last_name}`.trim();
       const { data: rpc, error: rpcErr } = await supabase.rpc("find_or_create_client_for_participant", {
         _full_name: fullName,
@@ -99,7 +110,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
           .eq("booking_id", bookingId)
           .eq("client_id", clientId);
         if ((count ?? 0) > 0) {
-          toast.error("Ce client est déjà associé à cette réservation");
+          toast.error("Ce voyageur est déjà associé à cette réservation.");
           setBusy(false);
           return;
         }
@@ -147,7 +158,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, onSav
       } as any);
       if (insErr) throw insErr;
 
-      toast.success(wasExisting ? "Client existant associé" : "Voyageur ajouté");
+      toast.success(wasExisting ? "Voyageur associé" : "Voyageur ajouté");
       setForm({
         first_name: "", last_name: "", sex: "", date_of_birth: "",
         profession: "", marital_status: "", address: "",

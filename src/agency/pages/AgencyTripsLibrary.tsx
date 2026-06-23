@@ -226,7 +226,7 @@ export default function AgencyTripsLibrary() {
                       <Button
                         size="sm"
                         onClick={() => {
-                          trackEvent("download_trip_pdf", { source: "agency_trips_library", trip_id: trip.id });
+                          trackEvent("pdf_downloaded", { source: "agency_trips_library", pdf_type: "trip", trip_id: trip.id });
                           void generateTripPdf(trip);
                         }}
                       >
@@ -240,8 +240,9 @@ export default function AgencyTripsLibrary() {
                             toast.info("Aucun PDF programme n'est attaché à ce voyage.");
                             return;
                           }
-                          trackEvent("download_programme_pdf", {
+                          trackEvent("pdf_downloaded", {
                             source: "agency_trips_library",
+                            pdf_type: "programme",
                             trip_id: trip.id,
                             programme_id: trip.programme_id ?? null,
                           });

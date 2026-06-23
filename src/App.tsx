@@ -16,6 +16,7 @@ import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from
 import { useRouteSlugs, DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
 import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
 import { initAnalytics, trackPageView } from "@/lib/analytics";
+import { installWebViewGuards } from "@/lib/webview-guards";
 
 const queryClient = new QueryClient();
 
@@ -28,6 +29,7 @@ const Blog = lazy(() => import("./pages/Blog.tsx"));
 const BlogPost = lazy(() => import("./pages/BlogPost.tsx"));
 const Contact = lazy(() => import("./pages/Contact.tsx"));
 const Booking = lazy(() => import("./pages/Booking.tsx"));
+const FitQuotePublic = lazy(() => import("./pages/FitQuotePublic.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 const Unsubscribe = lazy(() => import("@/pages/Unsubscribe"));
 const VisaList = lazy(() => import("@/pages/visa/VisaList"));
@@ -41,6 +43,7 @@ const AgencyLayout = lazy(() => import("@/agency/components/AgencyLayout"));
 const AgencyDashboard = lazy(() => import("@/agency/pages/AgencyDashboard"));
 const AgencyBookings = lazy(() => import("@/agency/pages/AgencyBookings"));
 const AgencyBookingDetail = lazy(() => import("@/agency/pages/AgencyBookingDetail"));
+const AgencyFitQuotes = lazy(() => import("@/agency/pages/AgencyFitQuotes"));
 const AgencyTripsLibrary = lazy(() => import("@/agency/pages/AgencyTripsLibrary"));
 const AgencyProgrammesLibrary = lazy(() => import("@/agency/pages/AgencyProgrammesLibrary"));
 const AgencyHotels = lazy(() => import("@/agency/pages/AgencyHotels"));
@@ -57,6 +60,7 @@ const AdminClients = lazy(() => import("@/admin/pages/Clients"));
 const AdminExtras = lazy(() => import("@/admin/pages/Extras"));
 const AdminSuppliers = lazy(() => import("@/admin/pages/Suppliers"));
 const AdminSupplierCosts = lazy(() => import("@/admin/pages/SupplierCosts"));
+const AdminFitQuotes = lazy(() => import("@/admin/pages/FitQuotes"));
 const AdminInternationalPayments = lazy(() => import("@/admin/pages/InternationalPayments"));
 const AdminArticles = lazy(() => import("@/admin/pages/Articles"));
 const AdminPages = lazy(() => import("@/admin/pages/Pages"));
@@ -106,6 +110,7 @@ const AnalyticsRouteTracker = () => {
   const location = useLocation();
 
   useEffect(() => {
+    installWebViewGuards();
     initAnalytics();
   }, []);
 
@@ -151,6 +156,7 @@ const AppRoutes = () => {
         <Route index element={<RequireActiveAgencyMember><AgencyDashboard /></RequireActiveAgencyMember>} />
         <Route path="bookings" element={<RequireActiveAgencyMember><AgencyBookings /></RequireActiveAgencyMember>} />
         <Route path="bookings/:id" element={<RequireActiveAgencyMember><AgencyBookingDetail /></RequireActiveAgencyMember>} />
+        <Route path="fit-quotes" element={<RequireActiveAgencyMember><AgencyFitQuotes /></RequireActiveAgencyMember>} />
         <Route path="reservations" element={<RequireActiveAgencyMember><AgencyBookings /></RequireActiveAgencyMember>} />
         <Route path="reservations/:id" element={<RequireActiveAgencyMember><AgencyBookingDetail /></RequireActiveAgencyMember>} />
         <Route path="trips" element={<RequireActiveAgencyMember><AgencyTripsLibrary /></RequireActiveAgencyMember>} />
@@ -171,8 +177,31 @@ const AppRoutes = () => {
         <Route path="/blog/:slug" element={<BlogPost />} />
         <Route path={`/${get("contact")}`} element={<Contact />} />
         <Route path={`/${get("booking")}`} element={<Booking />} />
+        <Route path="/devis-fit/:token" element={<FitQuotePublic />} />
         <Route path={`/${get("programme")}`} element={<ProgrammePage />} />
         <Route path="/devenir-partenaire" element={<PartnerAcquisition />} />
+        {get("visa") !== "visa" && (
+          <Route path="/visa" element={<PreservingRedirect to={`/${get("visa")}`} />} />
+        )}
+
+        {/* Legacy WordPress taxonomy/system URLs */}
+        <Route path="/tag/visa-japon" element={<PreservingRedirect to="/visa" />} />
+        <Route path="/tag/voyage-japon" element={<PreservingRedirect to={`/${get("programme")}`} />} />
+        <Route path="/tag/prix-japon" element={<PreservingRedirect to="/prix" />} />
+        <Route path="/tag/blog" element={<PreservingRedirect to={`/${get("blog")}`} />} />
+        <Route path="/tag/japon" element={<PreservingRedirect to={`/${get("blog")}`} />} />
+        <Route path="/tag" element={<NotFound />} />
+        <Route path="/tag/*" element={<NotFound />} />
+        <Route path="/category" element={<NotFound />} />
+        <Route path="/category/*" element={<NotFound />} />
+        <Route path="/author" element={<NotFound />} />
+        <Route path="/author/*" element={<NotFound />} />
+        <Route path="/wp-content" element={<NotFound />} />
+        <Route path="/wp-content/*" element={<NotFound />} />
+        <Route path="/wp-json" element={<NotFound />} />
+        <Route path="/wp-json/*" element={<NotFound />} />
+        <Route path="/feed" element={<NotFound />} />
+        <Route path="/feed/*" element={<NotFound />} />
 
         {/* FAQ — multilingue, l'URL FR conserve l'ancien slug WordPress pour le SEO */}
         <Route path="/mon-voyage-questions-reponses" element={<FaqPage lang="fr" />} />
@@ -236,6 +265,9 @@ const AppRoutes = () => {
         <Route path="trips/:tripId" element={<SupplierTripCosts />} />
         <Route path="trips/:tripId/quote" element={<SupplierTripCosts />} />
       </Route>
+      <Route path="/sales" element={<AdminLayout />}>
+        <Route path="fit-quotes" element={<RequireRole module="partner_fit_quotes"><AgencyFitQuotes mode="sales" /></RequireRole>} />
+      </Route>
       <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<AdminDashboard />} />
         <Route path="trips" element={<RequireRole module="trips"><AdminTrips /></RequireRole>} />
@@ -247,6 +279,7 @@ const AppRoutes = () => {
         <Route path="extras" element={<RequireRole module="extras"><AdminExtras /></RequireRole>} />
         <Route path="suppliers" element={<RequireRole module="suppliers"><AdminSuppliers /></RequireRole>} />
         <Route path="supplier-costs" element={<RequireRole module="supplier_costs"><AdminSupplierCosts /></RequireRole>} />
+        <Route path="fit-quotes" element={<RequireRole module="fit_quotes"><AdminFitQuotes /></RequireRole>} />
         <Route path="international-payments" element={<RequireRole module="international_payments"><AdminInternationalPayments /></RequireRole>} />
         <Route path="articles" element={<RequireRole module="articles"><AdminArticles /></RequireRole>} />
         <Route path="pages" element={<RequireRole module="pages"><AdminPages /></RequireRole>} />

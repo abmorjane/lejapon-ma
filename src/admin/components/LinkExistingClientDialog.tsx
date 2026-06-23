@@ -7,12 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Search } from "lucide-react";
+import { findMatchingParticipantForClient } from "@/admin/lib/booking-participants";
 
 type Props = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   bookingId: string;
   tripId?: string | null;
+  expectedTravelers?: number;
   onSaved?: () => void;
 };
 
@@ -25,7 +27,7 @@ const RELATIONS = [
   { v: "other", l: "Autre" },
 ];
 
-export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId, onSaved }: Props) {
+export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId, expectedTravelers = 0, onSaved }: Props) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
@@ -54,26 +56,20 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
     if (!selected) return;
     setBusy(true);
     try {
-      const { count } = await supabase
+      const { count: alreadyLinkedCount } = await supabase
         .from("booking_participants")
         .select("id", { count: "exact", head: true })
         .eq("booking_id", bookingId)
         .eq("client_id", selected.id);
 
-      const { error: bookingError } = await supabase.from("bookings").update({ client_id: selected.id } as any).eq("id", bookingId);
-      if (bookingError) throw bookingError;
-
-      if ((count ?? 0) > 0) {
-        toast.success("Réservation associée au client.");
+      if ((alreadyLinkedCount ?? 0) > 0) {
+        toast.error("Ce voyageur est déjà associé à cette réservation.");
         onOpenChange(false);
         onSaved?.();
         setBusy(false);
         return;
       }
 
-      const parts = (selected.full_name || "").trim().split(/\s+/);
-      const first = parts[0] || "";
-      const last = parts.slice(1).join(" ") || "";
       const { data: existingParticipants } = await supabase
         .from("booking_participants")
         .select("*")
@@ -81,15 +77,18 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
         .order("is_lead", { ascending: false })
         .order("created_at", { ascending: true });
 
-      const normalize = (value?: string | null) => String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
-      const selectedName = normalize(selected.full_name);
-      const selectedPassport = String(selected.passport_number ?? "").replace(/[\s-]+/g, "").toUpperCase();
-      const matchingParticipant = (existingParticipants ?? []).find((participant: any) => {
-        const participantName = normalize(`${participant.first_name ?? ""} ${participant.last_name ?? ""}`);
-        const participantPassport = String(participant.passport_no ?? "").replace(/[\s-]+/g, "").toUpperCase();
-        return participant.is_lead || (selectedPassport && participantPassport === selectedPassport) || (selectedName && participantName === selectedName);
-      });
+      const matchingParticipant = findMatchingParticipantForClient(existingParticipants ?? [], selected);
 
+      const participantCount = existingParticipants?.length ?? 0;
+      if (!matchingParticipant?.id && expectedTravelers > 0 && participantCount >= expectedTravelers) {
+        toast.error("Le nombre de voyageurs prévus est déjà atteint.");
+        setBusy(false);
+        return;
+      }
+
+      const parts = (selected.full_name || "").trim().split(/\s+/);
+      const first = parts[0] || "";
+      const last = parts.slice(1).join(" ") || "";
       const payload = {
         client_id: selected.id,
         first_name: first,
@@ -118,7 +117,7 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
             trip_id: tripId ?? null,
           });
       if (error) throw error;
-      toast.success("Client associé à la réservation");
+      toast.success("Voyageur associé");
       onOpenChange(false);
       onSaved?.();
     } catch (e: any) {

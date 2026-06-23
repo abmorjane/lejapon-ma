@@ -116,8 +116,9 @@ export default function AgencyProgrammesLibrary() {
 
   const downloadSummaryPdf = async () => {
     if (!activeProgramme) return;
-    trackEvent("download_programme_pdf", {
+    trackEvent("pdf_downloaded", {
       source: "agency_programmes_library_summary",
+      pdf_type: "programme_summary",
       programme_id: activeProgramme.id,
     });
     const pdfDoc = await PDFDocument.create();
@@ -206,8 +207,9 @@ export default function AgencyProgrammesLibrary() {
                 href={activeProgramme.pdf_url}
                 target="_blank"
                 rel="noreferrer"
-                onClick={() => trackEvent("download_programme_pdf", {
+                onClick={() => trackEvent("pdf_downloaded", {
                   source: "agency_programmes_library_attached",
+                  pdf_type: "programme",
                   programme_id: activeProgramme.id,
                 })}
               >

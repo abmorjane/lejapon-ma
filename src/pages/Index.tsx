@@ -10,6 +10,7 @@ import { Img } from "@/components/ui/Img";
 import { NewsletterSection } from "@/components/site/NewsletterSection";
 import { TripCard, TripCardSkeleton, type TripCardData } from "@/components/trips/TripCard";
 import { useSiteContent } from "@/hooks/useSiteContent";
+import { trackEvent } from "@/lib/analytics";
 import hero from "@/assets/hero-fuji.jpg";
 import kyoto from "@/assets/kyoto-alley.jpg";
 import shibuya from "@/assets/tokyo-shibuya.jpg";
@@ -326,14 +327,13 @@ const Index = () => {
                 <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
                 {c.hero_badge}
               </span>
-              <h1 className="font-display text-6xl md:text-7xl lg:text-[5.5rem] leading-[1] text-white text-balance">
+              <h1 className="font-display text-5xl leading-[1] text-white text-balance sm:text-6xl md:text-7xl lg:text-[5.5rem]">
                 {(c.hero_title_l1 || "").split(",").map((part, i, arr) => (
-                  <span key={i} className="text-6xl">
+                  <span key={i} className="block">
                     {part.trim()}{i < arr.length - 1 ? "," : ""}
-                    <br/>
                   </span>
                 ))}
-                <span className="text-gradient text-6xl">{c.hero_title_l2}</span>
+                <span className="block text-gradient">{c.hero_title_l2}</span>
               </h1>
               <p className="mt-8 text-lg md:text-xl max-w-2xl text-white/90 leading-relaxed">
                 {c.hero_subtitle}
@@ -361,7 +361,11 @@ const Index = () => {
           </div>
 
           <div className="relative z-30 mt-8 flex flex-wrap items-center gap-4 lg:mt-2">
-            <Link to="/reserver" className="btn-primary text-base">
+            <Link
+              to="/reserver"
+              className="btn-primary text-base"
+              onClick={() => trackEvent("reservation_cta_clicked", { placement: "home_hero_primary" })}
+            >
               {c.hero_cta_primary} <ArrowRight className="w-5 h-5" />
             </Link>
             <Link to="/voyages" className="btn-ghost text-base !bg-white/10 !backdrop-blur-md !text-white !border-white/30 hover:!bg-white hover:!text-foreground">
@@ -390,10 +394,14 @@ const Index = () => {
         </div>
 
         {/* scroll hint */}
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/60 text-xs flex flex-col items-center gap-2">
+        <a
+          href="#prochains-departs"
+          className="absolute bottom-6 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 text-xs text-white/60 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-2 focus-visible:ring-offset-foreground"
+          aria-label="Découvrir les prochains départs"
+        >
           <span>{c.hero_scroll}</span>
           <div className="w-px h-8 bg-white/40" />
-        </div>
+        </a>
       </section>
 
       {/* STATS BAR */}
@@ -430,7 +438,11 @@ const Index = () => {
             <p className="mt-5 max-w-2xl text-lg leading-relaxed text-foreground/70">{m.advantagesIntro}</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link to="/reserver" className="btn-primary">
+            <Link
+              to="/reserver"
+              className="btn-primary"
+              onClick={() => trackEvent("reservation_cta_clicked", { placement: "home_advantages" })}
+            >
               {m.reserve} <ArrowRight className="h-4 w-4" />
             </Link>
             <Link to="/contact" className="btn-ghost">
@@ -442,7 +454,7 @@ const Index = () => {
           {m.advantages.map(([title, description], index) => {
             const Icon = advantageIcons[index] ?? CheckCircle;
             return (
-              <article key={title} className="rounded-2xl border border-border bg-background p-5 shadow-soft">
+              <article key={title} className="min-h-[210px] rounded-2xl border border-border bg-background p-5 shadow-soft">
                 <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-accent/12 text-accent">
                   <Icon className="h-5 w-5" />
                 </div>
@@ -455,7 +467,7 @@ const Index = () => {
       </section>
 
       {/* TRIPS — featured cards */}
-      <section className="container-app py-24 md:py-32">
+      <section id="prochains-departs" className="container-app scroll-mt-28 py-24 md:py-32">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-14">
           <div className="max-w-2xl">
             <span className="eyebrow mb-3">{c.trips_eyebrow}</span>
@@ -611,7 +623,7 @@ const Index = () => {
             {extrasLoading ? (
               Array.from({ length: 6 }).map((_, index) => <ExperienceSkeleton key={index} dark />)
             ) : extras.slice(0, 6).map((e, i) => (
-              <article key={e.id} className="group overflow-hidden rounded-3xl bg-background/5 transition-all hover:bg-background/10">
+              <article key={e.id} className="overflow-hidden rounded-3xl bg-background/5">
                 <div className="aspect-[16/10] min-h-[190px] overflow-hidden">
                   <Img
                     src={e.image_url || extraFallbackImgs[i % extraFallbackImgs.length]}
@@ -619,7 +631,7 @@ const Index = () => {
                     preset="card"
                     width={800}
                     height={500}
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-silk"
+                    className="w-full h-full object-cover"
                   />
                 </div>
                 <div className="min-h-[145px] p-6">
@@ -715,7 +727,11 @@ const Index = () => {
             <h2 className="font-display text-4xl md:text-6xl text-balance leading-[1.05]">{c.cta_title}</h2>
             <p className="mt-5 text-background/85 text-lg max-w-md">{c.cta_subtitle}</p>
             <div className="mt-10 flex flex-wrap gap-4">
-              <Link to="/reserver" className="btn-primary text-base">
+              <Link
+                to="/reserver"
+                className="btn-primary text-base"
+                onClick={() => trackEvent("reservation_cta_clicked", { placement: "home_final_cta" })}
+              >
                 {c.cta_primary} <ArrowRight className="w-5 h-5" />
               </Link>
               <Link to="/contact" className="btn-ghost text-base !bg-white/10 !text-white !border-white/30 hover:!bg-white hover:!text-foreground">

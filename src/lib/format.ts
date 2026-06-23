@@ -1,5 +1,5 @@
 export const fmtMAD = (n: number | null | undefined) =>
-  new Intl.NumberFormat("fr-FR").format(Number(n || 0)) + " MAD";
+  new Intl.NumberFormat("fr-FR").format(Math.round(Number(n || 0))) + " MAD";
 
 export const fmtDate = (d: string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }) : "—";

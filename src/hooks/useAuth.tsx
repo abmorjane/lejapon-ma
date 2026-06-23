@@ -72,7 +72,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signOut = async () => { await supabase.auth.signOut(); };
 
   const isStaff = roles.some((r) =>
-    ["super_admin", "admin", "manager", "sales", "sales_user", "agent", "content_manager", "supplier"].includes(r)
+    ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent", "content_manager", "supplier"].includes(r)
   );
   const isAdmin = roles.includes("admin") || roles.includes("super_admin");
   const isSuperAdmin = roles.includes("super_admin");

@@ -137,3 +137,7 @@ export function useAgencyContext() {
   if (!context) throw new Error("useAgencyContext must be used within AgencyProvider");
   return context;
 }
+
+export function useOptionalAgencyContext() {
+  return useContext(AgencyContext);
+}

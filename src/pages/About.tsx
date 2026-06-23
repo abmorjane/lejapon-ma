@@ -147,8 +147,8 @@ const About = () => {
             { icon: MapPin, t: "Expériences authentiques", d: "Geishas, cérémonie du thé, ryokans, marchés cachés — le Japon des Japonais." },
             { icon: ShieldCheck, t: "Aucun stress", d: "Vous n'avez qu'à profiter. On s'occupe de tout, dans les moindres détails." },
           ].map((item, i) => (
-            <motion.div key={item.t} {...fade(i * 0.08)} className="group relative p-7 rounded-2xl border border-border bg-card hover:shadow-card hover:-translate-y-1 transition-all duration-500">
-              <div className="w-12 h-12 rounded-xl bg-accent/10 text-accent flex items-center justify-center mb-5 group-hover:bg-accent group-hover:text-accent-foreground transition-colors">
+            <motion.div key={item.t} {...fade(i * 0.08)} className="relative p-7 rounded-2xl border border-border bg-card shadow-soft">
+              <div className="w-12 h-12 rounded-xl bg-accent/10 text-accent flex items-center justify-center mb-5">
                 <item.icon className="w-5 h-5" />
               </div>
               <h3 className="font-display text-xl mb-2">{item.t}</h3>

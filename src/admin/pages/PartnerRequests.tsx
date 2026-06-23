@@ -80,7 +80,14 @@ type PartnerRequestRow = {
 };
 
 type ConversionResponse = {
+  success?: boolean;
   ok?: boolean;
+  error_code?: string;
+  code?: string;
+  message?: string;
+  http_status?: number;
+  already_exists?: boolean;
+  partner_request_id?: string | null;
   organization_id?: string | null;
   onboarding_case_id?: string | null;
   user_id?: string | null;
@@ -141,6 +148,43 @@ const statusBadgeClass = (status: PartnerRequestStatus) =>
 
 const isMissingTableError = (message: string) =>
   /partner_requests|schema cache|relation .* does not exist|could not find/i.test(message);
+
+const isResponseLike = (value: unknown): value is Response =>
+  Boolean(value && typeof value === "object" && "clone" in value && "status" in value);
+
+const getFunctionErrorPayload = async (error: unknown): Promise<ConversionResponse> => {
+  const fallback =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : "Erreur inconnue.";
+  const context = error && typeof error === "object" && "context" in error
+    ? (error as { context?: unknown }).context
+    : null;
+
+  if (isResponseLike(context)) {
+    try {
+      const payload = (await context.clone().json()) as ConversionResponse;
+      return {
+        ...payload,
+        http_status: payload.http_status ?? context.status,
+        message: payload.message || payload.error || fallback,
+        error: payload.error || payload.message || fallback,
+      };
+    } catch {
+      try {
+        const text = await context.clone().text();
+        if (text.trim()) return { ok: false, success: false, message: text.trim(), error: text.trim(), http_status: context.status };
+      } catch {
+        // Keep the SDK fallback below.
+      }
+    }
+  }
+
+  return { ok: false, success: false, message: fallback || "Erreur inconnue.", error: fallback || "Erreur inconnue." };
+};
+
+const conversionMessage = (response: ConversionResponse) =>
+  response.message || response.error || "Erreur inconnue.";
 
 export default function PartnerRequestsAdmin() {
   const { user, isAdmin, isSuperAdmin } = useAuth();
@@ -247,6 +291,27 @@ export default function PartnerRequestsAdmin() {
     setBusy(false);
   };
 
+  const markSelectedConverted = async () => {
+    if (!selected || !user) return;
+
+    const { data, error: updateError } = await db
+      .from("partner_requests")
+      .update({
+        status: "converted",
+        reviewed_by: user.id,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", selected.id)
+      .select(PARTNER_REQUEST_COLUMNS)
+      .single();
+
+    if (updateError) {
+      toast.error(updateError.message ?? "Dossier créé, mais statut de la demande non mis à jour.");
+    } else {
+      updateLocalRow(data as PartnerRequestRow);
+    }
+  };
+
   const softDelete = async () => {
     if (!deleteTarget || !user || !isSuperAdmin) return;
     setBusy(true);
@@ -282,31 +347,53 @@ export default function PartnerRequestsAdmin() {
     setBusy(true);
     setConversionResponse(null);
 
+    const conversionPayload = {
+      partner_request_id: selected.id,
+      partnership_request_id: selected.id,
+      lead_id: selected.id,
+      request_snapshot: {
+        id: selected.id,
+        agency_name: selected.agency_name,
+        manager_name: selected.manager_name,
+        email: selected.email,
+        phone: selected.phone,
+        city_country: selected.city_country,
+        website_social: selected.website_social,
+        partnership_type: selected.partnership_type,
+        status: selected.status,
+      },
+    };
+    console.info("[partner-requests] create onboarding payload", conversionPayload);
+
     const { data, error: functionError } = await supabase.functions.invoke("convert-partner-request", {
-      body: { partner_request_id: selected.id },
+      body: conversionPayload,
     });
 
     if (functionError) {
-      const response = {
-        ok: false,
-        error: functionError.message ?? "Edge Function returned a non-2xx status code.",
-      };
+      const response = await getFunctionErrorPayload(functionError);
+      const reason = conversionMessage(response);
+      console.error("[partner-requests] create onboarding failed", response);
       setConversionResponse(response);
-      toast.error(response.error);
+      toast.error(`Impossible de créer le dossier d'onboarding : ${reason}`);
       setBusy(false);
       return;
     }
 
     const response = (data ?? {}) as ConversionResponse;
+    console.info("[partner-requests] create onboarding response", response);
     setConversionResponse(response);
 
-    if (response.ok === false) {
-      toast.error(response.error || "Conversion incomplète. Consultez la réponse brute.");
-    } else if (!response.organization_id || !response.onboarding_case_id || !response.user_id || !response.member_id) {
-      toast.error("Conversion partielle. Certains identifiants sont manquants.");
+    if (response.success === false || response.ok === false) {
+      const reason = conversionMessage(response);
+      toast.error(`Impossible de créer le dossier d'onboarding : ${reason}`);
+    } else if (!response.organization_id || !response.onboarding_case_id) {
+      toast.error("Impossible de créer le dossier d'onboarding : identifiants organisation ou dossier manquants.");
+    } else if (response.already_exists) {
+      toast.success(response.message || "Un dossier d'onboarding existe déjà pour cette demande.");
+      await markSelectedConverted();
     } else {
-      toast.success("Dossier d'onboarding créé.");
-      await updateStatus("converted");
+      toast.success(response.message || "Dossier d'onboarding créé.");
+      await markSelectedConverted();
     }
 
     setBusy(false);

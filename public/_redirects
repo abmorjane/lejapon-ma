@@ -1,0 +1,23 @@
+# Legacy WordPress taxonomy redirects with explicit SEO destinations.
+/tag/visa-japon/        /visa       301
+/tag/visa-japon         /visa       301
+/tag/voyage-japon/      /programme  301
+/tag/voyage-japon       /programme  301
+/tag/prix-japon/        /prix       301
+/tag/prix-japon         /prix       301
+/tag/blog/              /blog       301
+/tag/blog               /blog       301
+/tag/japon/             /blog       301
+/tag/japon              /blog       301
+
+# Old WordPress system/taxonomy URLs that should not resolve to the homepage.
+/wp-content/*           /410.html   410
+/wp-json/*              /410.html   410
+/feed/                  /410.html   410
+/feed                   /410.html   410
+/category/*             /410.html   410
+/author/*               /410.html   410
+/tag/*                  /410.html   410
+
+# React Router fallback.
+/*                       /index.html 200

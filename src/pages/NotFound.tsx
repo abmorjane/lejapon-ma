@@ -1,15 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Home, Search } from "lucide-react";
+import { ArrowRight, BadgeHelp, Home, MessageCircle, Search, Stamp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Seo from "@/components/Seo";
+import { trackNotFound } from "@/lib/analytics";
 import torii from "@/assets/notfound-torii.jpg";
 
 const COPY: Record<string, {
   eyebrow: string; title: string; subtitle: string;
-  home: string; trips: string; blog: string;
+  home: string; trips: string; prices: string; visa: string; contact: string;
   searchLabel: string; searchPlaceholder: string; searchSubmit: string;
   reassure: string;
 }> = {
@@ -18,8 +19,10 @@ const COPY: Record<string, {
     title: "Page introuvable",
     subtitle: "Désolé, la page que vous recherchez n’existe pas ou a été déplacée.",
     home: "Retour à l’accueil",
-    trips: "Voir nos voyages",
-    blog: "Lire le blog",
+    trips: "Voir les voyages Japon",
+    prices: "Consulter les prix",
+    visa: "Informations visa Japon",
+    contact: "Contacter un conseiller",
     searchLabel: "Vous cherchiez autre chose ?",
     searchPlaceholder: "Rechercher un voyage, un article…",
     searchSubmit: "Rechercher",
@@ -30,8 +33,10 @@ const COPY: Record<string, {
     title: "Page not found",
     subtitle: "Sorry, the page you’re looking for doesn’t exist or has been moved.",
     home: "Back to home",
-    trips: "See our trips",
-    blog: "Read the blog",
+    trips: "See Japan trips",
+    prices: "View prices",
+    visa: "Japan visa information",
+    contact: "Talk to an advisor",
     searchLabel: "Looking for something else?",
     searchPlaceholder: "Search a trip, an article…",
     searchSubmit: "Search",
@@ -42,8 +47,10 @@ const COPY: Record<string, {
     title: "الصفحة غير موجودة",
     subtitle: "عذراً، الصفحة التي تبحث عنها غير موجودة أو تم نقلها.",
     home: "العودة إلى الرئيسية",
-    trips: "اطلع على رحلاتنا",
-    blog: "اقرأ المدونة",
+    trips: "رحلات اليابان",
+    prices: "الاطلاع على الأسعار",
+    visa: "معلومات تأشيرة اليابان",
+    contact: "تواصل مع مستشار",
     searchLabel: "هل تبحث عن شيء آخر ؟",
     searchPlaceholder: "ابحث عن رحلة أو مقال…",
     searchSubmit: "بحث",
@@ -61,6 +68,7 @@ const NotFound = () => {
 
   useEffect(() => {
     console.warn("404:", location.pathname);
+    trackNotFound(location.pathname);
   }, [location.pathname]);
 
   const onSearch = (e: FormEvent) => {
@@ -89,19 +97,34 @@ const NotFound = () => {
 
             <div className="flex flex-wrap gap-3 mb-10">
               <Button asChild size="lg">
-                <Link to="/">
-                  <Home className="w-4 h-4" />
-                  {t.home}
-                </Link>
-              </Button>
-              <Button asChild size="lg" variant="outline">
                 <Link to="/voyages">
                   {t.trips}
                   <ArrowRight className="w-4 h-4" />
                 </Link>
               </Button>
+              <Button asChild size="lg" variant="outline">
+                <Link to="/reserver">
+                  <BadgeHelp className="w-4 h-4" />
+                  {t.prices}
+                </Link>
+              </Button>
+              <Button asChild size="lg" variant="outline">
+                <Link to="/visa">
+                  <Stamp className="w-4 h-4" />
+                  {t.visa}
+                </Link>
+              </Button>
+              <Button asChild size="lg" variant="secondary">
+                <Link to="/contact">
+                  <MessageCircle className="w-4 h-4" />
+                  {t.contact}
+                </Link>
+              </Button>
               <Button asChild size="lg" variant="ghost">
-                <Link to="/blog">{t.blog}</Link>
+                <Link to="/">
+                  <Home className="w-4 h-4" />
+                  {t.home}
+                </Link>
               </Button>
             </div>
 

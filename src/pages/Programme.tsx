@@ -7,6 +7,7 @@ import { Seo } from "@/components/Seo";
 import { cn } from "@/lib/utils";
 import { DayIcon } from "@/components/programmes/DayIcon";
 import { Img } from "@/components/ui/Img";
+import { trackEvent } from "@/lib/analytics";
 
 type LegacyDay = { day: number; title: string; city?: string; description?: string };
 type ScheduleItem = { time: string; title: string; description?: string };
@@ -169,6 +170,7 @@ export default function ProgrammePage() {
         rel="noreferrer"
         aria-label="WhatsApp"
         className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40 w-14 h-14 rounded-full bg-[#25D366] text-white shadow-2xl flex items-center justify-center hover:scale-105 transition-transform"
+        onClick={() => trackEvent("whatsapp_clicked", { placement: "programme_floating" })}
       >
         <MessageCircle className="w-6 h-6" />
       </a>
@@ -242,7 +244,11 @@ function ProgrammeHero({ active, loading }: { active?: Programme; loading: boole
             <a href="#jour-1" className="btn-primary inline-flex items-center gap-2 w-full sm:w-auto max-w-full min-h-[44px] px-5 sm:px-7 text-center">
               Voir le programme jour par jour <ChevronRight className="w-4 h-4" />
             </a>
-            <Link to={active.cta_url || "/contact"} className="btn-outline inline-flex items-center justify-center gap-2 w-full sm:w-auto max-w-full min-h-[44px] px-5 sm:px-7 text-center">
+            <Link
+              to={active.cta_url || "/contact"}
+              className="btn-outline inline-flex items-center justify-center gap-2 w-full sm:w-auto max-w-full min-h-[44px] px-5 sm:px-7 text-center"
+              onClick={() => trackEvent("reservation_cta_clicked", { placement: "programme_hero", programme_id: active.id })}
+            >
               {active.cta_label || "Demander un devis"}
             </Link>
           </motion.div>
@@ -289,7 +295,13 @@ function SimpleSummary({ active }: { active: Programme }) {
         )}
         {active.pdf_url && (
           <div className="mt-8">
-            <a href={active.pdf_url} target="_blank" rel="noreferrer" className="btn-primary inline-flex items-center gap-2">
+            <a
+              href={active.pdf_url}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-primary inline-flex items-center gap-2"
+              onClick={() => trackEvent("pdf_downloaded", { placement: "programme_summary", programme_id: active.id })}
+            >
               <Download className="w-4 h-4" /> Télécharger le PDF
             </a>
           </div>
@@ -356,6 +368,7 @@ function RichDays({ programme }: { programme: Programme }) {
               target="_blank"
               rel="noreferrer"
               className="hidden lg:inline-flex items-center gap-2 mt-4 text-sm text-accent underline underline-offset-4 font-medium"
+              onClick={() => trackEvent("pdf_downloaded", { placement: "programme_toc", programme_id: programme.id })}
             >
               <FileText className="w-4 h-4" /> Télécharger le PDF
             </a>
@@ -376,11 +389,21 @@ function RichDays({ programme }: { programme: Programme }) {
             Notre équipe vous accompagne du premier devis à votre retour. Réservez votre place ou demandez un devis personnalisé.
           </p>
           <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-center gap-3">
-            <Link to={programme.cta_url || "/contact"} className="btn-primary">
+            <Link
+              to={programme.cta_url || "/contact"}
+              className="btn-primary"
+              onClick={() => trackEvent("reservation_cta_clicked", { placement: "programme_final", programme_id: programme.id })}
+            >
               {programme.cta_label || "Demander un devis"}
             </Link>
             {programme.pdf_url && (
-              <a href={programme.pdf_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-full border border-background/30 text-background hover:bg-background/10 text-sm font-medium min-h-[44px]">
+              <a
+                href={programme.pdf_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-full border border-background/30 text-background hover:bg-background/10 text-sm font-medium min-h-[44px]"
+                onClick={() => trackEvent("pdf_downloaded", { placement: "programme_final", programme_id: programme.id })}
+              >
                 <Download className="w-4 h-4" /> Télécharger le PDF
               </a>
             )}
@@ -529,7 +552,11 @@ function DaySection({ day, reverse, programme, showCta }: { day: ProgrammeDay; r
 
       {showCta && (
         <div className="mt-10 text-center">
-          <Link to={programme.cta_url || "/contact"} className="btn-primary inline-flex items-center gap-2">
+          <Link
+            to={programme.cta_url || "/contact"}
+            className="btn-primary inline-flex items-center gap-2"
+            onClick={() => trackEvent("reservation_cta_clicked", { placement: "programme_day", programme_id: programme.id, day_number: day.day_number })}
+          >
             {programme.cta_label || "Demander un devis"} <ChevronRight className="w-4 h-4" />
           </Link>
         </div>

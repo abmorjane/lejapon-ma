@@ -11,6 +11,7 @@ import { Plus, UserPlus, Trash2, Pencil, Save, X, ExternalLink, AlertTriangle, C
 import { AddTravelerDialog } from "./AddTravelerDialog";
 import { LinkExistingClientDialog } from "./LinkExistingClientDialog";
 import { QuickActions } from "./QuickActions";
+import { getTravelerCounters } from "@/admin/lib/booking-participants";
 
 const RELATIONS: Record<string, string> = {
   self: "Lui-même", spouse: "Conjoint(e)", child: "Enfant",
@@ -42,6 +43,7 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
   const [openAdd, setOpenAdd] = useState(false);
   const [openLink, setOpenLink] = useState(false);
   const [choosingResponsible, setChoosingResponsible] = useState(false);
+  const [dbCount, setDbCount] = useState(0);
 
   const load = async () => {
     const bookingWithMetadata = await (supabase as any)
@@ -59,13 +61,14 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
     } else {
       setBooking(bookingWithMetadata.data ?? null);
     }
-    const { data } = await supabase
+    const { data, count } = await supabase
       .from("booking_participants")
-      .select("*")
+      .select("*", { count: "exact" })
       .eq("booking_id", bookingId)
       .order("is_lead", { ascending: false })
       .order("created_at", { ascending: true });
     setList(data ?? []);
+    setDbCount(count ?? data?.length ?? 0);
   };
   useEffect(() => { load(); }, [bookingId]);
   useEffect(() => {
@@ -158,6 +161,7 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
     if (error) return toast.error(error.message);
     if (p.is_lead) {
       await updateBookingMetadata({ responsible_traveller_deleted: true, responsible_traveller_deleted_at: new Date().toISOString() });
+      setChoosingResponsible(true);
     }
     if (p.client_id) {
       const { count } = await supabase
@@ -175,7 +179,7 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
       .select("id", { count: "exact", head: true })
       .eq("id", p.id);
     if ((stillExists ?? 0) > 0) return toast.error("La suppression n'a pas été persistée.");
-    toast.success("Voyageur retiré");
+    toast.success(p.is_lead && list.length > 1 ? "Voyageur retiré. Choisissez un nouveau responsable." : "Voyageur retiré");
     load();
     onChanged?.();
   };
@@ -302,9 +306,7 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
     onChanged?.();
   };
 
-  const filled = list.length;
-  const remaining = Math.max(0, expectedTravelers - filled);
-  const overflow = filled > expectedTravelers;
+  const counters = getTravelerCounters(expectedTravelers, list.length, dbCount);
 
   return (
     <section className="rounded-2xl border border-border bg-background p-4 shadow-sm sm:p-6">
@@ -312,11 +314,11 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
         <div>
           <h2 className="font-display text-lg">Voyageurs associés</h2>
           <div className="mt-2 grid grid-cols-3 gap-2 text-xs sm:flex sm:flex-wrap">
-            <Badge variant="outline">Prévus : {expectedTravelers}</Badge>
-            <Badge variant="outline">Renseignés : {filled}</Badge>
-            <Badge variant="outline">Stockés DB : {list.length}</Badge>
-            <Badge variant={remaining === 0 ? "default" : "secondary"}>Restant : {remaining}</Badge>
-            {overflow && (
+            <Badge variant="outline">Prévus : {counters.expected}</Badge>
+            <Badge variant="outline">Renseignés : {counters.visible}</Badge>
+            <Badge variant="outline">Stockés DB : {counters.stored}</Badge>
+            <Badge variant={counters.remaining === 0 ? "default" : "secondary"}>Restant : {counters.remaining}</Badge>
+            {counters.overflow && (
               <Badge variant="destructive" className="gap-1"><AlertTriangle className="w-3 h-3" /> Dépassement</Badge>
             )}
             {duplicateWarnings.length > 0 && (
@@ -465,8 +467,8 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
         })}
       </div>
 
-      <AddTravelerDialog open={openAdd} onOpenChange={setOpenAdd} bookingId={bookingId} tripId={tripId} onSaved={() => { load(); onChanged?.(); }} />
-      <LinkExistingClientDialog open={openLink} onOpenChange={setOpenLink} bookingId={bookingId} tripId={tripId} onSaved={() => { load(); onChanged?.(); }} />
+      <AddTravelerDialog open={openAdd} onOpenChange={setOpenAdd} bookingId={bookingId} tripId={tripId} expectedTravelers={expectedTravelers} onSaved={() => { load(); onChanged?.(); }} />
+      <LinkExistingClientDialog open={openLink} onOpenChange={setOpenLink} bookingId={bookingId} tripId={tripId} expectedTravelers={expectedTravelers} onSaved={() => { load(); onChanged?.(); }} />
     </section>
   );
 }

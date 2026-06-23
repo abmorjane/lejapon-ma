@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -103,8 +101,14 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Poppins', sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
   }
   img, video { max-width: 100%; height: auto; }
+  button, a, input, textarea, select, [role="button"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
 
   .admin-mobile-shell button,
   .admin-mobile-shell a,
@@ -358,7 +362,7 @@
     @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold;
   }
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 bg-accent text-accent-foreground font-semibold px-7 py-4 rounded-full transition-all duration-300;
+    @apply inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 bg-accent text-accent-foreground font-semibold px-7 py-4 rounded-full transition-all duration-300;
     box-shadow: var(--shadow-cta);
   }
   .btn-primary:hover {
@@ -366,18 +370,18 @@
     box-shadow: 0 12px 32px -4px hsl(var(--accent) / 0.6);
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 bg-background/80 backdrop-blur-sm text-foreground font-semibold px-7 py-4 rounded-full border border-border hover:border-foreground transition-all duration-300;
+    @apply inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 bg-background/80 backdrop-blur-sm text-foreground font-semibold px-7 py-4 rounded-full border border-border hover:border-foreground transition-all duration-300;
   }
   .card-modern {
-    @apply bg-card rounded-3xl overflow-hidden transition-all duration-500 ease-silk;
+    @apply bg-card rounded-3xl overflow-hidden;
     box-shadow: var(--shadow-soft);
-  }
-  .card-modern:hover {
-    transform: translateY(-4px);
-    box-shadow: var(--shadow-card);
   }
   .glass {
     @apply bg-background/70 backdrop-blur-xl border border-white/40;
+  }
+
+  .tap-target {
+    @apply min-h-11 cursor-pointer touch-manipulation;
   }
 }
 

@@ -25,6 +25,8 @@ const nav: AdminNavItem[] = [
   { to: "/admin/extras", icon: Sparkles, label: "Extras", module: "extras", section: "Sales" },
   { to: "/admin/suppliers", icon: Building2, label: "Fournisseurs", module: "suppliers", section: "Sales" },
   { to: "/admin/supplier-costs", icon: Wallet, label: "Coûts fournisseurs", module: "supplier_costs", section: "Sales" },
+  { to: "/admin/fit-quotes", icon: FileText, label: "Devis FIT", module: "fit_quotes", section: "Sales" },
+  { to: "/sales/fit-quotes", icon: FileText, label: "Devis FIT", module: "partner_fit_quotes", section: "Sales" },
   { to: "/admin/international-payments", icon: Banknote, label: "Paiements internationaux", module: "international_payments", section: "Sales" },
   { to: "/admin/visa", icon: Stamp, label: "Demandes de visa", module: "visa", section: "Sales" },
   { to: "/admin/visa-checklists", icon: ListChecks, label: "Documents requis", module: "visa_checklists", section: "Sales" },

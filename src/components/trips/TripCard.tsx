@@ -83,7 +83,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
   const originalPrice = hasPromo ? Math.round(Number(trip.base_price_mad || 0) / (1 - Number(trip.promo_percent) / 100)) : null;
   const priceLabel = hasPromo ? "Prix promotionnel" : "À partir de";
   const trackReservationClick = (placement: string) => {
-    trackEvent("click_reservation_cta", {
+    trackEvent("reservation_cta_clicked", {
       placement,
       trip_id: trip.id,
       has_promo: hasPromo,
@@ -98,11 +98,11 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
       transition={{ duration: 0.5, delay: index * 0.1 }}
       className="h-full"
     >
-      <div className="group flex h-full min-h-[650px] flex-col overflow-hidden rounded-[20px] border border-border bg-background shadow-soft transition-all duration-500 hover:-translate-y-1 hover:shadow-2xl sm:min-h-[700px]">
+      <div className="flex h-full min-h-[650px] flex-col overflow-hidden rounded-[20px] border border-border bg-background shadow-soft sm:min-h-[700px]">
         {/* IMAGE */}
         <Link
           to={bookingHref}
-          className="relative block aspect-[4/5] min-h-[360px] overflow-hidden sm:min-h-[420px]"
+          className="group/image relative block aspect-[4/5] min-h-[360px] overflow-hidden sm:min-h-[420px]"
           aria-label={`Réserver ${trip.title}`}
           onClick={() => trackReservationClick("trip_card_image")}
         >
@@ -115,7 +115,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
               width={800}
               height={1000}
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-silk"
+              className="h-full w-full object-cover transition-transform duration-300 ease-silk group-hover/image:scale-[1.03]"
             />
           ) : (
             <div className="w-full h-full bg-secondary" />
@@ -154,7 +154,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
           {/* Text overlay - bottom of image */}
           <div className="absolute bottom-0 left-0 right-0 flex min-h-[8.25rem] flex-col justify-end p-6 text-white">
             {(trip.label || trip.season) && (
-              <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-white/85 mb-2">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/85">
                 {[trip.label, trip.season].filter(Boolean).join(" · ")}
               </p>
             )}
@@ -195,7 +195,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
             <Link
               to={bookingHref}
               aria-label={`S'inscrire au voyage ${trip.title}`}
-              className="w-11 h-11 rounded-full bg-foreground text-background flex items-center justify-center group-hover:bg-accent group-hover:rotate-[-45deg] transition-all duration-300"
+              className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-colors duration-200 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
               onClick={() => trackReservationClick("trip_card_arrow")}
             >
               <ArrowRight className="w-4 h-4" />

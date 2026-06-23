@@ -7,6 +7,9 @@ export type Role =
   | "manager"
   | "sales"
   | "sales_user"
+  | "sales_manager"
+  | "partner_agency_admin"
+  | "partner_agent"
   | "agent"
   | "content_manager"
   | "supplier"
@@ -18,6 +21,9 @@ export const ROLE_LABELS: Record<Role, string> = {
   manager: "Sales Manager",
   sales: "Commercial",
   sales_user: "Commercial",
+  sales_manager: "Sales Manager",
+  partner_agency_admin: "Admin agence partenaire",
+  partner_agent: "Agent agence partenaire",
   agent: "Agent",
   content_manager: "Content Manager",
   supplier: "Fournisseur Japon",
@@ -30,6 +36,9 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   manager: "Accède aux leads et met à jour les clients",
   sales: "Accède aux leads et met à jour les clients",
   sales_user: "Accède aux leads et met à jour les clients",
+  sales_manager: "Crée des devis commerciaux sans accès aux coûts internes",
+  partner_agency_admin: "Gère les devis et paramètres de son agence partenaire",
+  partner_agent: "Crée des devis FIT pour son agence partenaire",
   agent: "Suivi opérationnel des réservations",
   content_manager: "Gère le blog et les pages",
   supplier: "Saisie tarifs & logistique (Japon)",
@@ -38,15 +47,17 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
 
 // Permissions per module. A user has access if they hold ANY of the listed roles.
 export const MODULE_PERMISSIONS = {
-  dashboard: ["super_admin", "admin", "manager", "sales", "sales_user", "agent", "content_manager"],
+  dashboard: ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent", "content_manager"],
   trips: ["super_admin", "admin", "manager"],
-  bookings: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],
-  clients: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],
+  bookings: ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent"],
+  clients: ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent"],
   partner_requests: ["super_admin", "admin", "manager"],
   extras: ["super_admin", "admin"],
   suppliers: ["super_admin", "admin"],
   supplier_costs: ["super_admin", "admin"],
-  international_payments: ["super_admin", "admin", "manager", "sales", "sales_user"],
+  fit_quotes: ["super_admin", "admin"],
+  partner_fit_quotes: ["manager", "sales", "sales_user", "sales_manager", "partner_agency_admin", "partner_agent"],
+  international_payments: ["super_admin", "admin"],
   articles: ["super_admin", "content_manager"],
   pages: ["super_admin", "content_manager"],
   media: ["super_admin", "admin", "content_manager"],
@@ -57,7 +68,7 @@ export const MODULE_PERMISSIONS = {
   email_templates: ["super_admin", "admin", "marketing_manager"],
   email_logs: ["super_admin", "admin"],
   backups: ["super_admin"],
-  visa: ["super_admin", "admin", "manager", "sales", "sales_user", "agent"],
+  visa: ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent"],
   visa_settings: ["super_admin"],
   visa_checklists: ["super_admin", "admin"],
   programmes: ["super_admin", "admin", "content_manager"],

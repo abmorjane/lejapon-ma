@@ -63,7 +63,7 @@ export default function VisaLogin() {
           throw new Error("Le mot de passe doit contenir au moins 8 caractères.");
         }
 
-        trackEvent("visa_signup_started", { source: "visa_login" });
+        trackEvent("visa_form_started", { source: "visa_login" });
         const { data, error } = await supabase.functions.invoke("visa-client-signup", {
           body: {
             first_name: cleanFirstName,

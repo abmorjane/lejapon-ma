@@ -459,7 +459,7 @@ export default function VisaForm() {
     }
     toast.success("Demande soumise. Notre équipe va l'examiner.");
     setApp(submittedApp);
-    trackEvent("visa_application_submitted", { source: "visa_client_form" });
+    trackEvent("visa_form_submitted", { source: "visa_client_form" });
     supabase.functions.invoke("send-visa-email", {
       body: { application_id: app.id, status: "submitted" },
     }).then(({ error: e }) => { if (e) console.warn("notification email failed", e); });
@@ -523,7 +523,7 @@ export default function VisaForm() {
   const isRetiredApplicant = isRetiredVisaCategory(app.category);
 
   return (
-    <div className="container-app py-10 max-w-5xl">
+    <div className="container-app py-10 max-w-5xl" data-clarity-mask="true">
       <Seo title={`Demande de visa ${app.reference} — lejapon.ma`} description="Préparez votre formulaire de visa Japon." canonical={`${visaBase}/${app.id}`} />
       <button onClick={() => nav(visaBase)} className="text-sm text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1">
         <ArrowLeft className="w-4 h-4" /> Mes demandes

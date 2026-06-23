@@ -7,6 +7,7 @@ import { setLang } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
+import { trackEvent } from "@/lib/analytics";
 
 const langs = [{ c: "fr", l: "FR" }, { c: "en", l: "EN" }, { c: "ar", l: "ع" }] as const;
 
@@ -43,13 +44,17 @@ export const Header = () => {
     <>
       {/* Promo bar */}
       {promo.enabled && (
-        <div className="bg-gradient-vermillion text-accent-foreground text-center text-xs md:text-sm py-2 px-4 font-medium">
+        <div className="flex min-h-9 items-center justify-center bg-gradient-vermillion px-4 py-2 text-center text-xs font-medium text-accent-foreground md:text-sm">
           <Sparkles className="w-3.5 h-3.5 inline mr-2" />
           {promo.text}
           {promo.cta_label && promo.cta_url && (
             <>
               {" — "}
-              <Link to={promo.cta_url} className="underline underline-offset-2 font-semibold">
+              <Link
+                to={promo.cta_url}
+                className="underline underline-offset-2 font-semibold"
+                onClick={() => trackEvent("reservation_cta_clicked", { placement: "promo_bar" })}
+              >
                 {promo.cta_label}
               </Link>
             </>
@@ -57,12 +62,14 @@ export const Header = () => {
         </div>
       )}
       <header className={cn(
-        "sticky top-0 inset-x-0 z-50 transition-all duration-300",
-        scrolled ? "bg-background/85 backdrop-blur-xl border-b border-border shadow-soft py-3" : "bg-background py-4"
+        "sticky top-0 inset-x-0 z-50 h-[72px] md:h-[76px] transition-[background-color,box-shadow,border-color,backdrop-filter] duration-300",
+        scrolled ? "bg-background/85 backdrop-blur-xl border-b border-border shadow-soft" : "bg-background"
       )}>
-        <div className="container-app flex items-center justify-between gap-6">
+        <div className="container-app flex h-full items-center justify-between gap-6">
           <Link to="/" className="flex items-center group" aria-label="lejapon.ma">
-            <img src={logo} alt="LeJapon.ma" className="h-10 md:h-11 w-auto object-contain" width={220} height={88} />
+            <span className="inline-flex h-11 w-[118px] items-center md:w-[132px]">
+              <img src={logo} alt="LeJapon.ma" className="h-10 w-full object-contain md:h-11" width={220} height={88} />
+            </span>
           </Link>
 
           <nav className="hidden lg:flex items-center gap-8">
@@ -75,32 +82,36 @@ export const Header = () => {
           </nav>
 
           <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-1 bg-secondary rounded-full px-1 py-1">
+            <div className="hidden min-h-10 items-center gap-1 rounded-full bg-secondary px-1 py-1 md:flex">
               <Globe className="w-3.5 h-3.5 mx-1.5 text-muted-foreground" />
               {langs.map((l) => (
                 <button key={l.c} onClick={() => setLang(l.c as "fr"|"en"|"ar")}
                   className={cn(
-                    "text-xs px-2.5 py-1 rounded-full font-medium transition-all",
+                    "h-8 min-w-8 rounded-full px-2.5 text-xs font-medium transition-colors",
                     i18n.language === l.c ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
                   )}>{l.l}</button>
               ))}
             </div>
-            <Link to="/reserver" className="hidden md:inline-flex btn-primary !py-2.5 !px-5 text-sm">
+            <Link
+              to="/reserver"
+              className="hidden md:inline-flex btn-primary !min-h-10 !py-2.5 !px-5 text-sm"
+              onClick={() => trackEvent("reservation_cta_clicked", { placement: "header" })}
+            >
               {t("nav.booking")}
             </Link>
-            <button className="lg:hidden p-2 -mr-2" onClick={() => setOpen(!open)} aria-label="menu">
+            <button className="tap-target -mr-2 p-2 lg:hidden" onClick={() => setOpen(!open)} aria-label="menu">
               {open ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
           </div>
         </div>
 
         {open && (
-          <div className="lg:hidden bg-background border-t border-border mt-3">
+          <div className="lg:hidden bg-background border-t border-border">
             <div className="container-app py-6 flex flex-col gap-2">
               {links.map((l) => (
                 <Link key={l.to} to={l.to} className="text-base py-3 border-b border-border/50 font-medium">{l.label}</Link>
               ))}
-              <Link to="/reserver" className="btn-primary mt-4">{t("nav.booking")}</Link>
+              <Link to="/reserver" className="btn-primary mt-4" onClick={() => trackEvent("reservation_cta_clicked", { placement: "mobile_menu" })}>{t("nav.booking")}</Link>
               <div className="flex gap-2 justify-center pt-3">
                 {langs.map((l) => (
                   <button key={l.c} onClick={() => setLang(l.c as "fr"|"en"|"ar")}

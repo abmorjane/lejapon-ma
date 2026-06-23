@@ -2,7 +2,7 @@ import { memo, useCallback, useState, useMemo, useEffect, useRef, type ChangeEve
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, ArrowRight, CalendarDays, Check, Clock3, MapPin, Minus, Plus, Plane, Hotel, Users, BedDouble, Gift, Sparkles, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, Check, Clock3, Loader2, MessageCircle, Minus, Plus, PhoneCall, Plane, Hotel, Users, BedDouble, Gift, Sparkles, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
 import { useRecaptcha } from "@/hooks/useRecaptcha";
 import { trackEvent } from "@/lib/analytics";
 import { findOrCreateClientForBooking } from "@/lib/crm-client";
+import { useAgencySettings } from "@/hooks/useAgencySettings";
 import {
   CHILD_DISCOUNT_MAD,
   HOTEL_SUPPLEMENT,
@@ -40,8 +41,11 @@ type TripRow = {
 
 const fmt = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n)) + " MAD";
 
+const WHATSAPP_FALLBACK = "212661800008";
+
 const Booking = () => {
   const { t } = useTranslation();
+  const agency = useAgencySettings();
   const [searchParams] = useSearchParams();
   const [step, setStep] = useState(1);
   const [tripsList, setTripsList] = useState<TripRow[]>([]);
@@ -94,7 +98,7 @@ const Booking = () => {
       setTripLocked(true);
       setStep((s) => {
         if (s >= 2) return s;
-        trackEvent("booking_step_advanced", { source: "trip_url_preselect", from_step: s, to_step: 2 });
+        trackEvent("booking_step_1_completed", { source: "trip_url_preselect", from_step: s, to_step: 2 });
         return 2;
       });
     } else if (!tripId) {
@@ -154,17 +158,27 @@ const Booking = () => {
     return { adultPrice, childPrice, peopleTotal, extrasTotal, total, deposit };
   }, [selectedTrip, hotel, room, adults, children, extras, extrasList]);
 
-  const TOTAL_STEPS = 5;
+  const TOTAL_STEPS = 4;
 
   const minStep = tripLocked ? 2 : 1;
   const visibleTotal = tripLocked ? TOTAL_STEPS - 1 : TOTAL_STEPS;
   const visibleStep = tripLocked ? step - 1 : step;
+  const agencyPhone = String(agency.phone || "").trim();
+  const cleanPhone = agencyPhone.replace(/[^+\d]/g, "");
+  const phoneHref = cleanPhone ? `tel:${cleanPhone}` : "/contact";
+  const whatsappPhone = cleanPhone.replace(/^\+/, "") || WHATSAPP_FALLBACK;
+  const whatsappText = selectedTrip
+    ? `Bonjour, je souhaite être rappelé pour ${selectedTrip.title}.`
+    : "Bonjour, je souhaite être rappelé pour un voyage au Japon.";
+  const whatsappHref = `https://wa.me/${whatsappPhone}?text=${encodeURIComponent(whatsappText)}`;
 
   const next = useCallback(() => {
     setStep((current) => {
       const nextStep = Math.min(TOTAL_STEPS, current + 1);
       if (nextStep !== current) {
-        trackEvent("booking_step_advanced", { source: "next_button", from_step: current, to_step: nextStep });
+        if (current === 1 || current === 2) {
+          trackEvent(current === 1 ? "booking_step_1_completed" : "booking_step_2_completed", { source: "next_button", from_step: current, to_step: nextStep });
+        }
       }
       return nextStep;
     });
@@ -175,7 +189,7 @@ const Booking = () => {
   const selectTripAndAdvance = useCallback((nextTripId: string) => {
     const selected = tripsList.find((tr) => tr.id === nextTripId);
     setTripId((current) => (current === nextTripId ? current : nextTripId));
-    trackEvent("booking_trip_selected", {
+    trackEvent("booking_step_1_completed", {
       source: "public_booking",
       trip_id: nextTripId,
       trip_slug: selected?.slug ?? null,
@@ -185,7 +199,7 @@ const Booking = () => {
     tripAutoAdvanceTimer.current = setTimeout(() => {
       setStep((currentStep) => {
         if (currentStep !== 1) return currentStep;
-        trackEvent("booking_step_advanced", { source: "trip_auto_advance", from_step: 1, to_step: 2 });
+        trackEvent("booking_step_1_completed", { source: "trip_auto_advance", from_step: 1, to_step: 2 });
         return 2;
       });
     }, 275);
@@ -292,12 +306,6 @@ const Booking = () => {
         }
         if (error || data?.ok === false) console.warn("admin booking notification failed", data ?? error);
       });
-      trackEvent("booking_submitted", {
-        source: "public_site",
-        trip_id: tripMeta?.id ?? null,
-        travelers_count: adults + children,
-        extras_count: chosenExtras.length,
-      });
       trackEvent("booking_form_submitted", {
         source: "public_site",
         trip_id: tripMeta?.id ?? null,
@@ -319,7 +327,7 @@ const Booking = () => {
         <div className="w-16 h-16 mx-auto mb-8 rounded-2xl bg-gradient-vermillion text-accent-foreground flex items-center justify-center font-display text-2xl shadow-cta">✓</div>
         <h1 className="font-display text-5xl md:text-6xl mb-6">{t("booking.success.title")}</h1>
         <p className="text-foreground/70 text-lg leading-relaxed mb-10">{t("booking.success.body")}</p>
-        <button onClick={() => { setDone(false); setStep(1); }} className="inline-flex items-center gap-2 border border-foreground px-6 py-3 hover:bg-foreground hover:text-background transition-all">
+        <button type="button" onClick={() => { setDone(false); setStep(1); }} className="inline-flex items-center gap-2 border border-foreground px-6 py-3 hover:bg-foreground hover:text-background transition-all">
           {t("booking.success.reset")}
         </button>
       </div>
@@ -352,7 +360,7 @@ const Booking = () => {
               <button
                 type="button"
                 onClick={unlockTrip}
-                className="self-start text-sm underline hover:text-accent sm:shrink-0"
+                className="tap-target self-start text-sm underline hover:text-accent sm:shrink-0"
               >
                 Modifier le voyage
               </button>
@@ -382,20 +390,21 @@ const Booking = () => {
 
           {/* top actions */}
           <div className="mb-8 hidden flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between md:flex">
-            <button onClick={prev} disabled={step === minStep} className={cn(
+            <button type="button" onClick={prev} disabled={step === minStep} className={cn(
               "inline-flex min-h-11 items-center justify-center gap-2 text-sm sm:min-h-0 sm:justify-start",
               step === minStep ? "opacity-30 cursor-not-allowed" : "hover:text-accent"
             )}>
               <ArrowLeft className="w-4 h-4" /> {t("cta.back")}
             </button>
             {step < TOTAL_STEPS ? (
-              <button onClick={next} className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-foreground px-5 py-3 text-background transition-all hover:bg-accent sm:w-auto sm:px-6">
+              <button type="button" onClick={next} className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-foreground px-5 py-3 text-background transition-all hover:bg-accent sm:w-auto sm:px-6">
                 {t("cta.continue")} <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
-              <button onClick={submit} disabled={!canSubmit}
+              <button type="button" onClick={submit} disabled={!canSubmit}
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-accent px-5 py-3 text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-6">
-                {submitting ? "…" : t("cta.confirm")} <Check className="w-4 h-4" />
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                {submitting ? "Envoi…" : t("cta.confirm")}
               </button>
             )}
           </div>
@@ -430,12 +439,62 @@ const Booking = () => {
 
               {step === 2 && (
                 <div>
-                  <h2 className="font-display text-2xl mb-2">Quel hôtel à Kyoto ?</h2>
-                  <p className="text-sm text-foreground/70 mb-6">Choisissez votre hébergement pour l'étape de Kyoto.</p>
+                  <h2 className="font-display mb-2 text-2xl">Votre formule en 1 minute</h2>
+                  <p className="mb-6 text-sm text-foreground/70">
+                    Voyageurs, chambre et hôtel. Les options restent facultatives à l'étape suivante.
+                  </p>
+
+                  {selectedTrip && (
+                    <div className="mb-6 grid gap-3 border border-border bg-secondary/50 p-4 sm:grid-cols-3">
+                      <MiniFact icon={<CalendarDays className="h-4 w-4" />} label="Dates" value={formatDates(selectedTrip.start_date, selectedTrip.end_date) || selectedTrip.season || "À confirmer"} />
+                      <MiniFact icon={<Clock3 className="h-4 w-4" />} label="Durée" value={selectedTrip.duration_days ? `${selectedTrip.duration_days} jours` : "Programme complet"} />
+                      <MiniFact icon={<Wallet className="h-4 w-4" />} label="Acompte" value={`${fmt(25000)} / pers.`} />
+                    </div>
+                  )}
+
+                  <div className="mb-8 grid gap-4 sm:grid-cols-2">
+                    <Counter label={t("booking.s3.adults")} value={adults} onChange={setAdults} min={1} />
+                    <Counter label={t("booking.s3.children")} value={children} onChange={setChildren} min={0} />
+                  </div>
+                  <p className="mb-4 text-xs text-foreground/60">Réduction de {fmt(CHILD_DISCOUNT_MAD)} par enfant (3 à 11 ans).</p>
+
+                  <p className="eyebrow mb-3">{t("booking.s3.room")}</p>
+                  <div className="mb-8 grid gap-2 sm:grid-cols-3">
+                    {(["single", "double", "triple"] as RoomKey[]).map((r) => {
+                      const totalPeople = adults + children;
+                      const tripleDisabled = r === "triple" && (totalPeople < 3 || totalPeople % 3 !== 0);
+                      return (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => { if (!tripleDisabled) setRoom(r); }}
+                          disabled={tripleDisabled}
+                          title={tripleDisabled ? "Le nombre total de voyageurs doit être un multiple de 3" : undefined}
+                          className={cn(
+                            "tap-target flex min-h-14 flex-col items-center justify-center gap-1 border px-2 py-3 text-sm transition-colors sm:py-4",
+                            room === r ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40",
+                            tripleDisabled && "cursor-not-allowed opacity-40 hover:border-border"
+                          )}
+                        >
+                          <span>{t(`booking.s3.${r}`)}</span>
+                          {r === "single" && <span className="text-[10px] text-accent">+{fmt(SINGLE_SUPPLEMENT_MAD)}</span>}
+                          {r === "triple" && <span className="text-[10px] text-accent">−{fmt(TRIPLE_DISCOUNT_PER_PERSON_MAD)}/pers.</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {adults === 1 && children === 0 && room !== "single" && (
+                    <div className="mb-8 border border-accent/30 bg-accent-soft/30 p-4 text-sm text-foreground/80">
+                      En choisissant la chambre double tout seul, vous acceptez de partager la chambre avec quelqu&apos;un. Pensez à inviter un ami ou une connaissance.
+                    </div>
+                  )}
+
+                  <h3 className="font-display mb-2 text-xl">Hôtel à Kyoto</h3>
+                  <p className="mb-4 text-sm text-foreground/70">Choisissez votre hébergement pour l'étape de Kyoto.</p>
                   <div className="grid gap-3 md:grid-cols-2">
                     {(Object.keys(hotels) as HotelKey[]).map((k) => (
-                      <button key={k} onClick={() => setHotel(k)} className={cn(
-                        "flex min-h-[160px] w-full max-w-full flex-col border p-4 text-start transition-all sm:min-h-[180px] sm:p-6",
+                      <button key={k} type="button" onClick={() => setHotel(k)} className={cn(
+                        "tap-target flex min-h-[160px] w-full max-w-full flex-col border p-4 text-start transition-colors sm:min-h-[180px] sm:p-6",
                         hotel === k ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40"
                       )}>
                         <h3 className="font-display mb-2 break-words text-lg leading-tight sm:text-xl">{hotels[k].name}</h3>
@@ -450,46 +509,6 @@ const Booking = () => {
               )}
 
               {step === 3 && (
-                <div>
-                  <h2 className="font-display text-2xl mb-6">{t("booking.s3.title")}</h2>
-                  <div className="mb-8 grid gap-4 sm:grid-cols-2">
-                    <Counter label={t("booking.s3.adults")} value={adults} onChange={setAdults} min={1} />
-                    <Counter label={t("booking.s3.children")} value={children} onChange={setChildren} min={0} />
-                  </div>
-                  <p className="text-xs text-foreground/60 mb-4">Réduction de {fmt(CHILD_DISCOUNT_MAD)} par enfant (3 à 11 ans).</p>
-                  <p className="eyebrow mb-3">{t("booking.s3.room")}</p>
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    {(["single", "double", "triple"] as RoomKey[]).map((r) => {
-                      const totalPeople = adults + children;
-                      const tripleDisabled = r === "triple" && (totalPeople < 3 || totalPeople % 3 !== 0);
-                      return (
-                        <button
-                          key={r}
-                          onClick={() => { if (!tripleDisabled) setRoom(r); }}
-                          disabled={tripleDisabled}
-                          title={tripleDisabled ? "Le nombre total de voyageurs doit être un multiple de 3" : undefined}
-                          className={cn(
-                            "flex min-h-14 flex-col items-center justify-center gap-1 border px-2 py-3 text-sm transition-all sm:py-4",
-                            room === r ? "border-accent bg-accent-soft/40" : "border-border hover:border-foreground/40",
-                            tripleDisabled && "opacity-40 cursor-not-allowed hover:border-border"
-                          )}
-                        >
-                          <span>{t(`booking.s3.${r}`)}</span>
-                          {r === "single" && <span className="text-[10px] text-accent">+{fmt(SINGLE_SUPPLEMENT_MAD)}</span>}
-                          {r === "triple" && <span className="text-[10px] text-accent">−{fmt(TRIPLE_DISCOUNT_PER_PERSON_MAD)}/pers.</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {adults === 1 && children === 0 && room !== "single" && (
-                    <div className="mt-4 border border-accent/30 bg-accent-soft/30 p-4 text-sm text-foreground/80">
-                      En choisissant la chambre double tout seul, vous acceptez de partager la chambre avec quelqu&apos;un. Pensez à inviter un ami ou une connaissance.
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {step === 4 && (
                 <div>
                   <h2 className="font-display text-2xl mb-2">{t("booking.s4.title")}</h2>
                   <p className="eyebrow mb-6">{t("booking.s4.optional")}</p>
@@ -527,9 +546,12 @@ const Booking = () => {
                 </div>
               )}
 
-              {step === 5 && (
+              {step === 4 && (
                 <div>
-                  <h2 className="font-display text-2xl mb-6">{t("booking.s5.title")}</h2>
+                  <h2 className="font-display text-2xl mb-3">{t("booking.s5.title")}</h2>
+                  <p className="mb-6 text-sm text-foreground/70">
+                    Minimum requis: nom et email. Le téléphone aide notre conseiller à vous rappeler plus vite.
+                  </p>
                   <div className="grid sm:grid-cols-2 gap-4">
                     <Field label={t("booking.s5.name")} value={info.name} onChange={updateName} />
                     <Field label={t("booking.s5.email")} type="email" value={info.email} onChange={updateEmail} />
@@ -543,20 +565,21 @@ const Booking = () => {
           </AnimatePresence>
 
           <div className="mt-10 hidden flex-col-reverse items-stretch gap-3 border-t border-border pt-6 sm:mt-12 sm:flex-row sm:items-center sm:justify-between md:flex">
-            <button onClick={prev} disabled={step === minStep} className={cn(
+            <button type="button" onClick={prev} disabled={step === minStep} className={cn(
               "inline-flex min-h-11 items-center justify-center gap-2 text-sm sm:min-h-0 sm:justify-start",
               step === minStep ? "opacity-30 cursor-not-allowed" : "hover:text-accent"
             )}>
               <ArrowLeft className="w-4 h-4" /> {t("cta.back")}
             </button>
             {step < TOTAL_STEPS ? (
-              <button onClick={next} className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-foreground px-5 py-3 text-background transition-all hover:bg-accent sm:w-auto sm:px-6">
+              <button type="button" onClick={next} className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-foreground px-5 py-3 text-background transition-all hover:bg-accent sm:w-auto sm:px-6">
                 {t("cta.continue")} <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
-              <button onClick={submit} disabled={!canSubmit}
+              <button type="button" onClick={submit} disabled={!canSubmit}
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-accent px-5 py-3 text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-6">
-                {submitting ? "…" : t("cta.confirm")} <Check className="w-4 h-4" />
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                {submitting ? "Envoi…" : t("cta.confirm")}
               </button>
             )}
           </div>
@@ -617,6 +640,25 @@ const Booking = () => {
                   </div>
                   <span className="font-display break-words text-lg tabular-nums">{fmt(pricing.deposit)}</span>
                 </div>
+
+                <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                  <a
+                    href={whatsappHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-11 items-center justify-center gap-2 border border-accent bg-accent text-sm font-semibold text-accent-foreground transition-colors hover:bg-foreground"
+                    onClick={() => trackEvent("whatsapp_clicked", { placement: "booking_summary", trip_id: selectedTrip?.id ?? null })}
+                  >
+                    <MessageCircle className="h-4 w-4" /> WhatsApp
+                  </a>
+                  <a
+                    href={phoneHref}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 border border-border bg-background/70 text-sm font-semibold transition-colors hover:border-accent hover:text-accent"
+                    onClick={() => trackEvent("phone_clicked", { placement: "booking_summary", trip_id: selectedTrip?.id ?? null })}
+                  >
+                    <PhoneCall className="h-4 w-4" /> Être rappelé
+                  </a>
+                </div>
               </div>
             </div>
           </div>
@@ -629,8 +671,9 @@ const Booking = () => {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               {t("booking.step")} {visibleStep} {t("booking.of")} {visibleTotal}
             </p>
-            <p className="truncate text-xs text-muted-foreground">{selectedTrip?.title ?? "Voyage"}</p>
+            <p className="shrink-0 text-xs font-semibold text-accent tabular-nums">{fmt(pricing.total)}</p>
           </div>
+          <p className="mb-3 truncate text-xs text-muted-foreground">{selectedTrip?.title ?? "Voyage"} · Acompte {fmt(pricing.deposit)}</p>
           <div className="mb-3 flex gap-1.5">
             {Array.from({ length: visibleTotal }).map((_, i) => (
               <div key={i} className={cn("h-1 flex-1 rounded-full transition-all duration-500", i < visibleStep ? "bg-accent" : "bg-border")} />
@@ -638,6 +681,7 @@ const Booking = () => {
           </div>
           <div className="grid grid-cols-[0.9fr_1.25fr] gap-3">
             <button
+              type="button"
               onClick={prev}
               disabled={step === minStep}
               className={cn(
@@ -648,18 +692,38 @@ const Booking = () => {
               <ArrowLeft className="h-4 w-4" /> {t("cta.back")}
             </button>
             {step < TOTAL_STEPS ? (
-              <button onClick={next} className="inline-flex min-h-11 items-center justify-center gap-2 bg-foreground px-4 text-sm font-semibold text-background transition-all hover:bg-accent">
+              <button type="button" onClick={next} className="inline-flex min-h-11 items-center justify-center gap-2 bg-foreground px-4 text-sm font-semibold text-background transition-all hover:bg-accent">
                 {t("cta.continue")} <ArrowRight className="h-4 w-4" />
               </button>
             ) : (
               <button
+                type="button"
                 onClick={submit}
                 disabled={!canSubmit}
                 className="inline-flex min-h-11 items-center justify-center gap-2 bg-accent px-4 text-sm font-semibold text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {submitting ? "…" : t("cta.confirm")} <Check className="h-4 w-4" />
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                {submitting ? "Envoi…" : t("cta.confirm")}
               </button>
             )}
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <a
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-10 items-center justify-center gap-2 border border-border text-xs font-semibold"
+              onClick={() => trackEvent("whatsapp_clicked", { placement: "booking_mobile_sticky", trip_id: selectedTrip?.id ?? null })}
+            >
+              <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
+            </a>
+            <a
+              href={phoneHref}
+              className="inline-flex min-h-10 items-center justify-center gap-2 border border-border text-xs font-semibold"
+              onClick={() => trackEvent("phone_clicked", { placement: "booking_mobile_sticky", trip_id: selectedTrip?.id ?? null })}
+            >
+              <PhoneCall className="h-3.5 w-3.5" /> Rappel
+            </a>
           </div>
         </div>
       </div>
@@ -766,6 +830,18 @@ const Row = ({ label, value }: { label: string; value: string }) => (
     <span className="text-end font-medium">{value}</span>
   </div>
 );
+
+const MiniFact = memo(function MiniFact({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-start gap-3">
+      <span className="mt-0.5 shrink-0 text-accent">{icon}</span>
+      <span className="min-w-0">
+        <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+        <span className="block break-words text-sm font-medium">{value}</span>
+      </span>
+    </div>
+  );
+});
 
 const SummaryItem = memo(function SummaryItem({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (

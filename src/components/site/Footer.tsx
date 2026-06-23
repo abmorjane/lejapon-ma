@@ -4,6 +4,7 @@ import { Instagram, Facebook, Twitter, Mail, MapPin, Phone } from "lucide-react"
 import logo from "@/assets/logo-lejapon.png";
 import { useAgencySettings } from "@/hooks/useAgencySettings";
 import { agencyAddressLine } from "@/lib/agency-settings";
+import { trackEvent } from "@/lib/analytics";
 
 export const Footer = () => {
   const { t, i18n } = useTranslation();
@@ -44,7 +45,7 @@ export const Footer = () => {
             </li>
             <li className="flex items-center gap-3">
               <Phone className="w-4 h-4 text-accent shrink-0" />
-              <a href={phoneHref} className="hover:text-accent transition-colors">{agency.phone}</a>
+              <a href={phoneHref} className="hover:text-accent transition-colors" onClick={() => trackEvent("phone_clicked", { placement: "footer" })}>{agency.phone}</a>
             </li>
             <li className="flex items-start gap-3">
               <MapPin className="w-4 h-4 text-accent shrink-0 mt-0.5" />
