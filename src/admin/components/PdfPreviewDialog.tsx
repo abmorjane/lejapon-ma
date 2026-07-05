@@ -44,7 +44,7 @@ export function PdfPreviewDialog({ open, onOpenChange, title, filename, generate
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 gap-0">
+      <DialogContent className="flex h-[85dvh] w-[95vw] max-w-5xl flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="p-4 border-b flex-row items-center justify-between space-y-0">
           <DialogTitle>{title}</DialogTitle>
           <div className="flex items-center gap-2 mr-8">

@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { fmtDateTime } from "@/lib/format";
 import { trackEvent } from "@/lib/analytics";
 import {
+  DEFAULT_INCLUDED_SERVICES_TEXT,
   DEFAULT_STANDARD_AGREEMENT_SECTIONS,
   TRAVEL_AGREEMENT_VERSION,
   buildAgreementContent,
@@ -62,6 +63,17 @@ const bookingLabel = (booking: any) =>
     .filter(Boolean)
     .join(" — ");
 
+const mergeStandardSections = (sections?: TravelAgreementTemplateSection[]) => {
+  const byKey = new Map((sections ?? []).map((section) => [section.key, section]));
+  return DEFAULT_STANDARD_AGREEMENT_SECTIONS.map((defaultSection) => ({
+    ...defaultSection,
+    ...(byKey.get(defaultSection.key) ?? {}),
+  }));
+};
+
+const includedServicesFromTemplate = (sections: TravelAgreementTemplateSection[]) =>
+  sections.find((section) => section.key === "included_services")?.body || DEFAULT_INCLUDED_SERVICES_TEXT;
+
 export default function TravelAgreements() {
   const [agreements, setAgreements] = useState<TravelAgreement[]>([]);
   const [acceptances, setAcceptances] = useState<Record<string, TravelAgreementAcceptance | null>>({});
@@ -101,7 +113,7 @@ export default function TravelAgreements() {
     if (data?.content?.sections?.length) {
       setTemplateId(data.id);
       setTemplateTitle(data.title || "Texte standard accord de voyage");
-      setStandardSections(data.content.sections);
+      setStandardSections(mergeStandardSections(data.content.sections));
     }
   }, []);
 
@@ -192,6 +204,7 @@ export default function TravelAgreements() {
   }, [bookings, bookingSearch]);
 
   const selectedBooking = bookings.find((booking) => booking.id === draft.bookingId);
+  const standardIncludedServicesText = useMemo(() => includedServicesFromTemplate(standardSections), [standardSections]);
   const draftContent = useMemo(() => {
     if (!sourcePreview) return null;
     return buildAgreementContent({
@@ -508,11 +521,11 @@ export default function TravelAgreements() {
         setCreateOpen(open);
         if (!open) resetDraft();
       }}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[90dvh] w-[95vw] max-w-3xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b px-6 py-4 pr-12">
             <DialogTitle>Nouvel accord depuis une réservation</DialogTitle>
           </DialogHeader>
-          <div className="space-y-5">
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5 pr-3 sm:pr-6">
             <div className="space-y-2">
               <Label>Rechercher une réservation</Label>
               <Input
@@ -520,7 +533,17 @@ export default function TravelAgreements() {
                 onChange={(event) => setBookingSearch(event.target.value)}
                 placeholder="Référence, client, email ou voyage"
               />
-              <Select value={draft.bookingId || "__none"} onValueChange={(value) => setDraft((prev) => ({ ...prev, bookingId: value === "__none" ? "" : value }))}>
+              <Select
+                value={draft.bookingId || "__none"}
+                onValueChange={(value) => {
+                  const bookingId = value === "__none" ? "" : value;
+                  setDraft((prev) => ({
+                    ...prev,
+                    bookingId,
+                    includedServices: bookingId && !prev.includedServices.trim() ? standardIncludedServicesText : prev.includedServices,
+                  }));
+                }}
+              >
                 <SelectTrigger><SelectValue placeholder="Choisir une réservation" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none">Choisir une réservation</SelectItem>
@@ -574,7 +597,7 @@ export default function TravelAgreements() {
               </div>
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-2">
+          <DialogFooter className="gap-2 border-t bg-background px-6 py-4 sm:gap-2">
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Annuler</Button>
             <Button variant="outline" disabled={!draftPreviewAgreement} onClick={() => draftPreviewAgreement && setPreviewAgreement(draftPreviewAgreement)}>
               <Eye className="h-4 w-4" /> Aperçu PDF

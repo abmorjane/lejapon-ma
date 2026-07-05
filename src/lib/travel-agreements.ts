@@ -2,6 +2,7 @@ import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtDate, fmtDateTime, fmtMAD } from "@/lib/format";
 import { downloadBytes, sanitizePdfText } from "@/lib/booking-pdfs";
+import { getBookingPricingBreakdown } from "@/lib/booking-pricing";
 import stampUrl from "@/assets/stamp-moroccan-express.png";
 import logoLeJaponUrl from "@/assets/logo-lejapon.png";
 import logoMoroccanExpressUrl from "@/assets/logo-moroccan-express.png";
@@ -110,6 +111,18 @@ const ORANGE = rgb(0.94, 0.34, 0.12);
 const BORDER = rgb(0.87, 0.81, 0.74);
 export const TRAVEL_AGREEMENT_VERSION = "TRAVEL-AGREEMENT-FR-V2.0";
 export const ACCEPTANCE_STATEMENT = "J'ai lu et compris le présent accord de voyage. J'en accepte les conditions et je m'engage à respecter les règles d'organisation du voyage.";
+const INCLUDED_SERVICES_INTRO = "Sont incluses dans le voyage les prestations indiquées dans le programme et la réservation du Participant, notamment :";
+const INCLUDED_SERVICES_FINAL_SENTENCE = "Toute prestation qui n'est pas expressément mentionnée comme incluse doit être considérée comme non incluse.";
+const DEFAULT_INCLUDED_SERVICES_LINES = [
+  "Transport aérien international lorsqu'il est inclus dans la réservation confirmée.",
+  "Hébergements prévus au programme ou aux réservations confirmées.",
+  "Transports, transferts, accompagnement, guides, repas et activités expressément mentionnés dans le programme ou la réservation.",
+];
+export const DEFAULT_INCLUDED_SERVICES_TEXT = [
+  INCLUDED_SERVICES_INTRO,
+  ...DEFAULT_INCLUDED_SERVICES_LINES.map((line) => `- ${line}`),
+  INCLUDED_SERVICES_FINAL_SENTENCE,
+].join("\n");
 
 export const DEFAULT_STANDARD_AGREEMENT_SECTIONS: TravelAgreementTemplateSection[] = [
   {
@@ -126,6 +139,11 @@ export const DEFAULT_STANDARD_AGREEMENT_SECTIONS: TravelAgreementTemplateSection
     key: "luggage",
     title: "Bagages et transferts de bagages",
     body: "Lorsque le programme prévoit l'envoi des bagages séparément lors d'un déplacement entre deux villes, le Participant s'engage à préparer ses bagages dans les délais communiqués par l'accompagnateur.\n\nLe délai de livraison dépend du transporteur utilisé et peut nécessiter une livraison le jour suivant.",
+  },
+  {
+    key: "included_services",
+    title: "Prestations incluses",
+    body: DEFAULT_INCLUDED_SERVICES_TEXT,
   },
   {
     key: "extras",
@@ -190,13 +208,75 @@ const tripDateRange = (start?: string | null, end?: string | null) => {
   return "Dates à confirmer";
 };
 
-const paymentStatusLabel = (booking?: any | null) => {
-  if (!booking) return "À confirmer";
-  const total = Number(booking.total_amount_mad || 0);
-  const paid = Number(booking.paid_amount_mad || 0);
-  if (total > 0 && paid >= total) return `Payé (${fmtMAD(paid)})`;
-  if (paid > 0) return `Partiellement payé : ${fmtMAD(paid)} / ${fmtMAD(total)}`;
-  return total > 0 ? `En attente de paiement : ${fmtMAD(total)}` : "Montant à confirmer";
+const receivedPaymentTotal = (payments?: any[]) => {
+  const eligible = (payments ?? []).filter((payment) => ["paid", "received", "completed"].includes(String(payment?.status ?? "").toLowerCase()));
+  if (!eligible.length) return null;
+  return eligible.reduce((sum, payment) => sum + Number(payment?.amount_mad || 0), 0);
+};
+
+const paymentStatusLabel = ({ total, paid }: { total?: number | null; paid?: number | null }) => {
+  const safeTotal = Number(total || 0);
+  const safePaid = Number(paid || 0);
+  if (safeTotal > 0 && safePaid >= safeTotal) return `Payé (${fmtMAD(safePaid)})`;
+  if (safePaid > 0) return `Partiellement payé : ${fmtMAD(safePaid)} / ${fmtMAD(safeTotal)}`;
+  return safeTotal > 0 ? `En attente de paiement : ${fmtMAD(safeTotal)}` : "Montant à confirmer";
+};
+
+const stripBullet = (line: string) => line.replace(/^\s*[-*•]\s+/, "").trim();
+
+export const parseIncludedServicesText = (value?: string | null) => {
+  const lines = String(value || DEFAULT_INCLUDED_SERVICES_TEXT)
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const introLine = lines.find((line) => stripBullet(line).toLowerCase().startsWith("sont incluses")) || INCLUDED_SERVICES_INTRO;
+  const finalLine = lines.find((line) => stripBullet(line).toLowerCase().startsWith("toute prestation")) || INCLUDED_SERVICES_FINAL_SENTENCE;
+  const items = lines
+    .map(stripBullet)
+    .filter((line) => line && line !== stripBullet(introLine) && line !== stripBullet(finalLine));
+
+  return {
+    intro: stripBullet(introLine),
+    items: items.length ? items : DEFAULT_INCLUDED_SERVICES_LINES,
+    finalSentence: stripBullet(finalLine),
+  };
+};
+
+const resolveAgreementFinancials = ({
+  booking,
+  trip,
+  extras,
+  payments,
+}: {
+  booking?: any | null;
+  trip?: any | null;
+  extras?: any[];
+  payments?: any[];
+}) => {
+  if (!booking) {
+    return { total: null, paid: null, remaining: null, status: "À confirmer" };
+  }
+  const pricing = getBookingPricingBreakdown({
+    booking,
+    trip,
+    extras,
+  });
+  const calculatedFallback = pricing.calculatedFinalTotal > 0 ? pricing.calculatedFinalTotal : null;
+  const total = pricing.enteredFinalTotal > 0 ? pricing.enteredFinalTotal : calculatedFallback;
+  const paymentsTotal = receivedPaymentTotal(payments);
+  const paid = paymentsTotal !== null ? paymentsTotal : Number(booking.paid_amount_mad || 0);
+  const adjustedTotal = total === null
+    ? (paid > 0 ? paid : null)
+    : paid > total && pricing.enteredFinalTotal <= Number(booking.total_amount_mad || 0)
+      ? paid
+      : total;
+  const remaining = adjustedTotal !== null && adjustedTotal !== undefined ? Math.max(0, Number(adjustedTotal || 0) - paid) : null;
+  return {
+    total: adjustedTotal,
+    paid,
+    remaining,
+    status: paymentStatusLabel({ total: adjustedTotal, paid }),
+  };
 };
 
 export const agreementPublicUrl = (token: string) => {
@@ -215,6 +295,7 @@ export async function loadAgreementSource(input: {
   let trip: any = null;
   let client: any = null;
   let extras: any[] = [];
+  let payments: any[] = [];
   let participants: any[] = [];
   let hotels: any[] = [];
   let itinerary: any[] = [];
@@ -222,18 +303,20 @@ export async function loadAgreementSource(input: {
   if (input.bookingId) {
     const { data, error } = await supabase
       .from("bookings")
-      .select("*, trips(id,title,season,destination,start_date,end_date,duration_days,outbound_flight_text,return_flight_text,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_address,visa_hotel_phone)")
+      .select("*, trips(id,title,season,destination,start_date,end_date,duration_days,base_price_mad,promo_percent,outbound_flight_text,return_flight_text,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_address,visa_hotel_phone)")
       .eq("id", input.bookingId)
       .single();
     if (error) throw error;
     booking = data;
     trip = data?.trips ?? null;
-    const [{ data: extraRows }, { data: participantRows }] = await Promise.all([
+    const [{ data: extraRows }, { data: participantRows }, { data: paymentRows }] = await Promise.all([
       db.from("booking_extras").select("*").eq("booking_id", input.bookingId),
       db.from("booking_participants").select("*").eq("booking_id", input.bookingId).order("created_at", { ascending: true }),
+      db.from("payments").select("id,amount_mad,status,method,reference,paid_at,created_at").eq("booking_id", input.bookingId).order("paid_at", { ascending: false, nullsFirst: false }),
     ]);
     extras = extraRows ?? [];
     participants = participantRows ?? [];
+    payments = paymentRows ?? [];
     if (booking?.client_id) {
       const { data: clientRow } = await db
         .from("clients")
@@ -255,7 +338,7 @@ export async function loadAgreementSource(input: {
     if (input.tripId) {
       const { data, error } = await supabase
         .from("trips")
-        .select("id,title,season,destination,start_date,end_date,duration_days,outbound_flight_text,return_flight_text,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_address,visa_hotel_phone")
+        .select("id,title,season,destination,start_date,end_date,duration_days,base_price_mad,promo_percent,outbound_flight_text,return_flight_text,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_address,visa_hotel_phone")
         .eq("id", input.tripId)
         .single();
       if (error) throw error;
@@ -278,6 +361,7 @@ export async function loadAgreementSource(input: {
     trip,
     client,
     extras,
+    payments,
     participants,
     hotels,
     itinerary,
@@ -291,6 +375,7 @@ export function buildAgreementContent(source: {
   trip?: any | null;
   client?: any | null;
   extras?: any[];
+  payments?: any[];
   participants?: any[];
   hotels?: any[];
   itinerary?: any[];
@@ -303,6 +388,7 @@ export function buildAgreementContent(source: {
   const trip = source.trip ?? null;
   const client = source.client ?? null;
   const extras = source.extras ?? [];
+  const payments = source.payments ?? [];
   const participants = source.participants ?? [];
   const hotels = source.hotels ?? [];
   const itinerary = source.itinerary ?? [];
@@ -310,9 +396,10 @@ export function buildAgreementContent(source: {
   const clientName = clean(source.clientName || booking?.contact_name, "Client à confirmer");
   const tripTitle = clean(trip?.title || booking?.trips?.title, "Voyage à confirmer");
   const dates = tripDateRange(trip?.start_date, trip?.end_date);
-  const total = Number(booking?.total_amount_mad || 0);
-  const paid = Number(booking?.paid_amount_mad || 0);
-  const remaining = total > 0 ? Math.max(0, total - paid) : null;
+  const financials = resolveAgreementFinancials({ booking, trip, extras, payments });
+  const total = financials.total;
+  const paid = financials.paid;
+  const remaining = financials.remaining;
   const leadParticipant = participants.find((participant) => participant.is_lead) ?? participants[0] ?? null;
   const passportNumber = leadParticipant?.passport_no || client?.passport_no || client?.passport_number || null;
   const participantNames = participants.map((participant) => {
@@ -322,12 +409,13 @@ export function buildAgreementContent(source: {
   }).filter(Boolean);
   const agreementReference = `AV-${booking?.reference || new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
   const editableFields = source.editableFields ?? {};
-  const includedServices = editableFields.included_services?.trim()
-    || [
-      trip?.outbound_flight_text || trip?.return_flight_text ? "Transport aérien international lorsqu'il est inclus dans la réservation confirmée." : "",
-      "Hébergements prévus au programme ou aux réservations confirmées.",
-      "Transports, transferts, accompagnement, guides, repas et activités expressément mentionnés dans le programme ou la réservation.",
-    ].filter(Boolean).join("\n");
+  const standardSections = source.standardSections?.length ? source.standardSections : DEFAULT_STANDARD_AGREEMENT_SECTIONS;
+  const standardByKey = new Map(standardSections.map((section) => [section.key, section]));
+  const standard = (key: string) => standardByKey.get(key) ?? DEFAULT_STANDARD_AGREEMENT_SECTIONS.find((section) => section.key === key);
+  const includedServicesText = editableFields.included_services?.trim()
+    || standard("included_services")?.body?.trim()
+    || DEFAULT_INCLUDED_SERVICES_TEXT;
+  const includedServices = parseIncludedServicesText(includedServicesText);
   const hotelRows = hotels.length
     ? hotels.map((hotel) => {
       const nights = hotel.check_in && hotel.check_out
@@ -385,9 +473,6 @@ export function buildAgreementContent(source: {
   ].filter(Boolean) as AgreementTableRow[];
   const bookingStatus = clean(booking?.status, "À confirmer");
   const destination = clean(trip?.destination, "Japon");
-  const standardSections = source.standardSections?.length ? source.standardSections : DEFAULT_STANDARD_AGREEMENT_SECTIONS;
-  const standardByKey = new Map(standardSections.map((section) => [section.key, section]));
-  const standard = (key: string) => standardByKey.get(key) ?? DEFAULT_STANDARD_AGREEMENT_SECTIONS.find((section) => section.key === key);
   const standardSection = (key: string, extrasForSection?: Partial<TravelAgreementSection>): TravelAgreementSection => {
     const base = standard(key);
     return {
@@ -403,7 +488,7 @@ export function buildAgreementContent(source: {
     agreement_version: TRAVEL_AGREEMENT_VERSION,
     generated_at: new Date().toISOString(),
     editable_fields: {
-      included_services: includedServices,
+      included_services: includedServicesText,
       luggage_transfer_policy: editableFields.luggage_transfer_policy ?? "",
       specific_cancellation_conditions: editableFields.specific_cancellation_conditions ?? "",
       complementary_note: editableFields.complementary_note ?? "",
@@ -416,7 +501,7 @@ export function buildAgreementContent(source: {
       trip_title: tripTitle,
       trip_dates: dates,
       travelers_count: travelersCount,
-      payment_status: paymentStatusLabel(booking),
+      payment_status: financials.status,
       total_amount_mad: total || null,
       paid_amount_mad: paid || null,
       remaining_balance_mad: remaining,
@@ -426,9 +511,9 @@ export function buildAgreementContent(source: {
       hotels: hotelTableRows.length ? hotelTableRows : [{ city: "À confirmer", hotel: "Hébergement à confirmer", dates: "À confirmer", nights: "—" }],
       payments: [
         { label: "Montant total", value: total ? fmtMAD(total) : "À confirmer" },
-        { label: "Montant réglé", value: fmtMAD(paid) },
+        { label: "Montant réglé", value: fmtMAD(paid || 0) },
         { label: "Solde restant", value: remaining !== null ? fmtMAD(remaining) : "À confirmer" },
-        { label: "Statut", value: paymentStatusLabel(booking) },
+        { label: "Statut", value: financials.status },
       ],
     },
     sections: [
@@ -460,7 +545,7 @@ export function buildAgreementContent(source: {
           `Participant : ${clientName}`,
           `Statut de la réservation : ${bookingStatus}`,
           `Montant total de la réservation : ${total ? fmtMAD(total) : "à confirmer"}`,
-          `Montant déjà réglé : ${fmtMAD(paid)}`,
+          `Montant déjà réglé : ${fmtMAD(paid || 0)}`,
           `Solde restant : ${remaining !== null ? fmtMAD(remaining) : "à confirmer"}`,
         ],
       },
@@ -486,11 +571,9 @@ export function buildAgreementContent(source: {
       },
       {
         key: "included_services",
-        title: "Prestations incluses",
-        body: "Sont incluses dans le voyage les prestations indiquées dans le programme et la réservation du Participant, notamment :",
-        items: includedServices.split(/\n+/).map((line) => line.trim()).filter(Boolean).concat([
-          "Toute prestation qui n'est pas expressément mentionnée comme incluse doit être considérée comme non incluse.",
-        ]),
+        title: standard("included_services")?.title || "Prestations incluses",
+        body: includedServices.intro,
+        items: includedServices.items.concat([includedServices.finalSentence]),
       },
       {
         key: "organization_rules",
@@ -601,6 +684,32 @@ function rowValue(row: AgreementTableRow, key: string) {
   return clean(row[key], "—");
 }
 
+function normalizedFinancialRows(content: TravelAgreementContent): AgreementTableRow[] {
+  const rows = content.details?.payments ?? [];
+  const summary = content.summary ?? {};
+  const rawTotal = Number(summary.total_amount_mad || 0);
+  const paid = Number(summary.paid_amount_mad || 0);
+  const storedRemaining = summary.remaining_balance_mad === null || summary.remaining_balance_mad === undefined
+    ? null
+    : Number(summary.remaining_balance_mad);
+  const total = rawTotal > 0 && paid > rawTotal && storedRemaining === 0 ? paid : rawTotal;
+  if (total <= 0 && paid <= 0) return rows;
+  const remaining = total > 0 ? Math.max(0, total - paid) : null;
+  const nextRows = [
+    { label: "Montant total", value: total > 0 ? fmtMAD(total) : "À confirmer" },
+    { label: "Montant réglé", value: fmtMAD(paid) },
+    { label: "Solde restant", value: remaining !== null ? fmtMAD(remaining) : "À confirmer" },
+    { label: "Statut", value: paymentStatusLabel({ total: total > 0 ? total : null, paid }) },
+  ];
+  if (!rows.length) return nextRows;
+  const byLabel = new Map(nextRows.map((row) => [row.label, row]));
+  const patched = rows.map((row) => byLabel.get(String(row.label)) ?? row);
+  nextRows.forEach((row) => {
+    if (!patched.some((existing) => existing.label === row.label)) patched.push(row);
+  });
+  return patched;
+}
+
 export async function generateTravelAgreementPdf(input: {
   agreement: Pick<TravelAgreement, "client_name" | "booking_reference" | "trip_title" | "trip_start_date" | "trip_end_date" | "content" | "accepted_at">;
   acceptance?: TravelAgreementAcceptance | null;
@@ -706,7 +815,7 @@ export async function generateTravelAgreementPdf(input: {
   drawTable("Résumé financier", [
     { key: "label", label: "Élément", width: 170 },
     { key: "value", label: "Valeur", width: 337 },
-  ], input.agreement.content.details?.payments ?? []);
+  ], normalizedFinancialRows(input.agreement.content));
 
   drawTable("Transport aérien", [
     { key: "type", label: "Vol", width: 92 },
