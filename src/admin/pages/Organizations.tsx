@@ -1193,6 +1193,24 @@ export default function OrganizationsAdmin() {
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
+  const updateOnboardingDocumentStatus = async (document: Record<string, any>, status: string) => {
+    const documentId = cleanUnknown(document.id);
+    if (!documentId) return toast.error("Document introuvable.");
+    const { error } = await supabase
+      .from("partner_onboarding_documents" as any)
+      .update({ status })
+      .eq("id", documentId);
+    if (error) return toast.error(error.message);
+    setOnboardingReview((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        documents: current.documents.map((item) => item.id === documentId ? { ...item, status } : item),
+      };
+    });
+    toast.success("Statut document mis à jour.");
+  };
+
   const updateOnboardingAgencyField = (
     key: keyof OnboardingEditForm["agency_information"],
     value: string
@@ -3259,10 +3277,11 @@ export default function OrganizationsAdmin() {
                 <p className="font-semibold">Documents reçus</p>
                 <div className="mt-3 grid gap-2">
                   {[
-                    { key: "company_registration", label: "Company registration" },
-                    { key: "tax_certificate", label: "Tax certificate" },
-                    { key: "id_passport", label: "ID / passport" },
-                    { key: "bank_certificate", label: "Bank certificate" },
+                    { key: "travel_agency_rc", label: "RC agence de voyage" },
+                    { key: "travel_agency_authorization", label: "Autorisation d’exercice agence de voyage" },
+                    { key: "tax_or_ice_certificate", label: "Attestation fiscale ou ICE" },
+                    { key: "bank_certificate", label: "Attestation bancaire" },
+                    { key: "manager_cin", label: "CIN du gérant" },
                   ].map(({ key, label }) => {
                     const doc = onboardingDocumentsByType.get(key) ?? onboardingDisplayData.documents?.[key];
                     const fileName = doc?.file_name ?? doc?.filename ?? doc?.name ?? null;
@@ -3276,6 +3295,17 @@ export default function OrganizationsAdmin() {
                           <Badge variant="outline" className={doc ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
                             {doc ? String(doc.status ?? "Reçu") : "Manquant"}
                           </Badge>
+                          {doc?.id && (
+                            <select
+                              className="h-9 rounded-md border border-input bg-background px-2 text-xs"
+                              value={String(doc.status ?? "received")}
+                              onChange={(event) => updateOnboardingDocumentStatus(doc, event.target.value)}
+                            >
+                              <option value="received">reçu</option>
+                              <option value="validated">validé</option>
+                              <option value="rejected">refusé / à remplacer</option>
+                            </select>
+                          )}
                           {doc && (
                             <Button
                               type="button"

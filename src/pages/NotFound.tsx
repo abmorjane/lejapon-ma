@@ -109,7 +109,7 @@ const NotFound = () => {
                 </Link>
               </Button>
               <Button asChild size="lg" variant="outline">
-                <Link to="/visa">
+                <Link to="/visa-japon-maroc">
                   <Stamp className="w-4 h-4" />
                   {t.visa}
                 </Link>

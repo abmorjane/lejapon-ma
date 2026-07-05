@@ -18,12 +18,18 @@ export type Extra = {
  * Single source of truth for extra activities.
  * Reads from the `extras` table managed in admin (only is_active rows).
  */
-export function useExtras() {
+export function useExtras(options: { enabled?: boolean } = {}) {
+  const enabled = options.enabled ?? true;
   const [extras, setExtras] = useState<Extra[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     let active = true;
+    setLoading(true);
     (async () => {
       const { data } = await supabase
         .from("extras")
@@ -39,7 +45,7 @@ export function useExtras() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [enabled]);
 
   const translated = useTranslatedTable("extras", extras, [
     "name",

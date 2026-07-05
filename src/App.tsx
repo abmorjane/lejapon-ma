@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -10,6 +10,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { AdminLayout } from "@/admin/components/AdminLayout";
 import { RequireRole } from "@/admin/components/RequireRole";
 import { SupplierLayout } from "@/admin/components/SupplierLayout";
+import { setLang } from "@/i18n";
 import { AgencyProvider } from "@/agency/useAgencyContext";
 import { RequireActiveAgencyMember, RequireAgencyMember, RequireAgencyOnboarding } from "@/agency/components/AgencyGuards";
 import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from "@/components/LegacyRedirects";
@@ -30,6 +31,7 @@ const BlogPost = lazy(() => import("./pages/BlogPost.tsx"));
 const Contact = lazy(() => import("./pages/Contact.tsx"));
 const Booking = lazy(() => import("./pages/Booking.tsx"));
 const FitQuotePublic = lazy(() => import("./pages/FitQuotePublic.tsx"));
+const TravelAgreementPublic = lazy(() => import("./pages/TravelAgreementPublic.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 const Unsubscribe = lazy(() => import("@/pages/Unsubscribe"));
 const VisaList = lazy(() => import("@/pages/visa/VisaList"));
@@ -44,9 +46,11 @@ const AgencyDashboard = lazy(() => import("@/agency/pages/AgencyDashboard"));
 const AgencyBookings = lazy(() => import("@/agency/pages/AgencyBookings"));
 const AgencyBookingDetail = lazy(() => import("@/agency/pages/AgencyBookingDetail"));
 const AgencyFitQuotes = lazy(() => import("@/agency/pages/AgencyFitQuotes"));
+const AgencyFitRequests = lazy(() => import("@/agency/pages/AgencyFitRequests"));
 const AgencyTripsLibrary = lazy(() => import("@/agency/pages/AgencyTripsLibrary"));
 const AgencyProgrammesLibrary = lazy(() => import("@/agency/pages/AgencyProgrammesLibrary"));
 const AgencyHotels = lazy(() => import("@/agency/pages/AgencyHotels"));
+const AgencyExtras = lazy(() => import("@/agency/pages/AgencyExtras"));
 const AgencyCommission = lazy(() => import("@/agency/pages/AgencyCommission"));
 const AgencyProfilePage = lazy(() => import("@/agency/pages/AgencyProfilePage"));
 const AgencyOnboarding = lazy(() => import("@/agency/pages/AgencyOnboarding"));
@@ -56,6 +60,7 @@ const AdminDashboard = lazy(() => import("@/admin/pages/Dashboard"));
 const AdminTrips = lazy(() => import("@/admin/pages/Trips"));
 const AdminBookings = lazy(() => import("@/admin/pages/Bookings"));
 const AdminBookingDetail = lazy(() => import("@/admin/pages/BookingDetail"));
+const AdminTravelAgreements = lazy(() => import("@/admin/pages/TravelAgreements"));
 const AdminClients = lazy(() => import("@/admin/pages/Clients"));
 const AdminExtras = lazy(() => import("@/admin/pages/Extras"));
 const AdminSuppliers = lazy(() => import("@/admin/pages/Suppliers"));
@@ -71,6 +76,7 @@ const AdminMedia = lazy(() => import("@/admin/pages/Media"));
 const AdminUsers = lazy(() => import("@/admin/pages/Users"));
 const AdminOrganizations = lazy(() => import("@/admin/pages/Organizations"));
 const AdminPartnerRequests = lazy(() => import("@/admin/pages/PartnerRequests"));
+const AdminAgencyFitRequests = lazy(() => import("@/admin/pages/AgencyFitRequests"));
 const AdminAgencySettings = lazy(() => import("@/admin/pages/AgencySettings"));
 const AdminEmailSettings = lazy(() => import("@/admin/pages/EmailSettings"));
 const AdminEmailTemplates = lazy(() => import("@/admin/pages/EmailTemplates"));
@@ -100,10 +106,20 @@ const RouteFallback = () => (
   </div>
 );
 
+const VISA_CANONICAL_PATH = "/visa-japon-maroc";
+
 /** Redirect that preserves search params + hash so deep links like /reserver?trip=xxx work after route renames. */
 const PreservingRedirect = ({ to }: { to: string }) => {
   const { search, hash } = useLocation();
   return <Navigate to={`${to}${search}${hash}`} replace />;
+};
+
+const LocalizedRoute = ({ lang, children }: { lang: "en" | "ar"; children: ReactNode }) => {
+  useEffect(() => {
+    setLang(lang);
+  }, [lang]);
+
+  return <>{children}</>;
 };
 
 const AnalyticsRouteTracker = () => {
@@ -128,6 +144,7 @@ const AppRoutes = () => {
 
   // Auto-redirect default slugs → current renamed slug (preserves SEO).
   const renamedRedirects = (Object.keys(DEFAULT_SLUGS) as RouteKey[])
+    .filter((k) => k !== "visa")
     .map((k) => {
       const current = get(k);
       const def = DEFAULT_SLUGS[k].slug;
@@ -156,12 +173,14 @@ const AppRoutes = () => {
         <Route index element={<RequireActiveAgencyMember><AgencyDashboard /></RequireActiveAgencyMember>} />
         <Route path="bookings" element={<RequireActiveAgencyMember><AgencyBookings /></RequireActiveAgencyMember>} />
         <Route path="bookings/:id" element={<RequireActiveAgencyMember><AgencyBookingDetail /></RequireActiveAgencyMember>} />
-        <Route path="fit-quotes" element={<RequireActiveAgencyMember><AgencyFitQuotes /></RequireActiveAgencyMember>} />
+        <Route path="fit-quotes" element={<RequireActiveAgencyMember><AgencyFitRequests /></RequireActiveAgencyMember>} />
+        <Route path="fit-requests" element={<RequireActiveAgencyMember><AgencyFitRequests /></RequireActiveAgencyMember>} />
         <Route path="reservations" element={<RequireActiveAgencyMember><AgencyBookings /></RequireActiveAgencyMember>} />
         <Route path="reservations/:id" element={<RequireActiveAgencyMember><AgencyBookingDetail /></RequireActiveAgencyMember>} />
         <Route path="trips" element={<RequireActiveAgencyMember><AgencyTripsLibrary /></RequireActiveAgencyMember>} />
         <Route path="programmes" element={<RequireActiveAgencyMember><AgencyProgrammesLibrary /></RequireActiveAgencyMember>} />
         <Route path="hotels" element={<RequireActiveAgencyMember><AgencyHotels /></RequireActiveAgencyMember>} />
+        <Route path="extras" element={<RequireActiveAgencyMember><AgencyExtras /></RequireActiveAgencyMember>} />
         <Route path="commission" element={<RequireActiveAgencyMember><AgencyCommission /></RequireActiveAgencyMember>} />
         <Route path="profile" element={<RequireActiveAgencyMember><AgencyProfilePage /></RequireActiveAgencyMember>} />
         <Route path="onboarding" element={<RequireAgencyOnboarding><AgencyOnboarding /></RequireAgencyOnboarding>} />
@@ -175,17 +194,22 @@ const AppRoutes = () => {
         <Route path={`/${get("about")}`} element={<About />} />
         <Route path={`/${get("blog")}`} element={<Blog />} />
         <Route path="/blog/:slug" element={<BlogPost />} />
+        <Route path="/en/blog" element={<LocalizedRoute lang="en"><Blog /></LocalizedRoute>} />
+        <Route path="/en/blog/:slug" element={<LocalizedRoute lang="en"><BlogPost /></LocalizedRoute>} />
+        <Route path="/ar/blog" element={<LocalizedRoute lang="ar"><Blog /></LocalizedRoute>} />
+        <Route path="/ar/blog/:slug" element={<LocalizedRoute lang="ar"><BlogPost /></LocalizedRoute>} />
         <Route path={`/${get("contact")}`} element={<Contact />} />
         <Route path={`/${get("booking")}`} element={<Booking />} />
         <Route path="/devis-fit/:token" element={<FitQuotePublic />} />
+        <Route path="/accord-voyage/:token" element={<TravelAgreementPublic />} />
         <Route path={`/${get("programme")}`} element={<ProgrammePage />} />
         <Route path="/devenir-partenaire" element={<PartnerAcquisition />} />
-        {get("visa") !== "visa" && (
-          <Route path="/visa" element={<PreservingRedirect to={`/${get("visa")}`} />} />
-        )}
+        <Route path="/visa-japon-maroc" element={<VisaLogin />} />
+        <Route path="/visa" element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
+        <Route path="/visa-japon" element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
 
         {/* Legacy WordPress taxonomy/system URLs */}
-        <Route path="/tag/visa-japon" element={<PreservingRedirect to="/visa" />} />
+        <Route path="/tag/visa-japon" element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
         <Route path="/tag/voyage-japon" element={<PreservingRedirect to={`/${get("programme")}`} />} />
         <Route path="/tag/prix-japon" element={<PreservingRedirect to="/prix" />} />
         <Route path="/tag/blog" element={<PreservingRedirect to={`/${get("blog")}`} />} />
@@ -211,8 +235,13 @@ const AppRoutes = () => {
         {renamedRedirects}
 
         {/* Visa Japan module */}
-        <Route path={`/${get("visa")}`} element={<VisaList />} />
+        {get("visa") !== "visa-japon-maroc" && (
+          <Route path={`/${get("visa")}`} element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
+        )}
         <Route path={`/${get("visa")}/login`} element={<VisaLogin />} />
+        <Route path={`/${get("visa")}/applications`} element={<VisaList />} />
+        <Route path={`/${get("visa")}/formulaire`} element={<PreservingRedirect to={`/${get("visa")}/applications`} />} />
+        <Route path={`/${get("visa")}/formulaire/:id`} element={<VisaForm />} />
         <Route path={`/${get("visa")}/:id`} element={<VisaForm />} />
 
         {/* Legacy WordPress URLs — preserve SEO equity */}
@@ -226,7 +255,6 @@ const AppRoutes = () => {
         <Route path="/accueil-2" element={<LegacyStaticRedirect />} />
         <Route path="/a2" element={<LegacyStaticRedirect />} />
         <Route path="/demande-de-visa-pour-le-japon" element={<LegacyStaticRedirect />} />
-        <Route path="/formulaire-visa" element={<LegacyStaticRedirect />} />
         <Route path="/accord-de-voyage" element={<LegacyStaticRedirect />} />
         <Route path="/accord-de-voyage-avril" element={<LegacyStaticRedirect />} />
         <Route path="/accord-de-voyage-2" element={<LegacyStaticRedirect />} />
@@ -273,9 +301,11 @@ const AppRoutes = () => {
         <Route path="trips" element={<RequireRole module="trips"><AdminTrips /></RequireRole>} />
         <Route path="bookings" element={<RequireRole module="bookings"><AdminBookings /></RequireRole>} />
         <Route path="bookings/:id" element={<RequireRole module="bookings"><AdminBookingDetail /></RequireRole>} />
+        <Route path="travel-agreements" element={<RequireRole module="travel_agreements"><AdminTravelAgreements /></RequireRole>} />
         <Route path="clients" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
         <Route path="clients/:id" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
         <Route path="partner-requests" element={<RequireRole module="partner_requests"><AdminPartnerRequests /></RequireRole>} />
+        <Route path="agency-fit-requests" element={<RequireRole module="agency_fit_requests"><AdminAgencyFitRequests /></RequireRole>} />
         <Route path="extras" element={<RequireRole module="extras"><AdminExtras /></RequireRole>} />
         <Route path="suppliers" element={<RequireRole module="suppliers"><AdminSuppliers /></RequireRole>} />
         <Route path="supplier-costs" element={<RequireRole module="supplier_costs"><AdminSupplierCosts /></RequireRole>} />

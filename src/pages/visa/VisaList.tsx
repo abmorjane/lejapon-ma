@@ -43,6 +43,8 @@ export default function VisaList() {
   const [searchParams] = useSearchParams();
   const slugs = useRouteSlugs();
   const visaBase = pathFor(slugs, "visa");
+  const visaApplicationsPath = `${visaBase}/applications`;
+  const visaFormPath = (id: string) => `${visaBase}/formulaire/${id}`;
   const [items, setItems] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const autoCreateStarted = useRef(false);
@@ -110,7 +112,7 @@ export default function VisaList() {
       if (prefillMessage.startsWith("Informations préremplies")) toast.success(prefillMessage);
       else toast.info(prefillMessage);
     }
-    nav(`${visaBase}/${data!.id}`);
+    nav(visaFormPath(data!.id));
   };
 
   useEffect(() => {
@@ -121,7 +123,7 @@ export default function VisaList() {
 
   return (
     <div className="container-app py-12 max-w-4xl">
-      <Seo title="Demande de visa Japon — lejapon.ma" description="Préparez votre dossier de visa Japon en ligne. Formulaire numérique, génération PDF officielle et suivi par notre équipe." canonical={visaBase} />
+      <Seo title="Demande de visa Japon — lejapon.ma" description="Préparez votre dossier de visa Japon en ligne. Formulaire numérique, génération PDF officielle et suivi par notre équipe." canonical={visaApplicationsPath} />
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="font-display text-3xl md:text-4xl mb-2">Mes demandes de visa Japon</h1>
@@ -141,7 +143,7 @@ export default function VisaList() {
       ) : (
         <div className="space-y-3">
           {items.map((it) => (
-            <Link key={it.id} to={`${visaBase}/${it.id}`} className="block">
+            <Link key={it.id} to={visaFormPath(it.id)} className="block">
               <Card className="p-5 flex items-center justify-between hover:border-accent transition-colors">
                 <div>
                   <div className="flex items-center gap-3 mb-1">

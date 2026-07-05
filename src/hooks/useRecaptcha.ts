@@ -65,18 +65,20 @@ const loadScript = (siteKey: string): Promise<void> => {
  *  - executeRecaptcha(action) → returns a token to send to the backend
  *  - verify(token, action) → calls our edge function to validate the token server-side
  */
-export function useRecaptcha() {
+export function useRecaptcha(options: { active?: boolean } = {}) {
+  const active = options.active ?? true;
   const mode = recaptchaMode();
-  const [ready, setReady] = useState(!mode.enabled);
+  const [ready, setReady] = useState(!active || !mode.enabled);
   const [error, setError] = useState<string | null>(null);
   const siteKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!mode.enabled) {
+    if (!active || !mode.enabled) {
       setReady(true);
       return;
     }
     let cancelled = false;
+    setReady(false);
     (async () => {
       try {
         const key = await fetchSiteKey();
@@ -89,7 +91,7 @@ export function useRecaptcha() {
       }
     })();
     return () => { cancelled = true; };
-  }, [mode.enabled]);
+  }, [active, mode.enabled]);
 
   const executeRecaptcha = useCallback(async (action: string): Promise<string> => {
     if (!recaptchaMode().enabled) return BYPASS_TOKEN;
@@ -111,5 +113,5 @@ export function useRecaptcha() {
     return data as { ok: boolean; reason?: string };
   }, []);
 
-  return { ready, error, executeRecaptcha, verify, enabled: mode.enabled, bypass: mode.bypass };
+  return { ready, error, executeRecaptcha, verify, enabled: active && mode.enabled, bypass: mode.bypass };
 }

@@ -130,7 +130,7 @@ export default function VisaForm() {
         supabase.from("visa_settings").select("*").limit(1).maybeSingle(),
         supabase.from("visa_document_checklists").select("*").eq("is_active", true).order("sort_order"),
       ]);
-      if (appRes.error || !appRes.data) { toast.error("Demande introuvable"); nav(visaBase); return; }
+      if (appRes.error || !appRes.data) { toast.error("Demande introuvable"); nav(`${visaBase}/applications`); return; }
       let hydratedApp = {
         ...appRes.data,
         category: appRes.data.category ?? "",
@@ -502,7 +502,7 @@ export default function VisaForm() {
     if (!app || isReadOnly) return;
     if (!confirm("Supprimer définitivement cette demande ?")) return;
     await supabase.from("visa_applications").delete().eq("id", app.id);
-    nav(visaBase);
+    nav(`${visaBase}/applications`);
   };
 
   if (!app) return <div className="container-app py-20 text-center text-muted-foreground">Chargement…</div>;
@@ -524,8 +524,8 @@ export default function VisaForm() {
 
   return (
     <div className="container-app py-10 max-w-5xl" data-clarity-mask="true">
-      <Seo title={`Demande de visa ${app.reference} — lejapon.ma`} description="Préparez votre formulaire de visa Japon." canonical={`${visaBase}/${app.id}`} />
-      <button onClick={() => nav(visaBase)} className="text-sm text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1">
+      <Seo title={`Demande de visa ${app.reference} — lejapon.ma`} description="Préparez votre formulaire de visa Japon." canonical={`${visaBase}/formulaire/${app.id}`} />
+      <button onClick={() => nav(`${visaBase}/applications`)} className="text-sm text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1">
         <ArrowLeft className="w-4 h-4" /> Mes demandes
       </button>
 

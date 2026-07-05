@@ -12,6 +12,7 @@ import {
   summarizeQuoteAdjustments,
   type QuoteAdjustment,
 } from "@/lib/quote-adjustments";
+import { getBookingPricingBreakdown } from "@/lib/booking-pricing";
 
 const RED = rgb(0.78, 0.07, 0.10);
 const BLACK = rgb(0.07, 0.07, 0.07);
@@ -311,7 +312,6 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
   // Items table
   y -= Math.max(clientLines.length, tripLines.length) * 13 + 50;
   const pax = (b.num_adults || 0) + (b.num_children || 0);
-  const extrasTotal = (d.extras ?? []).reduce((s, e) => s + e.qty * Number(e.unit_price_mad || 0), 0);
   const baseTotal = Number(b.total_amount_mad || 0);
   const quoteAdjustments = normalizeQuoteAdjustments(d.quote_adjustments).length > 0
     ? normalizeQuoteAdjustments(d.quote_adjustments)
@@ -320,14 +320,18 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
       : legacyDiscountToAdjustment(d.discount);
   const visibleAdjustments = quoteAdjustments.filter((adjustment) => adjustment.visible_on_quote !== false);
   const adjustmentSummary = summarizeQuoteAdjustments(visibleAdjustments, baseTotal);
-  const peopleTotal = Math.max(0, baseTotal - extrasTotal);
-  const perPax = pax > 0 ? peopleTotal / pax : peopleTotal;
+  const pricing = getBookingPricingBreakdown({
+    booking: b,
+    trip,
+    extras: d.extras,
+    quoteAdjustments: visibleAdjustments,
+  });
   const rows = [
     {
       label: `${trip?.title ?? "Voyage"}${trip?.start_date ? " — départ " + fmtDate(trip.start_date) : ""}`,
       qty: String(pax || 1),
-      unit: fmtMad(perPax),
-      total: fmtMad(peopleTotal),
+      unit: fmtMad(pricing.tripUnitPrice),
+      total: fmtMad(pricing.tripTotal),
     },
     ...(d.extras ?? []).map((e) => ({
       label: e.name_snapshot,
@@ -429,9 +433,12 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   const remaining = Math.max(0, total - paid);
   const pax = (b.num_adults || 0) + (b.num_children || 0);
   const extras = d.extras ?? [];
-  const extrasTotal = extras.reduce((s, e) => s + e.qty * Number(e.unit_price_mad || 0), 0);
-  const peopleTotal = Math.max(0, baseTotal - extrasTotal);
-  const perPax = pax > 0 ? peopleTotal / pax : peopleTotal;
+  const pricing = getBookingPricingBreakdown({
+    booking: b,
+    trip: d.trip,
+    extras,
+    quoteAdjustments: visibleAdjustments,
+  });
 
   // Detail of the booking (what the client is paying for)
   drawText(page, "Détail de la réservation", 40, y, fontB, 10, RED); y -= 6;
@@ -439,8 +446,8 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
     {
       label: `${d.trip?.title ?? "Voyage"}${d.trip?.start_date ? " — départ " + fmtDate(d.trip.start_date) : ""}`,
       qty: String(pax || 1),
-      unit: fmtMad(perPax),
-      total: fmtMad(peopleTotal),
+      unit: fmtMad(pricing.tripUnitPrice),
+      total: fmtMad(pricing.tripTotal),
     },
     ...extras.map((e) => ({
       label: e.name_snapshot,

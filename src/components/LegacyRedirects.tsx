@@ -18,7 +18,7 @@ const STATIC_MAP: Record<string, string> = {
   "/hotels-avril": "/voyages",
   "/accueil-2": "/",
   "/a2": "/a-propos",
-  "/demande-de-visa-pour-le-japon": "/visa",
+  "/demande-de-visa-pour-le-japon": "/visa-japon-maroc",
   "/accord-de-voyage": "/contact",
   "/accord-de-voyage-avril": "/contact",
   "/accord-de-voyage-2": "/contact",

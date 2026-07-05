@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { CalendarCheck, CreditCard, FileText, Plus, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { CreateBookingDialog } from "./CreateBookingDialog";
-import { AdminPaymentDialog } from "./AdminPaymentDialog";
+
+const CreateBookingDialog = lazy(() => import("./CreateBookingDialog").then((module) => ({ default: module.CreateBookingDialog })));
+const AdminPaymentDialog = lazy(() => import("./AdminPaymentDialog").then((module) => ({ default: module.AdminPaymentDialog })));
 
 export function AdminQuickActionBar() {
   const navigate = useNavigate();
@@ -67,8 +68,10 @@ export function AdminQuickActionBar() {
           </DropdownMenu>
         </div>
       </div>
-      <CreateBookingDialog open={bookingOpen} onOpenChange={setBookingOpen} />
-      <AdminPaymentDialog open={paymentOpen} onOpenChange={setPaymentOpen} />
+      <Suspense fallback={null}>
+        {bookingOpen && <CreateBookingDialog open={bookingOpen} onOpenChange={setBookingOpen} />}
+        {paymentOpen && <AdminPaymentDialog open={paymentOpen} onOpenChange={setPaymentOpen} />}
+      </Suspense>
     </>
   );
 }

@@ -24,7 +24,7 @@ const allowedOrigins = () => {
     .split(",")
     .map((origin) => origin.trim().replace(/\/$/, ""))
     .filter(Boolean);
-  const siteUrl = (Deno.env.get("SITE_URL") || "https://lejapon.ma").replace(/\/$/, "");
+  const siteUrl = (Deno.env.get("SITE_URL") || "https://www.lejapon.ma").replace(/\/$/, "");
   return Array.from(new Set([siteUrl, "https://lejapon.ma", "https://www.lejapon.ma", ...configured]));
 };
 
@@ -39,7 +39,7 @@ const corsHeadersFor = (req: Request): Record<string, string> => {
   return { ...baseCorsHeaders, Vary: "Origin" };
 };
 
-const fallbackCorsHeaders = { ...baseCorsHeaders, "Access-Control-Allow-Origin": "https://lejapon.ma" };
+const fallbackCorsHeaders = { ...baseCorsHeaders, "Access-Control-Allow-Origin": "https://www.lejapon.ma" };
 
 const json = (payload: Record<string, unknown>, status = 200, headers: Record<string, string> = fallbackCorsHeaders) =>
   new Response(JSON.stringify(payload), {
@@ -276,8 +276,8 @@ async function smtpConfig(admin: any) {
 }
 
 async function sendWelcomeEmail(admin: any, firstName: string, email: string) {
-  const siteUrl = "https://lejapon.ma";
-  const loginUrl = `${siteUrl}/formulaire-visa/login`;
+  const siteUrl = "https://www.lejapon.ma";
+  const loginUrl = `${siteUrl}/visa-japon-maroc`;
   const logoUrl = `${siteUrl}/favicon.png`;
   let subject = "Bienvenue sur LeJapon.ma — votre espace visa est prêt";
   let text = `Bonjour ${firstName},

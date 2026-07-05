@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import nodemailer from "npm:nodemailer@6";
+import webpush from "npm:web-push@3.6.7";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,8 +14,13 @@ type EventType =
   | "booking_client"
   | "booking_created"
   | "agency_booking_internal"
+  | "agency_fit_request"
+  | "agency_fit_quote_ready"
   | "payment_recorded"
   | "agency_payment_recorded"
+  | "new_reservation"
+  | "new_payment"
+  | "new_visa_request"
   | "contact_message"
   | "test"
   | "test_email"
@@ -22,6 +28,8 @@ type EventType =
   | "resend_log"
   | "unknown";
 type LogStatus = "pending" | "sent" | "failed";
+type AdminNotificationType = "new_reservation" | "new_payment" | "new_visa_request" | "agency_fit_request";
+type AdminNotificationChannel = "email" | "push";
 
 type EmailPayload = {
   eventType: EventType;
@@ -34,6 +42,15 @@ type EmailPayload = {
   related_contact_id?: string | null;
   metadata?: Record<string, unknown>;
   replyTo?: string;
+};
+
+type AdminNotification = {
+  type: AdminNotificationType;
+  title: string;
+  message: string;
+  data?: Record<string, unknown>;
+  link?: string;
+  related_id?: string | null;
 };
 
 const escapeHtml = (value: unknown) =>
@@ -158,6 +175,29 @@ function plainMissing(value: unknown) {
   return text || missing;
 }
 
+const rawMimePattern = /\b(MIME-Version|Content-Type|Content-Transfer-Encoding|multipart\/|boundary=|quoted-printable|attachment100|message100)\b/i;
+
+function containsRawMime(value: unknown) {
+  return rawMimePattern.test(String(value ?? ""));
+}
+
+function plainTextFromHtml(value: string) {
+  return value
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h1|h2|h3|li|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 const truthy = (value: unknown) => {
   if (value === null || value === undefined) return false;
   if (typeof value === "string") return value.trim().length > 0;
@@ -277,11 +317,19 @@ function bookingNotificationShell(reference: unknown, sections: string[], adminU
 }
 
 function adminBaseUrl() {
-  return (Deno.env.get("ADMIN_BASE_URL") || Deno.env.get("SITE_URL") || "https://lejapon.ma").replace(/\/$/, "");
+  return (Deno.env.get("ADMIN_BASE_URL") || Deno.env.get("SITE_URL") || "https://www.lejapon.ma").replace(/\/$/, "");
 }
 
 function adminRecipient() {
-  return Deno.env.get("ADMIN_NOTIFICATION_EMAIL") || "info@lejapon.ma";
+  return Deno.env.get("ADMIN_NOTIFICATION_EMAIL") || Deno.env.get("ADMIN_NOTIFICATION_EMAILS")?.split(",")[0]?.trim() || "info@lejapon.ma";
+}
+
+function adminRecipients() {
+  const raw = Deno.env.get("ADMIN_NOTIFICATION_EMAILS") || Deno.env.get("ADMIN_NOTIFICATION_EMAIL") || "info@lejapon.ma";
+  return raw
+    .split(",")
+    .map((email) => normalizeEmail(email))
+    .filter((email, index, list) => email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && list.indexOf(email) === index);
 }
 
 function normalizeEmail(value: unknown) {
@@ -329,7 +377,7 @@ async function smtpConfig(admin: any) {
       secure: Number(Deno.env.get("SMTP_PORT") || 465) === 465 ? "ssl" : "starttls",
       username: normalizeEmail(Deno.env.get("SMTP_USER")),
       password: String(Deno.env.get("SMTP_PASS") ?? ""),
-      from: normalizeEmail(Deno.env.get("SMTP_FROM")),
+      from: normalizeEmail(Deno.env.get("EMAIL_FROM") || Deno.env.get("SMTP_FROM")),
       fromName: "LeJapon.ma / Moroccan Express Travel & Events",
       replyTo: undefined,
     };
@@ -346,11 +394,11 @@ async function smtpConfig(admin: any) {
   }
 
   return {
-    connection: {
-      hostname: config.hostname,
+    transport: {
+      host: config.hostname,
       port: config.port,
-      tls: config.secure === "ssl",
-      auth: { username: config.username, password: config.password },
+      secure: config.secure === "ssl",
+      auth: { user: config.username, pass: config.password },
     },
     from: config.from,
     fromName: config.fromName,
@@ -397,6 +445,24 @@ function emailShell(
       </div>
     </div>
   `;
+}
+
+function ensureCleanEmailPayload(payload: EmailPayload): EmailPayload {
+  const textLooksRaw = containsRawMime(payload.text);
+  const htmlLooksRaw = containsRawMime(payload.html);
+  const fallbackSource = htmlLooksRaw ? (textLooksRaw ? "" : payload.text) : (payload.html || payload.text || payload.subject);
+  const fallbackText = plainTextFromHtml(fallbackSource || payload.subject);
+  const safeFallbackText = fallbackText && !containsRawMime(fallbackText) ? fallbackText : payload.subject;
+  const cleanText = textLooksRaw ? safeFallbackText : payload.text;
+  const cleanHtml = htmlLooksRaw
+    ? emailShell(payload.subject, safeFallbackText, [], undefined, "Notification automatique — LeJapon.ma")
+    : payload.html;
+  return {
+    ...payload,
+    subject: sanitizeBranding(payload.subject),
+    html: sanitizeBranding(cleanHtml),
+    text: sanitizeBranding(cleanText || safeFallbackText),
+  };
 }
 
 async function createLog(
@@ -456,12 +522,7 @@ async function updateLog(admin: any, id: string | undefined, status: LogStatus, 
 }
 
 async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: string) {
-  payload = {
-    ...payload,
-    subject: sanitizeBranding(payload.subject),
-    html: sanitizeBranding(payload.html),
-    text: sanitizeBranding(payload.text),
-  };
+  payload = ensureCleanEmailPayload(payload);
   const logId = existingLogId ?? await createLog(admin, payload, "pending");
   if (existingLogId) await updateLogDetails(admin, existingLogId, payload);
   if (!payload.recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.recipient)) {
@@ -471,16 +532,16 @@ async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: stri
   }
   try {
     const smtp = await smtpConfig(admin);
-    const client = new SMTPClient({ connection: smtp.connection });
-    await client.send({
+    const transporter = nodemailer.createTransport(smtp.transport);
+    await transporter.sendMail({
       from: `${smtp.fromName} <${smtp.from}>`,
       to: payload.recipient,
       replyTo: payload.replyTo || smtp.replyTo,
       subject: payload.subject,
+      text: payload.text,
       html: payload.html,
-      content: payload.text,
     });
-    await client.close();
+    transporter.close();
     await updateLog(admin, logId, "sent");
     return { ok: true, log_id: logId };
   } catch (error) {
@@ -489,6 +550,143 @@ async function sendEmail(admin: any, payload: EmailPayload, existingLogId?: stri
     console.error("[admin-email] failed", { eventType: payload.eventType, logId, error_code: "email_send_failed", error: message });
     return { ok: false, log_id: logId, error: "email_send_failed", detail: message };
   }
+}
+
+function adminNotificationTypeForPayload(payload: EmailPayload): AdminNotificationType | null {
+  if (["booking_internal", "booking_created", "new_reservation"].includes(payload.eventType)) return "new_reservation";
+  if (["payment_recorded", "new_payment"].includes(payload.eventType)) return "new_payment";
+  if (payload.eventType === "new_visa_request") return "new_visa_request";
+  if (payload.eventType === "agency_fit_request") return "agency_fit_request";
+  return null;
+}
+
+function notificationFromEmailPayload(payload: EmailPayload): AdminNotification | null {
+  const type = adminNotificationTypeForPayload(payload);
+  if (!type) return null;
+  const metadata = payload.metadata ?? {};
+  const clientName = plainMissing(metadata.client_name);
+  const amount = metadata.amount ? plainMissing(metadata.amount) : "";
+  const titles: Record<AdminNotificationType, string> = {
+    new_reservation: "Nouvelle réservation",
+    new_payment: "Nouveau paiement reçu",
+    new_visa_request: "Nouvelle demande de visa",
+    agency_fit_request: "Nouvelle demande FIT agence",
+  };
+  const messages: Record<AdminNotificationType, string> = {
+    new_reservation: `${clientName} vient de faire une réservation.`,
+    new_payment: `${clientName} a payé ${amount || "un montant enregistré"}.`,
+    new_visa_request: `${clientName} a créé une nouvelle demande de visa.`,
+    agency_fit_request: `${plainMissing(metadata.agency_name)} a envoyé une demande FIT pour ${clientName}.`,
+  };
+  const relatedId = payload.related_payment_id ?? payload.related_booking_id ?? String(metadata.visa_application_id ?? metadata.related_id ?? "");
+  return {
+    type,
+    title: titles[type],
+    message: messages[type],
+    data: metadata,
+    link: String(metadata.admin_url ?? ""),
+    related_id: relatedId || null,
+  };
+}
+
+async function createAdminNotificationLog(
+  admin: any,
+  notification: AdminNotification,
+  channel: AdminNotificationChannel,
+  recipient: string | null,
+  status: LogStatus,
+  errorMessage?: string,
+) {
+  const { error } = await admin
+    .from("admin_notification_logs")
+    .insert({
+      type: notification.type,
+      channel,
+      title: notification.title,
+      message: notification.message,
+      recipient,
+      status,
+      error_message: errorMessage ?? null,
+      related_id: notification.related_id || null,
+      data: notification.data ?? {},
+      link: notification.link || null,
+    });
+  if (error) console.warn("[admin-notification] log insert skipped", error.message);
+}
+
+async function sendPushNotifications(admin: any, notification: AdminNotification) {
+  const publicKey = Deno.env.get("VAPID_PUBLIC_KEY");
+  const privateKey = Deno.env.get("VAPID_PRIVATE_KEY");
+  const subject = Deno.env.get("VAPID_SUBJECT") || "mailto:info@lejapon.ma";
+  const results = [];
+
+  if (!publicKey || !privateKey) {
+    const message = "missing_vapid_config";
+    await createAdminNotificationLog(admin, notification, "push", "admin_push_subscriptions", "failed", message);
+    return [{ ok: false, error: message }];
+  }
+
+  const { data: subscriptions, error } = await admin
+    .from("admin_push_subscriptions")
+    .select("id,endpoint,p256dh,auth,enabled")
+    .eq("enabled", true);
+  if (error) {
+    await createAdminNotificationLog(admin, notification, "push", "admin_push_subscriptions", "failed", error.message);
+    return [{ ok: false, error: "subscription_fetch_failed", detail: error.message }];
+  }
+
+  webpush.setVapidDetails(subject, publicKey, privateKey);
+  const payload = JSON.stringify({
+    type: notification.type,
+    title: notification.title,
+    body: notification.message,
+    message: notification.message,
+    link: notification.link || "/admin",
+    data: notification.data ?? {},
+  });
+
+  for (const subscription of subscriptions ?? []) {
+    const recipient = String(subscription.endpoint ?? "");
+    try {
+      await webpush.sendNotification({
+        endpoint: recipient,
+        keys: {
+          p256dh: String(subscription.p256dh ?? ""),
+          auth: String(subscription.auth ?? ""),
+        },
+      }, payload);
+      await createAdminNotificationLog(admin, notification, "push", recipient, "sent");
+      results.push({ ok: true, subscription_id: subscription.id });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await createAdminNotificationLog(admin, notification, "push", recipient, "failed", message);
+      if (/410|404|expired|gone/i.test(message)) {
+        await admin.from("admin_push_subscriptions").update({ enabled: false }).eq("id", subscription.id);
+      }
+      results.push({ ok: false, subscription_id: subscription.id, error: message });
+    }
+  }
+  return results;
+}
+
+async function sendAdminNotification(admin: any, notification: AdminNotification, emailPayload?: EmailPayload) {
+  const emailResults = [];
+  if (emailPayload) {
+    for (const recipient of adminRecipients()) {
+      const result = await sendEmail(admin, { ...emailPayload, recipient });
+      await createAdminNotificationLog(
+        admin,
+        notification,
+        "email",
+        recipient,
+        result.ok ? "sent" : "failed",
+        result.ok ? undefined : String(result.detail || result.error || "email_send_failed"),
+      );
+      emailResults.push(result);
+    }
+  }
+  const pushResults = await sendPushNotifications(admin, notification);
+  return { email_results: emailResults, push_results: pushResults };
 }
 
 async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any): Promise<EmailPayload> {
@@ -613,7 +811,7 @@ async function bookingEmail(admin: any, bookingId: string, fullBookingData?: any
     ]),
   ];
 
-  const subject = `Nouvelle réservation LeJapon.ma — ${plainMissing(booking.contact_name)} — ${plainMissing(trip?.title || tripLabel)}`;
+  const subject = "Nouvelle réservation - LeJapon.ma";
   const html = bookingNotificationShell(
     booking.reference,
     sections,
@@ -670,7 +868,13 @@ Source
 
 Ouvrir la réservation: ${adminUrl}`,
     related_booking_id: booking.id,
-    metadata: { reference: booking.reference, admin_url: adminUrl },
+    metadata: {
+      reference: booking.reference,
+      admin_url: adminUrl,
+      client_name: plainMissing(booking.contact_name),
+      trip_title: plainMissing(trip?.title || tripLabel),
+      amount: fmtMAD(total),
+    },
   };
   return await applyEmailTemplate(admin, "booking_new_admin", {
     client_name: plainMissing(booking.contact_name),
@@ -819,13 +1023,13 @@ async function paymentEmail(admin: any, paymentId: string, paymentPayload?: any,
   const tripLabel = [booking.trips?.season, booking.trips?.title].filter(Boolean).join(" — ") || "—";
   const rest = Math.max(0, Number(booking.total_amount_mad || 0) - paidTotal);
   const adminUrl = `${adminBaseUrl()}/admin/bookings/${booking.id}`;
-  const subject = `Nouveau paiement LeJapon.ma — ${plainMissing(booking.contact_name)} — ${fmtMAD(payment.amount_mad)}`;
+  const subject = "Nouveau paiement reçu - LeJapon.ma";
 
   const payload: EmailPayload = {
     eventType: "payment_recorded",
     recipient: adminRecipient(),
     subject,
-    html: emailShell("Nouveau paiement LeJapon.ma", "Un paiement vient d'être ajouté ou validé.", [
+    html: emailShell("Nouveau paiement reçu", "Un paiement vient d'être ajouté ou validé.", [
       ["ID / référence paiement", payment.reference || payment.id],
       ["Réservation", booking.reference],
       ["Nom client", booking.contact_name],
@@ -842,7 +1046,7 @@ async function paymentEmail(admin: any, paymentId: string, paymentPayload?: any,
       ["Total payé", fmtMAD(paidTotal)],
       ["Reste à payer", fmtMAD(rest)],
     ], { label: "Ouvrir la réservation", href: adminUrl }),
-    text: `Nouveau paiement LeJapon.ma
+    text: `Nouveau paiement reçu
 
 Paiement: ${plainMissing(payment.reference || payment.id)}
 Réservation: ${plainMissing(booking.reference)}
@@ -863,7 +1067,13 @@ Reste à payer: ${fmtMAD(rest)}
 Ouvrir: ${adminUrl}`,
     related_booking_id: booking.id,
     related_payment_id: payment.id,
-    metadata: { reference: booking.reference },
+    metadata: {
+      reference: booking.reference,
+      admin_url: adminUrl,
+      client_name: plainMissing(booking.contact_name),
+      amount: fmtMAD(payment.amount_mad),
+      payment_method: paymentMethodLabel(payment.method),
+    },
   };
   return await applyEmailTemplate(admin, "payment_new_admin", {
     client_name: plainMissing(booking.contact_name),
@@ -1038,6 +1248,197 @@ Ouvrir: ${adminUrl}`,
   }, payload);
 }
 
+const visaStatusLabel = (value: unknown) => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  const labels: Record<string, string> = {
+    draft: "Brouillon",
+    submitted: "Soumise",
+    awaiting_documents: "En attente des documents",
+    documents_received: "Documents reçus",
+    in_review: "En traitement",
+    submitted_to_embassy: "Soumise à l'ambassade",
+    approved: "Approuvée",
+    rejected: "Rejetée",
+    completed: "Terminée",
+  };
+  return labels[raw] ?? plainMissing(value);
+};
+
+const professionalSituationLabel = (value: unknown) => {
+  const labels: Record<string, string> = {
+    private_employee: "Salarié du secteur privé",
+    civil_servant: "Fonctionnaire",
+    business_owner: "Chef d'entreprise / entrepreneur",
+    liberal_profession: "Profession libérale / médecin",
+    student: "Étudiant",
+    retired: "Retraité",
+    unemployed: "Sans emploi",
+    other: "Autre",
+    tourism: "Tourisme",
+  };
+  return labels[String(value ?? "")] ?? plainMissing(value);
+};
+
+async function visaRequestEmail(admin: any, applicationId: string, applicationPayload?: any): Promise<EmailPayload> {
+  const { data: fetchedApp, error } = applicationPayload
+    ? { data: applicationPayload, error: null }
+    : await admin.from("visa_applications").select("*").eq("id", applicationId).maybeSingle();
+  const app = fetchedApp;
+  if (error || !app) throw new Error(error?.message ?? "Visa application not found");
+
+  let trip: any = null;
+  let booking: any = null;
+  const tripId = app.selected_trip_id || app.document_trip_id || app.trip_id || null;
+  if (tripId) {
+    const { data } = await admin.from("trips").select("id,title,season,start_date,end_date").eq("id", tripId).maybeSingle();
+    trip = data ?? null;
+  }
+  if (!trip && app.booking_id) {
+    const { data } = await admin
+      .from("bookings")
+      .select("id,reference,trip_id,trips(id,title,season,start_date,end_date)")
+      .eq("id", app.booking_id)
+      .maybeSingle();
+    booking = data ?? null;
+    trip = booking?.trips ?? null;
+  }
+
+  const adminUrl = `${adminBaseUrl()}/admin/visa/${app.id}`;
+  const clientName = [app.surname, app.given_names].filter(Boolean).join(" ") || missing;
+  const tripLabel = trip ? [trip.season, trip.title].filter(Boolean).join(" — ") : missing;
+  const subject = "Nouvelle demande de visa - LeJapon.ma";
+  const html = emailShell("Nouvelle demande de visa reçue", "Une nouvelle demande de visa vient d'être soumise depuis l'espace client.", [
+    ["Client", clientName],
+    ["Type de visa", professionalSituationLabel(app.professional_situation || app.category || app.visa_type || "tourism")],
+    ["Statut", visaStatusLabel(app.status)],
+    ["Date de demande", fmtDate(app.submitted_at || app.created_at)],
+    ["Téléphone", app.residential_mobile || app.residential_tel],
+    ["Email", app.residential_email],
+    ["Passeport", app.passport_no],
+    ["Voyage", tripLabel],
+    ["Réservation", booking?.reference || app.booking_id],
+  ], { label: "Ouvrir le dossier visa", href: adminUrl });
+
+  return {
+    eventType: "new_visa_request",
+    recipient: adminRecipient(),
+    subject,
+    html,
+    text: `Nouvelle demande de visa reçue
+
+Client: ${clientName}
+Type de visa: ${professionalSituationLabel(app.professional_situation || app.category || app.visa_type || "tourism")}
+Statut: ${visaStatusLabel(app.status)}
+Date de demande: ${fmtDate(app.submitted_at || app.created_at)}
+Téléphone: ${plainMissing(app.residential_mobile || app.residential_tel)}
+Email: ${plainMissing(app.residential_email)}
+Passeport: ${plainMissing(app.passport_no)}
+Voyage: ${tripLabel}
+Réservation: ${plainMissing(booking?.reference || app.booking_id)}
+
+Lien admin: ${adminUrl}`,
+    metadata: {
+      visa_application_id: app.id,
+      reference: app.reference,
+      admin_url: adminUrl,
+      client_name: clientName,
+      status: visaStatusLabel(app.status),
+    },
+  };
+}
+
+async function agencyFitRequestEmail(admin: any, requestId: string): Promise<EmailPayload> {
+  const { data: request, error } = await admin
+    .from("agency_fit_requests")
+    .select("*, organizations(display_name,legal_name,email)")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (error || !request) throw new Error(error?.message ?? "Agency FIT request not found");
+
+  const agencyName = request.organizations?.display_name || request.organizations?.legal_name || "Agence partenaire";
+  const adminUrl = `${adminBaseUrl()}/admin/agency-fit-requests`;
+  const travelers = `${Number(request.adults || 0)} adulte(s), ${Number(request.children || 0)} enfant(s), ${Number(request.babies || 0)} bébé(s)`;
+  return {
+    eventType: "agency_fit_request",
+    recipient: adminRecipient(),
+    subject: "Nouvelle demande FIT agence - LeJapon.ma",
+    html: emailShell("Nouvelle demande FIT agence", "Une agence partenaire vient d'envoyer une demande de devis FIT sur mesure.", [
+      ["Agence", agencyName],
+      ["Client", request.client_full_name],
+      ["Téléphone client", request.client_phone],
+      ["Email client", request.client_email],
+      ["Voyageurs", travelers],
+      ["Destination", request.destination_country],
+      ["Villes", safeArray(request.cities).join(", ")],
+      ["Dates", `${fmtDateOnly(request.desired_departure_date)} → ${fmtDateOnly(request.desired_return_date)}`],
+      ["Durée", request.duration_days ? `${request.duration_days} jours` : missing],
+      ["Budget", request.budget_per_person ? `${Number(request.budget_per_person).toLocaleString("fr-FR")} ${request.currency || ""}` : missing],
+      ["Style", safeArray(request.travel_styles).join(", ")],
+    ], { label: "Ouvrir les demandes FIT", href: adminUrl }),
+    text: `Nouvelle demande FIT agence
+
+Agence: ${plainMissing(agencyName)}
+Client: ${plainMissing(request.client_full_name)}
+Téléphone: ${plainMissing(request.client_phone)}
+Email: ${plainMissing(request.client_email)}
+Voyageurs: ${travelers}
+Destination: ${plainMissing(request.destination_country)}
+Villes: ${safeArray(request.cities).join(", ") || missing}
+Dates: ${fmtDateOnly(request.desired_departure_date)} → ${fmtDateOnly(request.desired_return_date)}
+Durée: ${request.duration_days ? `${request.duration_days} jours` : missing}
+Budget: ${request.budget_per_person ? `${Number(request.budget_per_person).toLocaleString("fr-FR")} ${request.currency || ""}` : missing}
+
+Ouvrir: ${adminUrl}`,
+    metadata: {
+      agency_fit_request_id: request.id,
+      agency_name: agencyName,
+      client_name: plainMissing(request.client_full_name),
+      admin_url: adminUrl,
+    },
+  };
+}
+
+async function agencyFitQuoteReadyEmail(admin: any, requestId: string): Promise<EmailPayload> {
+  const { data: request, error } = await admin
+    .from("agency_fit_requests")
+    .select("*, organizations(display_name,legal_name,email)")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (error || !request) throw new Error(error?.message ?? "Agency FIT request not found");
+
+  const agencyName = request.organizations?.display_name || request.organizations?.legal_name || "Agence partenaire";
+  const recipient = normalizeEmail(request.organizations?.email);
+  if (!recipient) throw new Error("Agency email is missing");
+  const agencyUrl = `${adminBaseUrl()}/agency/fit-quotes`;
+  return {
+    eventType: "agency_fit_quote_ready",
+    recipient,
+    subject: "Votre devis FIT est prêt - LeJapon.ma",
+    html: emailShell("Devis FIT prêt", "Le devis FIT demandé par votre agence est prêt. Vous pouvez ajouter votre marge et partager le lien final avec votre client depuis votre espace agence.", [
+      ["Agence", agencyName],
+      ["Client", request.client_full_name],
+      ["Destination", request.destination_country],
+      ["Prix base LeJapon.ma", request.base_total_price ? fmtMAD(request.base_total_price) : missing],
+      ["Lien devis", request.quote_link],
+    ], { label: "Ouvrir mon espace agence", href: agencyUrl }),
+    text: `Devis FIT prêt
+
+Agence: ${plainMissing(agencyName)}
+Client: ${plainMissing(request.client_full_name)}
+Destination: ${plainMissing(request.destination_country)}
+Prix base LeJapon.ma: ${request.base_total_price ? fmtMAD(request.base_total_price) : missing}
+Lien devis: ${plainMissing(request.quote_link)}
+
+Ouvrir mon espace agence: ${agencyUrl}`,
+    metadata: {
+      agency_fit_request_id: request.id,
+      agency_name: agencyName,
+      client_name: plainMissing(request.client_full_name),
+      quote_link: request.quote_link,
+    },
+  };
+}
+
 function contactEmailPayload(contact: any): EmailPayload {
   const sentAt = fmtDate(contact.created_at);
   const subject = `Nouveau message depuis LeJapon.ma – ${contact.name}`;
@@ -1155,18 +1556,22 @@ function eventTypeFromBody(body: any): EventType {
   const type = String(body?.type ?? "");
   if (type === "booking" || type === "new_booking") return "booking_internal";
   if (type === "agency_booking") return "agency_booking_internal";
+  if (type === "agency_fit_request") return "agency_fit_request";
+  if (type === "agency_fit_quote_ready") return "agency_fit_quote_ready";
   if (type === "payment" || type === "new_payment") return "payment_recorded";
+  if (type === "visa_request" || type === "new_visa_request") return "new_visa_request";
   if (type === "agency_payment") return "agency_payment_recorded";
   if (type === "contact") return "contact_internal";
   if (type === "test") return "test";
   if (type === "test_template") return "test_template";
   if (type === "resend") return "resend_log";
-  if (["contact_internal", "contact_client", "booking_internal", "booking_client"].includes(type)) return type as EventType;
+  if (["contact_internal", "contact_client", "booking_internal", "booking_client", "new_visa_request", "agency_fit_request", "agency_fit_quote_ready"].includes(type)) return type as EventType;
 
   const eventType = String(body?.event_type ?? "");
-  if (["booking_created", "new_booking", "agency_booking_internal", "payment_recorded", "new_payment", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log"].includes(eventType)) {
+  if (["booking_created", "new_booking", "agency_booking_internal", "agency_fit_request", "agency_fit_quote_ready", "payment_recorded", "new_payment", "new_visa_request", "visa_request", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log"].includes(eventType)) {
     if (eventType === "new_booking") return "booking_created";
     if (eventType === "new_payment") return "payment_recorded";
+    if (eventType === "visa_request") return "new_visa_request";
     return eventType as EventType;
   }
   return "unknown";
@@ -1179,7 +1584,9 @@ function sanitizeRequestBody(body: any) {
     type: body?.type ?? null,
     event_type: body?.event_type ?? null,
     booking_id: body?.booking_id ?? payload.booking_id ?? null,
+    agency_fit_request_id: body?.request_id ?? payload.request_id ?? null,
     payment_id: body?.payment_id ?? payload.payment_id ?? null,
+    visa_application_id: body?.application_id ?? body?.visa_application_id ?? payload.application_id ?? payload.visa_application_id ?? null,
     contact_id: body?.contact_id ?? payload.contact_id ?? null,
     log_id: body?.log_id ?? payload.log_id ?? null,
     payload_keys: Object.keys(payload),
@@ -1219,9 +1626,12 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
   if (type === "agency_booking") {
     return [await agencyBookingEmail(admin, String(body.payload?.request_id ?? body.payload?.id ?? body.request_id ?? ""))];
   }
+  if (type === "agency_fit_request") return [await agencyFitRequestEmail(admin, String(payload.request_id ?? payload.id ?? body.request_id ?? ""))];
+  if (type === "agency_fit_quote_ready") return [await agencyFitQuoteReadyEmail(admin, String(payload.request_id ?? payload.id ?? body.request_id ?? ""))];
   if (type === "booking_internal") return [await bookingEmail(admin, String(payload.booking_id ?? payload.id ?? body.booking_id ?? ""), payload.fullBookingData)];
   if (type === "booking_client") return [await bookingClientEmail(admin, String(payload.booking_id ?? payload.id ?? body.booking_id ?? ""), payload.fullBookingData)];
   if (type === "payment" || type === "new_payment") return [await paymentEmail(admin, String(payload.payment_id ?? body.payment_id ?? payload.id ?? ""), payload.payment, String(payload.booking_id ?? body.booking_id ?? ""))];
+  if (type === "visa_request" || type === "new_visa_request") return [await visaRequestEmail(admin, String(payload.application_id ?? payload.visa_application_id ?? body.application_id ?? body.visa_application_id ?? payload.id ?? ""), payload.application)];
   if (type === "agency_payment") return [await agencyPaymentEmail(admin, String(body.payload?.request_id ?? body.request_id ?? ""), String(body.payload?.payment_id ?? body.payment_id ?? ""))];
   if (type === "test") {
     await requireStaff(admin, req);
@@ -1263,7 +1673,10 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
     return [await bookingEmail(admin, bookingId, body.fullBookingData), await bookingClientEmail(admin, bookingId, body.fullBookingData)];
   }
   if (eventType === "agency_booking_internal") return [await agencyBookingEmail(admin, String(body.request_id ?? body.payload?.request_id ?? ""))];
+  if (eventType === "agency_fit_request") return [await agencyFitRequestEmail(admin, String(body.request_id ?? body.payload?.request_id ?? body.payload?.id ?? ""))];
+  if (eventType === "agency_fit_quote_ready") return [await agencyFitQuoteReadyEmail(admin, String(body.request_id ?? body.payload?.request_id ?? body.payload?.id ?? ""))];
   if (eventType === "payment_recorded" || eventType === "new_payment") return [await paymentEmail(admin, String(body.payment_id ?? body.payload?.payment_id ?? ""), body.payload?.payment, String(body.booking_id ?? body.payload?.booking_id ?? ""))];
+  if (eventType === "new_visa_request" || eventType === "visa_request") return [await visaRequestEmail(admin, String(body.application_id ?? body.visa_application_id ?? body.payload?.application_id ?? body.payload?.visa_application_id ?? ""), body.payload?.application)];
   if (eventType === "agency_payment_recorded") return [await agencyPaymentEmail(admin, String(body.request_id ?? body.payload?.request_id ?? ""), String(body.payment_id ?? body.payload?.payment_id ?? ""))];
   if (eventType === "contact_message") {
     const contactId = String(body.contact_id ?? "");
@@ -1318,9 +1731,14 @@ Deno.serve(async (req) => {
     const payloads = await payloadFromBody(admin, body, req);
     const results = [];
     for (const payload of payloads) {
-      results.push(await sendEmail(admin, payload));
+      const adminNotification = notificationFromEmailPayload(payload);
+      if (adminNotification) {
+        results.push(await sendAdminNotification(admin, adminNotification, payload));
+      } else {
+        results.push(await sendEmail(admin, payload));
+      }
     }
-    const failed = results.filter((result) => !result.ok);
+    const failed = results.filter((result: any) => result.ok === false);
     const result = {
       ok: failed.length === 0,
       results,

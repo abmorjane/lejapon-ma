@@ -43,6 +43,22 @@ export default {
     ],
   },
   testimonials: { eyebrow: "They trusted us", title: "Memories engraved for life." },
+  blog: {
+    eyebrow: "Blog",
+    title: "Tips & Insights",
+    seoTitle: "Blog — Japan travel tips and insights | lejapon.ma",
+    seoDescription: "Articles, travel tips and practical insights to prepare your trip to Japan: culture, food, Tokyo, Kyoto, Osaka, Mount Fuji and more.",
+    empty: "No articles published yet.",
+    readTime: "{{count}} min",
+  },
+  blogPost: {
+    backToBlog: "Back to blog",
+    readTime: "{{count}} min read",
+    gallery: "Gallery",
+    readAlsoEyebrow: "Read also",
+    similarArticles: "Similar articles",
+    imageAlt: "{{title}} — image {{count}}",
+  },
   cta_band: { title: "Ready for Japan?", subtitle: "Configure your trip, get an instant price, and reserve your seat.", button: "Configure my trip" },
   footer: { tagline: "Immersion trips to Japan, from Morocco.", rights: "All rights reserved." },
   booking: {

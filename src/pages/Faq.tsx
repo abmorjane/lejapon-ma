@@ -144,7 +144,7 @@ const FaqPage = ({ lang }: Props) => {
 
   // Inject hreflang alternates
   useEffect(() => {
-    const SITE = "https://lejapon.ma";
+    const SITE = "https://www.lejapon.ma";
     const tags = [
       { hl: "fr", url: SITE + URLS.fr },
       { hl: "en", url: SITE + URLS.en },

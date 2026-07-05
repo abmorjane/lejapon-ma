@@ -43,6 +43,22 @@ export default {
     ],
   },
   testimonials: { eyebrow: "Ils nous ont fait confiance", title: "Des souvenirs gravés à vie." },
+  blog: {
+    eyebrow: "Blog",
+    title: "Infos & astuces",
+    seoTitle: "Blog — Infos & astuces voyage Japon | lejapon.ma",
+    seoDescription: "Articles, conseils et astuces pour préparer votre voyage au Japon : culture nippone, gastronomie, Tokyo, Kyoto, Osaka, Mont Fuji et bien plus.",
+    empty: "Aucun article publié pour le moment.",
+    readTime: "{{count}} min",
+  },
+  blogPost: {
+    backToBlog: "Retour au blog",
+    readTime: "{{count}} min de lecture",
+    gallery: "Galerie",
+    readAlsoEyebrow: "À lire aussi",
+    similarArticles: "Articles similaires",
+    imageAlt: "{{title}} — image {{count}}",
+  },
   cta_band: {
     title: "Prêt pour le Japon ?",
     subtitle: "Composez votre voyage, recevez votre prix instantanément, et réservez votre place.",

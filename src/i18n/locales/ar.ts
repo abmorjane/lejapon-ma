@@ -43,6 +43,22 @@ export default {
     ],
   },
   testimonials: { eyebrow: "وثقوا بنا", title: "ذكريات محفورة مدى الحياة." },
+  blog: {
+    eyebrow: "المدونة",
+    title: "نصائح ومعلومات",
+    seoTitle: "مدونة — نصائح ومعلومات للسفر إلى اليابان | lejapon.ma",
+    seoDescription: "مقالات ونصائح عملية لمساعدتك على تحضير رحلتك إلى اليابان: الثقافة، المأكولات، طوكيو، كيوتو، أوساكا، جبل فوجي والمزيد.",
+    empty: "لا توجد مقالات منشورة حاليا.",
+    readTime: "{{count}} دقيقة",
+  },
+  blogPost: {
+    backToBlog: "العودة إلى المدونة",
+    readTime: "{{count}} دقيقة قراءة",
+    gallery: "المعرض",
+    readAlsoEyebrow: "اقرأ أيضا",
+    similarArticles: "مقالات مشابهة",
+    imageAlt: "{{title}} — صورة {{count}}",
+  },
   cta_band: { title: "مستعد لليابان؟", subtitle: "كوّن رحلتك، احصل على السعر فورا، واحجز مكانك.", button: "كوّن رحلتي" },
   footer: { tagline: "رحلات انغماس في اليابان، انطلاقا من المغرب.", rights: "جميع الحقوق محفوظة." },
   booking: {

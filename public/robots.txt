@@ -13,4 +13,4 @@ Allow: /
 User-agent: *
 Allow: /
 
-Sitemap: https://lejapon.ma/sitemap.xml
+Sitemap: https://www.lejapon.ma/sitemap.xml

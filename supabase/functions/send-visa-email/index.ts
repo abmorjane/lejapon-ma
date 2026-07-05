@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import nodemailer from "npm:nodemailer@6";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -117,7 +117,7 @@ const fmtDate = (value: unknown) => {
 };
 
 const adminBaseUrl = () =>
-  (Deno.env.get("ADMIN_BASE_URL") || Deno.env.get("SITE_URL") || "https://lejapon.ma").replace(/\/$/, "");
+  (Deno.env.get("ADMIN_BASE_URL") || Deno.env.get("SITE_URL") || "https://www.lejapon.ma").replace(/\/$/, "");
 
 const adminRecipient = () => Deno.env.get("ADMIN_NOTIFICATION_EMAIL") || "info@lejapon.ma";
 
@@ -184,7 +184,7 @@ function bodyForStatus(status: string, app: any, extra?: string) {
       html = `${base}<p>Votre demande de visa <strong>${ref}</strong> a bien été soumise.</p>
         <p>Notre équipe va l'examiner sous 24 à 48h ouvrées.</p>
         <p style="background:#fff8e1;padding:12px 16px;border-left:3px solid #d4a017;border-radius:4px"><strong>Prochaine étape :</strong> téléchargez depuis votre espace client la liste personnalisée des documents à fournir ainsi que la procuration, puis envoyez-nous vos documents originaux à l'adresse de l'agence ou téléversez les copies demandées.</p>
-        <p><a href="https://lejapon.ma/formulaire-visa" style="display:inline-block;background:#ea5b14;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px">Accéder à mon espace visa</a></p>`;
+        <p><a href="https://www.lejapon.ma/visa-japon-maroc" style="display:inline-block;background:#ea5b14;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px">Accéder à mon espace visa</a></p>`;
       break;
     case "awaiting_documents":
       html = `${base}<p>Concernant votre demande <strong>${ref}</strong>, nous attendons les documents suivants pour pouvoir avancer&nbsp;:</p>
@@ -258,7 +258,7 @@ function visaTemplateVariables(app: any, extra?: string) {
     visa_reference: app.reference,
     passport_number: app.passport_no,
     status: STATUS_LABEL[String(app.status ?? "")] ?? app.status ?? "",
-    download_link: "https://lejapon.ma/formulaire-visa",
+    download_link: "https://www.lejapon.ma/visa-japon-maroc",
     admin_link: `${adminBaseUrl()}/admin/visa/${app.id}`,
     date: fmtDate(new Date().toISOString()),
     extra: extra ?? "",
@@ -373,13 +373,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    const client = new SMTPClient({
-      connection: {
-        hostname: smtp.smtp_host,
-        port: Number(smtp.smtp_port) || 465,
-        tls: smtp.smtp_secure === "ssl",
-        auth: { username: smtp.smtp_username, password: smtp.smtp_password },
-      },
+    const transporter = nodemailer.createTransport({
+      host: smtp.smtp_host,
+      port: Number(smtp.smtp_port) || 465,
+      secure: smtp.smtp_secure === "ssl",
+      auth: { user: smtp.smtp_username, pass: smtp.smtp_password },
     });
 
     const fallbackSubject =
@@ -399,13 +397,13 @@ Deno.serve(async (req) => {
     const sent: Record<string, boolean | string> = {};
 
     if (app.residential_email) {
-      await client.send({
+      await transporter.sendMail({
         from: `${smtp.from_name} <${smtp.from_email}>`,
         to: app.residential_email,
         replyTo: smtp.reply_to ?? undefined,
         subject,
         html,
-        content: text || "auto",
+        text: text || `Visa Japon — ${STATUS_LABEL[status] ?? status} (${app.reference})`,
       });
       sent.client = true;
     } else {
@@ -413,20 +411,17 @@ Deno.serve(async (req) => {
     }
 
     if (status === "submitted") {
-      const internal = await buildInternalVisaEmail(admin, app);
-      const renderedInternal = await renderEmailTemplate(admin, "visa_application_new_admin", visaTemplateVariables(app, extra), internal);
-      await client.send({
-        from: `${smtp.from_name} <${smtp.from_email}>`,
-        to: internal.to,
-        replyTo: smtp.reply_to ?? undefined,
-        subject: renderedInternal.subject,
-        html: renderedInternal.html,
-        content: renderedInternal.text ?? internal.text,
-      });
-      sent.internal = true;
+      try {
+        const { data, error } = await admin.functions.invoke("send-admin-notification", {
+          body: { type: "new_visa_request", payload: { application_id: app.id } },
+        });
+        sent.internal = error ? `failed: ${error.message}` : Boolean(data?.ok ?? true);
+      } catch (error) {
+        sent.internal = `failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
     }
 
-    await client.close();
+    transporter.close();
 
     return new Response(JSON.stringify({ ok: true, sent }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },

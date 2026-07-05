@@ -20,6 +20,19 @@ type Item = {
   persist?: boolean; // if false, just return the translation without storing
 };
 
+const SHORT_TEXT_FIELDS = new Set(["title", "category", "meta_title"]);
+const MEDIUM_TEXT_FIELDS = new Set(["excerpt", "meta_description", "cover_alt"]);
+const RICH_TEXT_FIELDS = new Set(["body", "content", "description", "long_description", "html_body"]);
+
+const PLAIN_FIELD_LIMITS: Record<string, number> = {
+  title: 140,
+  category: 50,
+  meta_title: 120,
+  excerpt: 400,
+  meta_description: 300,
+  cover_alt: 160,
+};
+
 async function md5(text: string): Promise<string> {
   // Web Crypto doesn't include md5; use SHA-1 truncated, sufficient for drift detection.
   const buf = new TextEncoder().encode(text);
@@ -30,7 +43,103 @@ async function md5(text: string): Promise<string> {
     .slice(0, 32);
 }
 
-async function translateOne(text: string, target: "en" | "ar", apiKey: string): Promise<string> {
+function fieldMode(field: string) {
+  if (SHORT_TEXT_FIELDS.has(field)) return "short_plain";
+  if (MEDIUM_TEXT_FIELDS.has(field)) return "medium_plain";
+  if (RICH_TEXT_FIELDS.has(field)) return "rich";
+  return "plain";
+}
+
+function decodeHtmlEntities(value: string) {
+  const named: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    laquo: '"',
+    ldquo: '"',
+    lrm: "",
+    lsquo: "'",
+    lt: "<",
+    nbsp: " ",
+    quot: '"',
+    raquo: '"',
+    rdquo: '"',
+    rlm: "",
+    rsquo: "'",
+  };
+
+  return value.replace(/&(#x[\da-f]+|#\d+|[a-z][\w-]+);/gi, (match, entity) => {
+    const key = String(entity).toLowerCase();
+    if (key.startsWith("#x")) {
+      const code = Number.parseInt(key.slice(2), 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+    }
+    if (key.startsWith("#")) {
+      const code = Number.parseInt(key.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+    }
+    return named[key] ?? match;
+  });
+}
+
+function stripPlainMarkup(value: string) {
+  return decodeHtmlEntities(
+    value
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/^[\s>]*#{1,6}\s+/gm, "")
+      .replace(/^\s*[-*+]\s+/gm, "")
+      .replace(/^\s*\d+[.)]\s+/gm, "")
+      .replace(/[*_`~]+/g, ""),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function limitPlainText(value: string, field: string) {
+  const limit = PLAIN_FIELD_LIMITS[field];
+  if (!limit || value.length <= limit) return value;
+  const slice = value.slice(0, limit).trim();
+  const lastBreak = Math.max(slice.lastIndexOf(" "), slice.lastIndexOf("."), slice.lastIndexOf("!"), slice.lastIndexOf("?"));
+  if (lastBreak > Math.floor(limit * 0.65)) return slice.slice(0, lastBreak).trim();
+  return slice;
+}
+
+function cleanTranslatedValue(value: string, field: string) {
+  const trimmed = value
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+
+  if (fieldMode(field) === "rich") return trimmed;
+  return limitPlainText(stripPlainMarkup(trimmed), field);
+}
+
+function systemPromptFor(item: Item) {
+  const mode = fieldMode(item.field);
+  const plainRules =
+    `This database field is ${item.field}. Translate it independently from every other field. ` +
+    `Return plain text only: no HTML tags, no Markdown, no <p>, no <b>, no <strong>, no div, no dir attribute, no inline style, no bullet syntax. ` +
+    `Do not add content from another field. Do not include the article body. Keep the same purpose and a reasonable length. `;
+  const richRules =
+    `This database field is ${item.field}. Translate only this field independently. ` +
+    `Preserve useful existing structure such as headings, paragraphs, lists, bold text and links when present. ` +
+    `Do not mix the title, excerpt, meta description or category into the body. `;
+
+  return (
+    `You are a professional translator for a Moroccan travel agency specialized in Japan trips. ` +
+    `Translate from French to ${LANG_LABELS[item.targetLang]}. ` +
+    `Brand names and place names such as LeJapon.ma, Tokyo, Kyoto, Osaka and Kamakura must remain natural and recognizable. ` +
+    (mode === "rich" ? richRules : plainRules) +
+    `For Arabic, use clear Modern Standard Arabic suitable for marketing, but never wrap plain text fields in <p dir="rtl"> or <b>; RTL is handled by the frontend. ` +
+    `Return ONLY the translation, with no quotes, no preamble and no explanation.`
+  );
+}
+
+async function translateOne(item: Item, apiKey: string): Promise<string> {
   const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -42,14 +151,12 @@ async function translateOne(text: string, target: "en" | "ar", apiKey: string): 
       messages: [
         {
           role: "system",
-          content:
-            `You are a professional translator for a Moroccan travel agency specialized in Japan trips. ` +
-            `Translate the user's text from French to ${LANG_LABELS[target]}. ` +
-            `Preserve tone, brand names (lejapon.ma, Tokyo, Kyoto, etc.), inline HTML and markdown. ` +
-            `For Arabic, use clear Modern Standard Arabic suitable for marketing. ` +
-            `Return ONLY the translation, with no quotes, no preamble, no explanation.`,
+          content: systemPromptFor(item),
         },
-        { role: "user", content: text },
+        {
+          role: "user",
+          content: `Table: ${item.table}\nField: ${item.field}\nTranslate this field only:\n${item.sourceText}`,
+        },
       ],
     }),
   });
@@ -62,7 +169,7 @@ async function translateOne(text: string, target: "en" | "ar", apiKey: string): 
   }
   const data = await res.json();
   const out = data?.choices?.[0]?.message?.content?.trim?.() ?? "";
-  return out;
+  return cleanTranslatedValue(out, item.field);
 }
 
 Deno.serve(async (req) => {
@@ -105,7 +212,7 @@ Deno.serve(async (req) => {
           if (!["en", "ar"].includes(it.targetLang)) {
             return { ok: false, ...it, error: "bad lang" };
           }
-          const translated = await translateOne(it.sourceText, it.targetLang, apiKey);
+          const translated = await translateOne(it, apiKey);
           if (it.persist !== false && it.table && it.rowId && it.field) {
             const hash = await md5(it.sourceText);
             const { error } = await admin

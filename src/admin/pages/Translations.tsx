@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Languages, Sparkles, Loader2, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Languages, Sparkles, Loader2, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import {
   bulkTranslate,
   fetchTranslations,
@@ -54,6 +54,7 @@ type Stats = {
   fields: number;
   missingEn: number;
   missingAr: number;
+  suspicious: number;
   status: "complete" | "partial" | "not_analyzed";
   error?: string;
 };
@@ -250,6 +251,7 @@ export default function AdminTranslations() {
         fields: 0,
         missingEn: 0,
         missingAr: 0,
+        suspicious: 0,
         status: "not_analyzed",
         error: error?.message ?? "Analyse impossible",
       };
@@ -287,6 +289,9 @@ export default function AdminTranslations() {
     let totalFields = 0;
     let missingEn = 0;
     let missingAr = 0;
+    const suspicious = config.table === "articles"
+      ? [...enT, ...arT].filter((translation) => isSuspiciousArticleTranslation(translation.field, translation.value_text)).length
+      : 0;
     for (const row of rows) {
       for (const field of fields) {
         const source = row[field];
@@ -296,7 +301,7 @@ export default function AdminTranslations() {
         if (!arMap[String(row.id)]?.[field]?.trim()) missingAr += 1;
       }
     }
-    return makeStats(rows.length, totalFields, missingEn, missingAr);
+    return makeStats(rows.length, totalFields, missingEn, missingAr, suspicious);
   }
 
   function nativeStats(config: ModuleConfig, rows: any[]): Stats {
@@ -329,7 +334,7 @@ export default function AdminTranslations() {
         if (!leaf.ar?.trim()) missingAr += 1;
       }
     }
-    return makeStats(rows.length, baseStats.fields + totalFields, baseStats.missingEn + missingEn, baseStats.missingAr + missingAr);
+    return makeStats(rows.length, baseStats.fields + totalFields, baseStats.missingEn + missingEn, baseStats.missingAr + missingAr, baseStats.suspicious);
   }
 
   async function checklistStats(config: ModuleConfig, rows: any[]): Promise<Stats> {
@@ -349,6 +354,7 @@ export default function AdminTranslations() {
       contentStats.fields + jsonFields,
       contentStats.missingEn + missingEn,
       contentStats.missingAr + missingAr,
+      contentStats.suspicious,
     );
   }
 
@@ -625,12 +631,9 @@ export default function AdminTranslations() {
                   <div className="flex flex-wrap gap-2 text-xs">
                     <Badge variant="secondary">{moduleStats.rows} record(s)</Badge>
                     <Badge variant="secondary">{moduleStats.fields} champ(s) source</Badge>
-                    <Badge className={moduleStats.missingEn > 0 ? "bg-orange-500" : "bg-emerald-600"}>
-                      EN {moduleStats.missingEn}
-                    </Badge>
-                    <Badge className={moduleStats.missingAr > 0 ? "bg-orange-500" : "bg-emerald-600"}>
-                      AR {moduleStats.missingAr}
-                    </Badge>
+                    <LanguageMissingBadge lang="EN" missing={moduleStats.missingEn} />
+                    <LanguageMissingBadge lang="AR" missing={moduleStats.missingAr} />
+                    {moduleStats.suspicious > 0 && <SuspiciousBadge count={moduleStats.suspicious} />}
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">Not analyzed</p>
@@ -685,18 +688,50 @@ function StatusBadge({ stats }: { stats?: Stats }) {
   return <Badge className="bg-orange-500">partial</Badge>;
 }
 
-function makeStats(rows: number, fields: number, missingEn: number, missingAr: number): Stats {
+function LanguageMissingBadge({ lang, missing }: { lang: "EN" | "AR"; missing: number }) {
+  if (missing === 0) return <Badge className="bg-emerald-600">{lang} complet</Badge>;
+  return (
+    <Badge className="bg-orange-500">
+      {lang} : {missing} manquant{missing > 1 ? "s" : ""}
+    </Badge>
+  );
+}
+
+function SuspiciousBadge({ count }: { count: number }) {
+  return (
+    <Badge className="bg-red-600">
+      <AlertTriangle className="mr-1 h-3 w-3" />
+      {count} à vérifier
+    </Badge>
+  );
+}
+
+function makeStats(rows: number, fields: number, missingEn: number, missingAr: number, suspicious = 0): Stats {
   return {
     rows,
     fields,
     missingEn,
     missingAr,
-    status: missingEn + missingAr === 0 ? "complete" : "partial",
+    suspicious,
+    status: missingEn + missingAr + suspicious === 0 ? "complete" : "partial",
   };
 }
 
 function isTranslatableString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isSuspiciousArticleTranslation(field: string, value: string | null | undefined) {
+  if (!value) return false;
+  if (!["title", "excerpt", "category", "meta_title", "meta_description", "cover_alt"].includes(field)) return false;
+  const normalized = value.toLowerCase();
+  if (/[<>]/.test(value) || normalized.includes("dir=") || normalized.includes("style=")) return true;
+  if (field === "title" && value.length > 140) return true;
+  if (field === "meta_title" && value.length > 120) return true;
+  if (field === "category" && value.length > 50) return true;
+  if (field === "excerpt" && value.length > 400) return true;
+  if (field === "meta_description" && value.length > 300) return true;
+  return false;
 }
 
 function collectAllI18nLeaves(value: any, path: string[] = []): { path: string[]; fr: string; en?: string; ar?: string }[] {

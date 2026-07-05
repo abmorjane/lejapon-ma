@@ -42,6 +42,7 @@ type TripRow = {
 const fmt = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n)) + " MAD";
 
 const WHATSAPP_FALLBACK = "212661800008";
+const TOTAL_STEPS = 4;
 
 const Booking = () => {
   const { t } = useTranslation();
@@ -49,6 +50,7 @@ const Booking = () => {
   const [searchParams] = useSearchParams();
   const [step, setStep] = useState(1);
   const [tripsList, setTripsList] = useState<TripRow[]>([]);
+  const [loadingTrips, setLoadingTrips] = useState(true);
   const [tripId, setTripId] = useState<string>("");
   const [tripLocked, setTripLocked] = useState(false);
   const [hotel, setHotel] = useState<HotelKey>("modern");
@@ -56,11 +58,11 @@ const Booking = () => {
   const [children, setChildren] = useState(0);
   const [room, setRoom] = useState<RoomKey>("double");
   const [extras, setExtras] = useState<Record<string, number>>({});
-  const { extras: extrasList } = useExtras();
+  const { extras: extrasList } = useExtras({ enabled: step >= 3 });
   const [info, setInfo] = useState({ name: "", email: "", phone: "", city: "", notes: "" });
   const [done, setDone] = useState(false);
   const [returning, setReturning] = useState<{ trips: number; tier: string; reward?: string } | null>(null);
-  const { ready: captchaReady, executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha();
+  const { ready: captchaReady, executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha({ active: step >= TOTAL_STEPS });
   const [submitting, setSubmitting] = useState(false);
   const tripAutoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -76,14 +78,22 @@ const Booking = () => {
 
   // Load trips from admin (open or completed) — runs once
   useEffect(() => {
+    let active = true;
+    setLoadingTrips(true);
     (async () => {
       const { data } = await supabase
         .from("trips")
         .select("id,title,slug,season,start_date,end_date,duration_days,short_description,base_price_mad,promo_percent")
         .in("status", ["open", "completed"])
         .order("start_date", { ascending: true, nullsFirst: false });
-      setTripsList((data ?? []) as TripRow[]);
+      if (active) {
+        setTripsList((data ?? []) as TripRow[]);
+        setLoadingTrips(false);
+      }
     })();
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Pre-select trip from URL (?trip=slug); falls back to first available
@@ -157,8 +167,6 @@ const Booking = () => {
     const deposit = pax * 25000;
     return { adultPrice, childPrice, peopleTotal, extrasTotal, total, deposit };
   }, [selectedTrip, hotel, room, adults, children, extras, extrasList]);
-
-  const TOTAL_STEPS = 4;
 
   const minStep = tripLocked ? 2 : 1;
   const visibleTotal = tripLocked ? TOTAL_STEPS - 1 : TOTAL_STEPS;
@@ -409,12 +417,14 @@ const Booking = () => {
             )}
           </div>
 
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait" initial={false}>
             <motion.div key={step} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.3 }}>
               {step === 1 && (
                 <div>
                   <h2 className="font-display text-2xl mb-6">{t("booking.s1.title")}</h2>
-                  {tripsList.length === 0 ? (
+                  {loadingTrips ? (
+                    <TripCardsSkeleton />
+                  ) : tripsList.length === 0 ? (
                     <p className="text-foreground/60">Aucun départ disponible pour le moment. Revenez bientôt.</p>
                   ) : (
                     <div className="grid gap-3">
@@ -786,6 +796,35 @@ const TripSelectCard = memo(function TripSelectCard({
         <p className="text-sm text-foreground/70">{trip.short_description}</p>
       )}
     </button>
+  );
+});
+
+const TripCardsSkeleton = memo(function TripCardsSkeleton() {
+  return (
+    <div className="grid gap-3" aria-label="Chargement des départs">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div key={index} className="min-h-[168px] border border-border p-4 sm:min-h-[182px] sm:p-6">
+          <div className="mb-4 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-3">
+              <div className="h-6 w-56 max-w-full animate-pulse rounded bg-secondary/70" />
+              <div className="h-3 w-32 animate-pulse rounded bg-secondary/60" />
+            </div>
+            <div className="space-y-2 sm:text-right">
+              <div className="h-3 w-24 animate-pulse rounded bg-secondary/60 sm:ml-auto" />
+              <div className="h-8 w-36 animate-pulse rounded bg-secondary/70" />
+            </div>
+          </div>
+          <div className="mb-4 flex gap-4">
+            <div className="h-4 w-20 animate-pulse rounded bg-secondary/60" />
+            <div className="h-4 w-32 animate-pulse rounded bg-secondary/60" />
+          </div>
+          <div className="space-y-2">
+            <div className="h-3 w-full animate-pulse rounded bg-secondary/50" />
+            <div className="h-3 w-2/3 animate-pulse rounded bg-secondary/50" />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 });
 

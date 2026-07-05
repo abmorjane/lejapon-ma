@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "../components/PageHeader";
 import { StatusBadge } from "../components/StatusBadge";
@@ -10,11 +10,12 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, Upload, X, ArrowUp, ArrowDown, Loader2, ImagePlus, Tag } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, X, ArrowUp, ArrowDown, Loader2, ImagePlus, Tag, Pilcrow, Heading1, Heading2, Heading3, Bold, Italic, List, ListOrdered, Link2, Quote, Wand2 } from "lucide-react";
 import { fmtDate, slugify } from "@/lib/format";
 import { optimizeImage } from "@/lib/image-upload";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+import { blogMarkdownToHtml } from "@/lib/blog-markdown";
 
 type Category = { id: string; name: string; slug: string };
 
@@ -56,6 +57,7 @@ const uploadImage = async (file: File): Promise<string> => {
 
 export default function Articles() {
   const { user } = useAuth();
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const [rows, setRows] = useState<any[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [open, setOpen] = useState(false);
@@ -163,6 +165,70 @@ export default function Articles() {
     setEdit({ ...edit, category: serializeCategories(next) });
   };
 
+  const updateBody = (nextBody: string, selectionStart?: number, selectionEnd?: number) => {
+    setEdit((current: any) => ({ ...current, body: nextBody }));
+    requestAnimationFrame(() => {
+      bodyRef.current?.focus();
+      if (selectionStart !== undefined && selectionEnd !== undefined) {
+        bodyRef.current?.setSelectionRange(selectionStart, selectionEnd);
+      }
+    });
+  };
+
+  const bodySelection = () => {
+    const textarea = bodyRef.current;
+    const body = String(edit.body ?? "");
+    const start = textarea?.selectionStart ?? body.length;
+    const end = textarea?.selectionEnd ?? body.length;
+    return { body, start, end, selected: body.slice(start, end) };
+  };
+
+  const applyInlineFormat = (tag: "strong" | "em", fallback: string) => {
+    const { body, start, end, selected } = bodySelection();
+    const text = selected || fallback;
+    const replacement = `<${tag}>${text}</${tag}>`;
+    const next = body.slice(0, start) + replacement + body.slice(end);
+    updateBody(next, start + tag.length + 2, start + tag.length + 2 + text.length);
+  };
+
+  const applyBlockFormat = (tag: "p" | "h1" | "h2" | "h3" | "blockquote", fallback: string) => {
+    const { body, start, end, selected } = bodySelection();
+    const text = (selected || fallback).trim();
+    const replacement = `<${tag}>${text}</${tag}>`;
+    const next = body.slice(0, start) + replacement + body.slice(end);
+    updateBody(next, start + tag.length + 2, start + tag.length + 2 + text.length);
+    if (tag === "h1") toast.info("SEO : le titre de l’article est déjà le H1 principal. Utilisez H2/H3 pour les sections.");
+  };
+
+  const applyListFormat = (ordered: boolean) => {
+    const { body, start, end, selected } = bodySelection();
+    const items = (selected || "Nouvel élément")
+      .split("\n")
+      .map((line) => line.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").trim())
+      .filter(Boolean);
+    const tag = ordered ? "ol" : "ul";
+    const replacement = `<${tag}>\n${items.map((item) => `  <li>${item}</li>`).join("\n")}\n</${tag}>`;
+    const next = body.slice(0, start) + replacement + body.slice(end);
+    updateBody(next, start, start + replacement.length);
+  };
+
+  const applyLinkFormat = () => {
+    const { body, start, end, selected } = bodySelection();
+    const url = window.prompt("URL du lien", "https://");
+    if (!url) return;
+    const text = selected || "Texte du lien";
+    const replacement = `<a href="${url.trim()}">${text}</a>`;
+    const next = body.slice(0, start) + replacement + body.slice(end);
+    updateBody(next, start + replacement.indexOf(">") + 1, start + replacement.indexOf(">") + 1 + text.length);
+  };
+
+  const convertBodyMarkdown = () => {
+    const body = String(edit.body ?? "").trim();
+    if (!body) return toast.info("Ajoutez d’abord du contenu Markdown.");
+    updateBody(blogMarkdownToHtml(body));
+    toast.success("Markdown converti en HTML propre.");
+  };
+
   const save = async () => {
     if (!edit.title?.trim()) { toast.error("Le titre est requis"); return; }
     setBusy(true);
@@ -207,7 +273,7 @@ export default function Articles() {
   // Aperçu Google
   const googleUrl = useMemo(() => {
     const slug = edit.slug?.trim() || slugify(edit.title || "");
-    return `https://lejapon.ma/${slug || "votre-article"}`;
+    return `https://www.lejapon.ma/${slug || "votre-article"}`;
   }, [edit.slug, edit.title]);
 
   return (
@@ -275,8 +341,58 @@ export default function Articles() {
                       <Textarea rows={2} value={edit.excerpt ?? ""} onChange={(e) => setEdit({ ...edit, excerpt: e.target.value })} />
                     </div>
                     <div className="col-span-2">
-                      <Label>Corps (texte / Markdown)</Label>
-                      <Textarea rows={10} value={edit.body ?? ""} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <Label>Corps de l’article</Label>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Le titre de l’article sert déjà de H1 SEO. Utilisez H2 pour les grandes sections et H3 pour les sous-sections.
+                          </p>
+                        </div>
+                        <Button type="button" size="sm" variant="outline" className="w-fit gap-2" onClick={convertBodyMarkdown}>
+                          <Wand2 className="h-4 w-4" />
+                          Convertir Markdown
+                        </Button>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-1 rounded-md border border-border bg-secondary/20 p-2">
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyBlockFormat("p", "Nouveau paragraphe")}>
+                          <Pilcrow className="h-4 w-4" /> Paragraphe
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyBlockFormat("h1", "Titre H1")}>
+                          <Heading1 className="h-4 w-4" /> H1
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyBlockFormat("h2", "Titre H2")}>
+                          <Heading2 className="h-4 w-4" /> H2
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyBlockFormat("h3", "Titre H3")}>
+                          <Heading3 className="h-4 w-4" /> H3
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyInlineFormat("strong", "texte en gras")}>
+                          <Bold className="h-4 w-4" /> Gras
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyInlineFormat("em", "texte en italique")}>
+                          <Italic className="h-4 w-4" /> Italique
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyListFormat(false)}>
+                          <List className="h-4 w-4" /> Puces
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyListFormat(true)}>
+                          <ListOrdered className="h-4 w-4" /> Numérotée
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={applyLinkFormat}>
+                          <Link2 className="h-4 w-4" /> Lien
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2" onClick={() => applyBlockFormat("blockquote", "Citation")}>
+                          <Quote className="h-4 w-4" /> Citation
+                        </Button>
+                      </div>
+                      <Textarea
+                        ref={bodyRef}
+                        rows={14}
+                        value={edit.body ?? ""}
+                        onChange={(e) => setEdit({ ...edit, body: e.target.value })}
+                        className="mt-2 font-mono text-sm"
+                        placeholder="<h2>Votre section</h2>&#10;<p>Votre paragraphe avec <strong>du gras</strong>.</p>"
+                      />
                     </div>
                   </div>
                 </section>

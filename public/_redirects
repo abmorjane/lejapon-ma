@@ -20,4 +20,5 @@
 /tag/*                  /410.html   410
 
 # React Router fallback.
+/accord-voyage/*       /index.html 200
 /*                       /index.html 200

@@ -3,6 +3,7 @@ import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Plane, CalendarCheck, Sparkles, Users, FileText, Wallet, Banknote,
   Image as ImageIcon, Building2, BookOpen, LogOut, ShieldCheck, Mail, Stamp, ListChecks, Menu, Map, Type, Send, HelpCircle, Languages, Settings, Archive, Palette, Hotel,
+  Bell, FileSignature,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,8 @@ import { ModuleKey, ROLE_LABELS, Role } from "../lib/permissions";
 import { PLATFORM_BADGE_LABEL } from "@/config/version";
 import { ADMIN_THEMES, type AdminThemeId, isAdminThemeId, readAdminTheme } from "@/admin/theme";
 import { AdminQuickActionBar } from "./AdminQuickActionBar";
+import { registerAdminPushSubscription } from "@/admin/lib/push-notifications";
+import { toast } from "sonner";
 
 type NavSection = "Core" | "Sales" | "Content" | "Partners" | "System";
 type AdminNavItem = { to: string; icon: any; label: string; end?: boolean; module: ModuleKey; section: NavSection };
@@ -21,6 +24,7 @@ const nav: AdminNavItem[] = [
   { to: "/admin", icon: LayoutDashboard, label: "Vue d'ensemble", end: true, module: "dashboard", section: "Core" },
   { to: "/admin/trips", icon: Plane, label: "Voyages", module: "trips", section: "Sales" },
   { to: "/admin/bookings", icon: CalendarCheck, label: "Réservations", module: "bookings", section: "Sales" },
+  { to: "/admin/travel-agreements", icon: FileSignature, label: "Accords de voyage", module: "travel_agreements", section: "Sales" },
   { to: "/admin/clients", icon: Users, label: "Clients (CRM)", module: "clients", section: "Sales" },
   { to: "/admin/extras", icon: Sparkles, label: "Extras", module: "extras", section: "Sales" },
   { to: "/admin/suppliers", icon: Building2, label: "Fournisseurs", module: "suppliers", section: "Sales" },
@@ -40,6 +44,7 @@ const nav: AdminNavItem[] = [
   { to: "/admin/hotels", icon: Hotel, label: "Hôtels", module: "hotels", section: "Content" },
   { to: "/admin/media", icon: ImageIcon, label: "Médias", module: "media", section: "Content" },
   { to: "/admin/partner-requests", icon: Building2, label: "Demandes partenaires", module: "partner_requests", section: "Partners" },
+  { to: "/admin/agency-fit-requests", icon: FileText, label: "Agences · Demandes FIT", module: "agency_fit_requests", section: "Partners" },
   { to: "/admin/organizations", icon: Building2, label: "Organizations", module: "organizations", section: "Partners" },
   { to: "/admin/agency-settings", icon: Settings, label: "Informations agence", module: "agency_settings", section: "Partners" },
   { to: "/admin/marketing", icon: Send, label: "Emailing marketing", module: "marketing", section: "Partners" },
@@ -70,6 +75,7 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
   const loc = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<AdminThemeId>(() => readAdminTheme());
+  const [pushBusy, setPushBusy] = useState(false);
 
   useEffect(() => {
     const syncTheme = (event?: Event) => {
@@ -176,6 +182,17 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
     "/admin/visa": "Visa",
   };
   const current = nav.find((n) => (n.end ? loc.pathname === n.to : loc.pathname === n.to || loc.pathname.startsWith(`${n.to}/`)));
+  const enablePushNotifications = async () => {
+    setPushBusy(true);
+    try {
+      await registerAdminPushSubscription(user.id);
+      toast.success("Notifications admin activées.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Impossible d'activer les notifications.");
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   return (
     <div className="admin-mobile-shell admin-shell min-h-screen flex" data-admin-theme={theme}>
@@ -204,6 +221,10 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
             <Palette className="h-3.5 w-3.5" />
             {ADMIN_THEMES[theme].name}
           </NavLink>
+          <Button variant="outline" size="sm" onClick={enablePushNotifications} disabled={pushBusy}>
+            <Bell className="h-3.5 w-3.5" />
+            {pushBusy ? "Activation..." : "Activer les notifications"}
+          </Button>
         </header>
 
         {/* Mobile top bar */}
@@ -217,7 +238,9 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
               <span className="truncate text-sm font-semibold text-foreground">{mobileNavLabel[current?.to ?? ""] ?? current?.label ?? "Admin"}</span>
             </NavLink>
           </div>
-          <div className="w-9" aria-hidden />
+          <Button variant="ghost" size="icon" aria-label="Activer les notifications" onClick={enablePushNotifications} disabled={pushBusy}>
+            <Bell className="w-5 h-5" />
+          </Button>
         </header>
 
         <div className={cn("admin-content w-full max-w-7xl mx-auto px-3 py-4 pb-28 sm:p-6", isPremium ? "lg:p-8" : "lg:p-10")}>

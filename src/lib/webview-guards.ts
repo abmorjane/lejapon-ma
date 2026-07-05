@@ -7,6 +7,7 @@ declare global {
 }
 
 const hasBrowser = () => typeof window !== "undefined" && typeof navigator !== "undefined";
+let webViewGuardsInstalled = false;
 
 const isSocialWebView = () => {
   if (!hasBrowser()) return false;
@@ -21,6 +22,8 @@ const isKnownWebViewNoise = (value: unknown) => {
 
 export const installWebViewGuards = () => {
   if (!hasBrowser() || !isSocialWebView()) return;
+  if (webViewGuardsInstalled) return;
+  webViewGuardsInstalled = true;
 
   window.addEventListener(
     "error",

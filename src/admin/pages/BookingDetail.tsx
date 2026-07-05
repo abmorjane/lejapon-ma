@@ -34,6 +34,7 @@ import {
   type QuoteAdjustment,
   type QuoteAdjustmentDraft,
 } from "@/lib/quote-adjustments";
+import { getBookingPricingBreakdown } from "@/lib/booking-pricing";
 
 export default function BookingDetail() {
   const { id } = useParams();
@@ -67,7 +68,7 @@ export default function BookingDetail() {
 
   const load = async () => {
     if (!id) return;
-    const { data, error } = await supabase.from("bookings").select("*, trips(title, season, destination, start_date, end_date)").eq("id", id).single();
+    const { data, error } = await supabase.from("bookings").select("*, trips(title, season, destination, start_date, end_date, base_price_mad, promo_percent)").eq("id", id).single();
     if (error || !data) {
       console.error("[booking-detail] booking load failed", error);
       toast.error("Impossible de charger la réservation.");
@@ -434,9 +435,15 @@ export default function BookingDetail() {
   };
 
   const totalTravelers = Number(b.num_adults || 0) + Number(b.num_children || 0);
-  const quoteSummary = summarizeQuoteAdjustments(quoteAdjustments, Number(b.total_amount_mad || 0));
-  const displayedQuoteTotal = quoteSummary.finalTotal;
-  const remainingAmount = Math.max(0, displayedQuoteTotal - Number(b.paid_amount_mad || 0));
+  const pricing = getBookingPricingBreakdown({
+    booking: b,
+    trip: b.trips,
+    extras,
+    quoteAdjustments,
+  });
+  const quoteSummary = pricing.enteredAdjustmentSummary;
+  const displayedQuoteTotal = pricing.enteredFinalTotal;
+  const remainingAmount = pricing.remainingAmount;
   const paidPercent = displayedQuoteTotal > 0
     ? Math.min(100, Math.round((Number(b.paid_amount_mad || 0) / displayedQuoteTotal) * 100))
     : 0;
@@ -526,7 +533,7 @@ export default function BookingDetail() {
           <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
             <div className="rounded-xl bg-muted/60 p-3">
               <p className="text-[11px] text-muted-foreground">Total</p>
-              <p className="truncate font-semibold">{fmtMAD(b.total_amount_mad)}</p>
+              <p className="truncate font-semibold">{fmtMAD(displayedQuoteTotal)}</p>
             </div>
             <div className="rounded-xl bg-muted/60 p-3">
               <p className="text-[11px] text-muted-foreground">Voyageurs</p>
@@ -575,9 +582,43 @@ export default function BookingDetail() {
                 {extras.map((e) => <div key={e.id} className="flex justify-between text-sm py-1"><span>{e.name_snapshot} × {e.qty}</span><span>{fmtMAD(e.unit_price_mad * e.qty)}</span></div>)}
               </div>
             )}
+            <div className="mt-4 grid gap-2 border-t border-border pt-4 text-sm sm:grid-cols-2">
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">Prix voyage / personne</p>
+                <p className="font-semibold">{fmtMAD(pricing.tripUnitPrice)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">Nombre de personnes</p>
+                <p className="font-semibold">{totalTravelers}</p>
+              </div>
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">Total voyage</p>
+                <p className="font-semibold">{fmtMAD(pricing.tripTotal)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">Extras</p>
+                <p className="font-semibold">{fmtMAD(pricing.extrasTotal)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">Total calculé</p>
+                <p className="font-semibold">{fmtMAD(pricing.calculatedFinalTotal)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">Total saisi</p>
+                <p className="font-semibold">{fmtMAD(displayedQuoteTotal)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">Montant payé</p>
+                <p className="font-semibold">{fmtMAD(b.paid_amount_mad)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">Reste à payer</p>
+                <p className="font-semibold">{fmtMAD(remainingAmount)}</p>
+              </div>
+            </div>
             <div className="mt-4 pt-4 border-t border-border flex justify-between">
-              <span className="font-semibold">Total</span>
-              <span className="font-display text-xl">{fmtMAD(b.total_amount_mad)}</span>
+              <span className="font-semibold">Total final</span>
+              <span className="font-display text-xl">{fmtMAD(displayedQuoteTotal)}</span>
             </div>
             </div>
           </details>
@@ -644,7 +685,7 @@ export default function BookingDetail() {
             </div>
             <div className="mt-4 flex justify-between text-sm pt-4 border-t border-border">
               <span className="text-muted-foreground">Encaissé</span>
-              <span className="font-semibold">{fmtMAD(b.paid_amount_mad)} / {fmtMAD(b.total_amount_mad)}</span>
+              <span className="font-semibold">{fmtMAD(b.paid_amount_mad)} / {fmtMAD(displayedQuoteTotal)}</span>
             </div>
             </CardContent>
           </Card>

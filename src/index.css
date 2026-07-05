@@ -361,6 +361,52 @@
   .badge-pill {
     @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold;
   }
+  .blog-markdown {
+    @apply text-lg leading-relaxed text-foreground/85;
+  }
+  .blog-markdown h1 {
+    @apply mb-5 mt-12 font-display text-4xl leading-tight text-foreground;
+  }
+  .blog-markdown h2 {
+    @apply mb-4 mt-10 font-display text-3xl leading-tight text-foreground;
+  }
+  .blog-markdown h3 {
+    @apply mb-3 mt-8 font-display text-2xl leading-snug text-foreground;
+  }
+  .blog-markdown p {
+    @apply mb-6 leading-relaxed;
+  }
+  .blog-markdown strong {
+    @apply font-semibold text-foreground;
+  }
+  .blog-markdown em {
+    @apply italic;
+  }
+  .blog-markdown a {
+    @apply font-medium text-accent underline decoration-accent/30 underline-offset-4 transition-colors hover:text-foreground;
+  }
+  .blog-markdown ul,
+  .blog-markdown ol {
+    @apply my-6 space-y-2 pl-6;
+  }
+  .blog-markdown ul {
+    @apply list-disc;
+  }
+  .blog-markdown ol {
+    @apply list-decimal;
+  }
+  .blog-markdown li {
+    @apply pl-1 leading-relaxed text-foreground/85;
+  }
+  .blog-markdown blockquote {
+    @apply my-8 border-l-4 border-accent bg-secondary/50 py-4 pl-5 pr-4 text-foreground/85;
+  }
+  .blog-markdown > :first-child {
+    @apply mt-0;
+  }
+  .blog-markdown > :last-child {
+    @apply mb-0;
+  }
   .btn-primary {
     @apply inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 bg-accent text-accent-foreground font-semibold px-7 py-4 rounded-full transition-all duration-300;
     box-shadow: var(--shadow-cta);

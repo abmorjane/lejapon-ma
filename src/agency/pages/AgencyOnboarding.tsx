@@ -19,7 +19,12 @@ type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
 
 type OnboardingStatus = "awaiting_documents" | "under_review" | "approved" | "rejected" | "draft" | string;
-type DocumentType = "company_registration" | "tax_certificate" | "id_passport" | "bank_certificate";
+type DocumentType =
+  | "travel_agency_rc"
+  | "travel_agency_authorization"
+  | "tax_or_ice_certificate"
+  | "bank_certificate"
+  | "manager_cin";
 
 type OnboardingCase = {
   id: string;
@@ -75,10 +80,11 @@ type OnboardingFormState = {
 };
 
 const DOCUMENT_LABELS: Record<DocumentType, string> = {
-  company_registration: "Company registration",
-  tax_certificate: "Tax certificate",
-  id_passport: "ID / passport",
-  bank_certificate: "Bank certificate",
+  travel_agency_rc: "RC agence de voyage",
+  travel_agency_authorization: "Autorisation d’exercice agence de voyage",
+  tax_or_ice_certificate: "Attestation fiscale ou ICE",
+  bank_certificate: "Attestation bancaire",
+  manager_cin: "CIN du gérant",
 };
 
 const emptyAgencyInfo = (): AgencyInfo => ({
@@ -575,6 +581,12 @@ export default function AgencyOnboarding() {
       {duplicateWarning && (
         <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
           {duplicateWarning}
+        </Card>
+      )}
+
+      {!isApproved && (
+        <Card className="border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+          Votre espace est en cours de validation. Vous pourrez créer des réservations et demandes FIT après validation de votre dossier.
         </Card>
       )}
 

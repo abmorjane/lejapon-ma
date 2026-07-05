@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { canAccess, ModuleKey } from "@/admin/lib/permissions";
@@ -52,11 +52,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error };
-  };
-  const signUp = async (
+  }, []);
+  const signUp = useCallback(async (
     email: string,
     password: string,
     fullName: string,
@@ -68,18 +68,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       options: { emailRedirectTo, data: { full_name: fullName, ...metadata } },
     });
     return { data, error };
-  };
-  const signOut = async () => { await supabase.auth.signOut(); };
+  }, []);
+  const signOut = useCallback(async () => { await supabase.auth.signOut(); }, []);
 
   const isStaff = roles.some((r) =>
     ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent", "content_manager", "supplier"].includes(r)
   );
   const isAdmin = roles.includes("admin") || roles.includes("super_admin");
   const isSuperAdmin = roles.includes("super_admin");
-  const can = (module: ModuleKey) => canAccess(roles, module);
+  const can = useCallback((module: ModuleKey) => canAccess(roles, module), [roles]);
+  const value = useMemo(
+    () => ({ user, session, roles, isStaff, isAdmin, isSuperAdmin, can, loading, signIn, signUp, signOut }),
+    [user, session, roles, isStaff, isAdmin, isSuperAdmin, can, loading, signIn, signUp, signOut],
+  );
 
   return (
-    <Ctx.Provider value={{ user, session, roles, isStaff, isAdmin, isSuperAdmin, can, loading, signIn, signUp, signOut }}>
+    <Ctx.Provider value={value}>
       {children}
     </Ctx.Provider>
   );

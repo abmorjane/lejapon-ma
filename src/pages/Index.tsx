@@ -280,7 +280,7 @@ const Index = () => {
           "@context": "https://schema.org",
           "@type": "TravelAgency",
           name: "lejapon.ma",
-          url: "https://lejapon.ma",
+          url: "https://www.lejapon.ma",
           areaServed: "MA",
           description: "Agence de voyage premium spécialisée Japon, départs garantis depuis Casablanca.",
           address: { "@type": "PostalAddress", addressLocality: "Casablanca", addressCountry: "MA" },

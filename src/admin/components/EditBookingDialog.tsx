@@ -12,6 +12,12 @@ import { fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 import { PAYMENT_METHOD_OPTIONS } from "@/lib/payment-methods";
+import {
+  bookingMetadata,
+  getBookingPricingBreakdown,
+  resolveBookingTripUnitPrice,
+} from "@/lib/booking-pricing";
+import { quoteAdjustmentsFromBooking } from "@/lib/quote-adjustments";
 
 type Props = {
   open: boolean;
@@ -49,37 +55,89 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
 
   useEffect(() => {
     if (!open) return;
-    setForm({
-      contact_name: booking.contact_name ?? "",
-      contact_email: booking.contact_email ?? "",
-      contact_phone: booking.contact_phone ?? "",
-      contact_city: booking.contact_city ?? "",
-      trip_id: booking.trip_id ?? "",
-      preferred_dates: booking.preferred_dates ?? "",
-      num_adults: booking.num_adults ?? 1,
-      num_children: booking.num_children ?? 0,
-      formula: booking.formula ?? "",
-      room_type: booking.room_type ?? "",
-      message: booking.message ?? "",
-      status: booking.status,
-      total_amount_mad: Number(booking.total_amount_mad ?? 0),
-      paid_amount_mad: Number(booking.paid_amount_mad ?? 0),
-    });
-    setItems((initialExtras ?? []).map((e: any) => ({
+    const nextItems = (initialExtras ?? []).map((e: any) => ({
       id: e.id, extra_id: e.extra_id, name_snapshot: e.name_snapshot, qty: e.qty, unit_price_mad: Number(e.unit_price_mad),
-    })));
-    supabase.from("trips").select("id,title,season,base_price_mad").order("title").then(({ data }) => setTrips(data ?? []));
+    }));
+    setItems(nextItems);
+    supabase.from("trips").select("id,title,season,base_price_mad,promo_percent").order("title").then(({ data }) => {
+      const nextTrips = data ?? [];
+      setTrips(nextTrips);
+      const selectedTrip = nextTrips.find((t) => t.id === booking.trip_id);
+      const tripUnitPrice = resolveBookingTripUnitPrice({ booking, trip: selectedTrip, extras: nextItems });
+      setForm({
+        contact_name: booking.contact_name ?? "",
+        contact_email: booking.contact_email ?? "",
+        contact_phone: booking.contact_phone ?? "",
+        contact_city: booking.contact_city ?? "",
+        trip_id: booking.trip_id ?? "",
+        preferred_dates: booking.preferred_dates ?? "",
+        num_adults: booking.num_adults ?? 1,
+        num_children: booking.num_children ?? 0,
+        formula: booking.formula ?? "",
+        room_type: booking.room_type ?? "",
+        message: booking.message ?? "",
+        status: booking.status,
+        trip_unit_price_per_person_mad: Math.round(tripUnitPrice),
+        total_amount_mad: Number(booking.total_amount_mad ?? 0),
+        paid_amount_mad: Number(booking.paid_amount_mad ?? 0),
+      });
+    });
   }, [open, booking?.id]);
 
   const trip = trips.find((t) => t.id === form.trip_id);
-  const basePrice = Number(trip?.base_price_mad ?? 0);
   const pax = Number(form.num_adults || 0) + Number(form.num_children || 0);
-  const extrasTotal = items.reduce((s, i) => s + i.qty * i.unit_price_mad, 0);
-  const computedTotal = basePrice * pax + extrasTotal;
+  const quoteAdjustments = quoteAdjustmentsFromBooking({ ...booking, metadata: bookingMetadata(booking) });
+  const pricingBooking = {
+    ...booking,
+    num_adults: Number(form.num_adults || 0),
+    num_children: Number(form.num_children || 0),
+    total_amount_mad: Number(form.total_amount_mad || 0),
+    paid_amount_mad: Number(form.paid_amount_mad || 0),
+    metadata: {
+      ...bookingMetadata(booking),
+      trip_unit_price_per_person_mad: Number(form.trip_unit_price_per_person_mad || 0),
+    },
+  };
+  const pricing = getBookingPricingBreakdown({
+    booking: pricingBooking,
+    trip,
+    extras: items,
+    quoteAdjustments,
+  });
+  const computedTotal = pricing.calculatedBaseTotal;
   const deposit = pax * 25000;
-  const remaining = Math.max(0, Number(form.total_amount_mad || 0) - Number(form.paid_amount_mad || 0));
+  const remaining = pricing.remainingAmount;
 
   const setField = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+
+  const setTripUnitPrice = (value: string) => {
+    const unit = Number(value) || 0;
+    setForm((current: any) => {
+      const nextPax = Number(current.num_adults || 0) + Number(current.num_children || 0);
+      const nextExtrasTotal = items.reduce((sum, item) => sum + Number(item.qty || 0) * Number(item.unit_price_mad || 0), 0);
+      return {
+        ...current,
+        trip_unit_price_per_person_mad: value,
+        total_amount_mad: Math.max(0, unit * nextPax + nextExtrasTotal),
+      };
+    });
+  };
+
+  const setSelectedTrip = (tripId: string) => {
+    const nextTripId = tripId === "none" ? "" : tripId;
+    const selectedTrip = trips.find((item) => item.id === nextTripId);
+    const nextUnitPrice = Number(selectedTrip?.base_price_mad ?? form.trip_unit_price_per_person_mad ?? 0);
+    setForm((current: any) => {
+      const nextPax = Number(current.num_adults || 0) + Number(current.num_children || 0);
+      const nextExtrasTotal = items.reduce((sum, item) => sum + Number(item.qty || 0) * Number(item.unit_price_mad || 0), 0);
+      return {
+        ...current,
+        trip_id: nextTripId,
+        trip_unit_price_per_person_mad: Math.round(nextUnitPrice),
+        total_amount_mad: Math.max(0, nextUnitPrice * nextPax + nextExtrasTotal),
+      };
+    });
+  };
 
   const addExtra = (id: string) => {
     const ex = catalog.find((e) => e.id === id);
@@ -104,6 +162,8 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
       updates.num_children = Number(updates.num_children) || 0;
       updates.total_amount_mad = Number(updates.total_amount_mad) || 0;
       updates.paid_amount_mad = Number(updates.paid_amount_mad) || 0;
+      const nextTripUnitPrice = Number(updates.trip_unit_price_per_person_mad) || 0;
+      delete updates.trip_unit_price_per_person_mad;
       if (!updates.trip_id) updates.trip_id = null;
 
       // Audit log: detect changes
@@ -116,6 +176,31 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         if (o !== n) audits.push({
           booking_id: booking.id, user_id: user?.id ?? null, user_email: user?.email ?? null,
           field: f.label, old_value: o, new_value: n,
+        });
+      }
+
+      const previousTripUnitPrice = resolveBookingTripUnitPrice({ booking, trip, extras: initialExtras });
+      const tripPriceChanged = Math.round(previousTripUnitPrice) !== Math.round(nextTripUnitPrice);
+      const nextMetadata = {
+        ...bookingMetadata(booking),
+        trip_unit_price_per_person_mad: nextTripUnitPrice,
+        ...(tripPriceChanged
+          ? {
+              trip_price_manually_overridden: true,
+              trip_price_source: "admin_manual",
+            }
+          : {}),
+      };
+      updates.metadata = nextMetadata;
+
+      if (tripPriceChanged) {
+        audits.push({
+          booking_id: booking.id,
+          user_id: user?.id ?? null,
+          user_email: user?.email ?? null,
+          field: "Prix voyage par personne",
+          old_value: fmtMAD(previousTripUnitPrice),
+          new_value: fmtMAD(nextTripUnitPrice),
         });
       }
 
@@ -179,7 +264,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <Label className="text-xs">Voyage</Label>
-                <Select value={form.trip_id || "none"} onValueChange={(v) => setField("trip_id", v === "none" ? "" : v)}>
+                <Select value={form.trip_id || "none"} onValueChange={setSelectedTrip}>
                   <SelectTrigger><SelectValue placeholder="Sélectionner" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">— Aucun —</SelectItem>
@@ -191,6 +276,20 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
               <div><Label className="text-xs">Formule / Hôtel</Label><Input value={form.formula} onChange={(e) => setField("formula", e.target.value)} /></div>
               <div><Label className="text-xs">Adultes</Label><Input type="number" min={0} value={form.num_adults} onChange={(e) => setField("num_adults", e.target.value)} /></div>
               <div><Label className="text-xs">Enfants</Label><Input type="number" min={0} value={form.num_children} onChange={(e) => setField("num_children", e.target.value)} /></div>
+              <div>
+                <Label className="text-xs">Prix voyage par personne (MAD)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  inputMode="decimal"
+                  value={form.trip_unit_price_per_person_mad ?? ""}
+                  onChange={(e) => setTripUnitPrice(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Total voyage</Label>
+                <Input value={fmtMAD(pricing.tripTotal)} readOnly className="bg-secondary/40" />
+              </div>
               <div className="col-span-2"><Label className="text-xs">Type de chambre</Label><Input value={form.room_type} onChange={(e) => setField("room_type", e.target.value)} /></div>
             </div>
           </section>
@@ -259,7 +358,18 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
               </div>
             </div>
             <div className="mt-3 rounded-lg bg-secondary/50 p-3 text-sm space-y-1">
-              <div className="flex justify-between"><span className="text-muted-foreground">Total calculé (base × pax + extras)</span><span className="font-medium">{fmtMAD(computedTotal)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Prix voyage / personne</span><span className="font-medium">{fmtMAD(pricing.tripUnitPrice)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Nombre de personnes</span><span>{pax}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Total voyage</span><span>{fmtMAD(pricing.tripTotal)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Extras</span><span>{fmtMAD(pricing.extrasTotal)}</span></div>
+              {(pricing.calculatedAdjustmentSummary.supplementsTotal > 0 || pricing.calculatedAdjustmentSummary.discountsTotal > 0) && (
+                <>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Suppléments</span><span>+{fmtMAD(pricing.calculatedAdjustmentSummary.supplementsTotal)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Réductions</span><span>-{fmtMAD(pricing.calculatedAdjustmentSummary.discountsTotal)}</span></div>
+                </>
+              )}
+              <div className="flex justify-between"><span className="text-muted-foreground">Total calculé</span><span className="font-medium">{fmtMAD(pricing.calculatedFinalTotal)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Total saisi</span><span className="font-medium">{fmtMAD(pricing.enteredFinalTotal)}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Acompte (25 000 MAD × {pax} pers.)</span><span>{fmtMAD(deposit)}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Reste à payer (selon total saisi)</span><span className="font-semibold">{fmtMAD(remaining)}</span></div>
               <Button size="sm" variant="outline" className="mt-2" onClick={applyComputedTotal}>Utiliser le total calculé</Button>
