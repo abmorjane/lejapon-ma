@@ -35,6 +35,7 @@ import {
   parsePreviousJapanStay,
   RETIRED_NOT_APPLICABLE,
 } from "@/lib/visa-format";
+import { syncVisaApplicationToClient } from "@/lib/visa-crm-sync";
 import { trackEvent } from "@/lib/analytics";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -443,6 +444,12 @@ export default function VisaForm() {
     setBusy(false);
     if (error) return toast.error(error.message);
     const submittedApp = { ...appWithChecklist, status: "submitted", submitted_at: submittedAt };
+    try {
+      const sync = await syncVisaApplicationToClient(app.id);
+      if (sync.clientId) submittedApp.client_id = sync.clientId;
+    } catch {
+      toast.warning("Demande soumise, mais la synchronisation CRM sera finalisée par l'équipe.");
+    }
     try {
       const [checklistDoc, procuration] = await Promise.all([
         upsertVisaChecklistDocument(submittedApp, user!.id, checklistItems),

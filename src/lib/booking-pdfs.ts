@@ -5,14 +5,16 @@ import stampUrl from "@/assets/stamp-moroccan-express.png";
 import { agencyAddressLine, agencyIceLine, normalizeAgencySettings, type AgencySettings } from "@/lib/agency-settings";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import {
-  adjustmentAmount,
   legacyDiscountToAdjustment,
   normalizeQuoteAdjustments,
   quoteAdjustmentsFromBooking,
-  summarizeQuoteAdjustments,
   type QuoteAdjustment,
 } from "@/lib/quote-adjustments";
-import { getBookingPricingBreakdown } from "@/lib/booking-pricing";
+import {
+  calculateCommercialDocumentTotals,
+  invoiceTypeLabel,
+  type InvoiceType,
+} from "@/lib/commercial-documents";
 
 const RED = rgb(0.78, 0.07, 0.10);
 const BLACK = rgb(0.07, 0.07, 0.07);
@@ -263,14 +265,32 @@ async function footer(pdf: PDFDocument, page: PDFPage, font: PDFFont, agency: Ag
 
 export type QuoteData = {
   booking: any;
-  trip?: { title?: string; season?: string | null; start_date?: string | null; end_date?: string | null } | null;
+  trip?: { title?: string; season?: string | null; destination?: string | null; start_date?: string | null; end_date?: string | null; duration_days?: number | null; highlights?: string[] | null } | null;
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
   discount?: { label?: string | null; amount?: number | null; type?: "fixed_amount" | "percentage" | string | null; reason?: string | null } | null;
   quote_adjustments?: QuoteAdjustment[] | null;
+  payments?: { amount_mad?: number | string | null; status?: string | null }[];
+  participants?: { full_name?: string | null; first_name?: string | null; last_name?: string | null; traveler_type?: string | null; room_type?: string | null }[];
   number: string;
   validUntil?: Date;
   agency?: Partial<AgencySettings> | null;
 };
+
+const participantName = (participant: any) =>
+  participant?.full_name || [participant?.first_name, participant?.last_name].filter(Boolean).join(" ") || participant?.name || "";
+
+function drawSectionList(page: PDFPage, font: PDFFont, fontB: PDFFont, title: string, lines: string[], x: number, y: number, maxWidth: number) {
+  if (lines.length === 0) return y;
+  drawText(page, title, x, y, fontB, 10, RED);
+  y -= 14;
+  lines.forEach((line) => {
+    wrap(line, font, 9, maxWidth).forEach((wrapped) => {
+      drawText(page, wrapped, x, y, font, 9, GREY);
+      y -= 11;
+    });
+  });
+  return y - 8;
+}
 
 export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
@@ -312,66 +332,54 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
   // Items table
   y -= Math.max(clientLines.length, tripLines.length) * 13 + 50;
   const pax = (b.num_adults || 0) + (b.num_children || 0);
-  const baseTotal = Number(b.total_amount_mad || 0);
   const quoteAdjustments = normalizeQuoteAdjustments(d.quote_adjustments).length > 0
     ? normalizeQuoteAdjustments(d.quote_adjustments)
     : quoteAdjustmentsFromBooking(b).length > 0
       ? quoteAdjustmentsFromBooking(b)
       : legacyDiscountToAdjustment(d.discount);
   const visibleAdjustments = quoteAdjustments.filter((adjustment) => adjustment.visible_on_quote !== false);
-  const adjustmentSummary = summarizeQuoteAdjustments(visibleAdjustments, baseTotal);
-  const pricing = getBookingPricingBreakdown({
+  const totals = calculateCommercialDocumentTotals({
     booking: b,
     trip,
     extras: d.extras,
     quoteAdjustments: visibleAdjustments,
+    payments: d.payments,
   });
-  const rows = [
-    {
-      label: `${trip?.title ?? "Voyage"}${trip?.start_date ? " — départ " + fmtDate(trip.start_date) : ""}`,
-      qty: String(pax || 1),
-      unit: fmtMad(pricing.tripUnitPrice),
-      total: fmtMad(pricing.tripTotal),
-    },
-    ...(d.extras ?? []).map((e) => ({
-      label: e.name_snapshot,
-      qty: String(e.qty),
-      unit: fmtMad(Number(e.unit_price_mad)),
-      total: fmtMad(e.qty * Number(e.unit_price_mad)),
-    })),
-    ...visibleAdjustments.map((adjustment) => {
-      const value = adjustmentAmount(adjustment, baseTotal);
-      const sign = adjustment.type === "discount" ? "-" : "+";
-      return {
-        label: adjustment.label,
-        qty: adjustment.calculation_type === "percentage" ? `${Number(adjustment.amount || 0)}%` : "1",
-        unit: `${sign}${fmtMad(value)}`,
-        total: `${sign}${fmtMad(value)}`,
-      };
-    }),
-  ];
+  const rows = totals.lines.map((line) => ({
+    label: line.kind === "trip" ? `${line.label}${trip?.start_date ? " — départ " + fmtDate(trip.start_date) : ""}` : line.label,
+    qty: String(line.qty || ""),
+    unit: line.totalAmount < 0 ? `-${fmtMad(Math.abs(line.unitAmount))}` : fmtMad(line.unitAmount),
+    total: line.totalAmount < 0 ? `-${fmtMad(Math.abs(line.totalAmount))}` : fmtMad(line.totalAmount),
+  }));
   y = table(page, font, fontB, 40, y, 515, rows);
 
   // Totals
-  const total = adjustmentSummary.finalTotal;
-  const paid = Number(b.paid_amount_mad || 0);
-  const remaining = Math.max(0, total - paid);
-  const paxCount = (b.num_adults || 0) + (b.num_children || 0);
-  const deposit = paxCount * 25000;
   y = totalsBlock(page, font, fontB, 40, y, 515, [
-    ...(adjustmentSummary.supplementsTotal > 0 ? [{ label: "Suppléments", value: `+${fmtMad(adjustmentSummary.supplementsTotal)}` }] : []),
-    ...(adjustmentSummary.discountsTotal > 0 ? [{ label: "Réductions", value: `-${fmtMad(adjustmentSummary.discountsTotal)}` }] : []),
-    { label: "Total HT", value: fmtMad(total) },
-    { label: "Total TTC", value: fmtMad(total), bold: true },
-    { label: `Acompte demandé (25 000 MAD × ${paxCount} pers.)`, value: fmtMad(deposit), accent: true },
-    { label: "Déjà payé", value: fmtMad(paid) },
-    { label: "Reste à payer", value: fmtMad(remaining), bold: true },
+    ...(totals.supplementsTotal > 0 ? [{ label: "Suppléments", value: `+${fmtMad(totals.supplementsTotal)}` }] : []),
+    ...(totals.discountsTotal > 0 ? [{ label: "Réductions", value: `-${fmtMad(totals.discountsTotal)}` }] : []),
+    { label: "Total HT", value: fmtMad(totals.totalHT) },
+    { label: "Total TTC", value: fmtMad(totals.totalTTC), bold: true },
+    { label: totals.depositLabel, value: fmtMad(totals.depositAmount), accent: true },
+    { label: "Déjà payé", value: fmtMad(totals.paidAmount) },
+    { label: "Reste à payer", value: fmtMad(totals.remainingAmount), bold: true },
   ]);
+
+  const participants = (d.participants ?? []).map(participantName).filter(Boolean);
+  y = drawSectionList(page, font, fontB, "Participants", participants.map((name, index) => `${index + 1}. ${name}`), 40, y - 4, 515);
+
+  const tripDetails = [
+    trip?.title ? `Voyage : ${trip.title}` : "",
+    trip?.start_date || trip?.end_date ? `Dates : du ${fmtDate(trip?.start_date)} au ${fmtDate(trip?.end_date)}` : "",
+    trip?.duration_days ? `Durée : ${trip.duration_days} jours` : "",
+    trip?.destination ? `Destination : ${trip.destination}` : "",
+    ...(Array.isArray(trip?.highlights) ? trip!.highlights!.slice(0, 5).map((item) => `- ${item}`) : []),
+  ].filter(Boolean);
+  y = drawSectionList(page, font, fontB, "Détails du voyage", tripDetails, 40, y, 515);
 
   // Conditions
   y -= 6;
   drawText(page, "Conditions", 40, y, fontB, 10, RED); y -= 14;
-  const cond = "Pour confirmer votre réservation, vous devez vous acquitter d'un premier paiement de 25000 MAD par personne. Le solde est dû maximum un mois avant le départ. Toute annulation passant ce délai entraînera des frais selon nos conditions générales de vente.";
+  const cond = `Pour confirmer votre réservation, vous devez vous acquitter de l'acompte indiqué (${fmtMad(totals.depositAmount)}). Le solde est dû maximum un mois avant le départ. Toute annulation passant ce délai entraînera des frais selon nos conditions générales de vente.`;
   wrap(cond, font, 9, 515).forEach((l) => { drawText(page, l, 40, y, font, 9, GREY); y -= 12; });
 
   // Cachet société (bottom-right above footer)
@@ -383,11 +391,13 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
 
 export type ReceiptData = {
   booking: any;
-  trip?: { title?: string; season?: string | null; start_date?: string | null } | null;
+  trip?: { title?: string; season?: string | null; destination?: string | null; start_date?: string | null; end_date?: string | null; duration_days?: number | null; highlights?: string[] | null } | null;
   payment: { amount_mad: number; method?: string | null; reference?: string | null; paid_at?: string | null };
   number: string;
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
   quote_adjustments?: QuoteAdjustment[] | null;
+  payments?: { amount_mad?: number | string | null; status?: string | null }[];
+  participants?: { full_name?: string | null; first_name?: string | null; last_name?: string | null; traveler_type?: string | null; room_type?: string | null }[];
   agency?: Partial<AgencySettings> | null;
 };
 
@@ -422,50 +432,27 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
 
   y -= Math.max(clientLines.length, tripLines.length) * 13 + 50;
 
-  const baseTotal = Number(b.total_amount_mad || 0);
   const quoteAdjustments = normalizeQuoteAdjustments(d.quote_adjustments).length > 0
     ? normalizeQuoteAdjustments(d.quote_adjustments)
     : quoteAdjustmentsFromBooking(b);
   const visibleAdjustments = quoteAdjustments.filter((adjustment) => adjustment.visible_on_quote !== false);
-  const adjustmentSummary = summarizeQuoteAdjustments(visibleAdjustments, baseTotal);
-  const total = adjustmentSummary.finalTotal;
-  const paid = Number(b.paid_amount_mad || 0);
-  const remaining = Math.max(0, total - paid);
-  const pax = (b.num_adults || 0) + (b.num_children || 0);
   const extras = d.extras ?? [];
-  const pricing = getBookingPricingBreakdown({
+  const totals = calculateCommercialDocumentTotals({
     booking: b,
     trip: d.trip,
     extras,
     quoteAdjustments: visibleAdjustments,
+    payments: d.payments,
   });
 
   // Detail of the booking (what the client is paying for)
   drawText(page, "Détail de la réservation", 40, y, fontB, 10, RED); y -= 6;
-  y = table(page, font, fontB, 40, y, 515, [
-    {
-      label: `${d.trip?.title ?? "Voyage"}${d.trip?.start_date ? " — départ " + fmtDate(d.trip.start_date) : ""}`,
-      qty: String(pax || 1),
-      unit: fmtMad(pricing.tripUnitPrice),
-      total: fmtMad(pricing.tripTotal),
-    },
-    ...extras.map((e) => ({
-      label: e.name_snapshot,
-      qty: String(e.qty),
-      unit: fmtMad(Number(e.unit_price_mad)),
-      total: fmtMad(e.qty * Number(e.unit_price_mad)),
-    })),
-    ...visibleAdjustments.map((adjustment) => {
-      const value = adjustmentAmount(adjustment, baseTotal);
-      const sign = adjustment.type === "discount" ? "-" : "+";
-      return {
-        label: adjustment.label,
-        qty: adjustment.calculation_type === "percentage" ? `${Number(adjustment.amount || 0)}%` : "1",
-        unit: `${sign}${fmtMad(value)}`,
-        total: `${sign}${fmtMad(value)}`,
-      };
-    }),
-  ]);
+  y = table(page, font, fontB, 40, y, 515, totals.lines.map((line) => ({
+    label: line.kind === "trip" ? `${line.label}${d.trip?.start_date ? " — départ " + fmtDate(d.trip.start_date) : ""}` : line.label,
+    qty: String(line.qty || ""),
+    unit: line.totalAmount < 0 ? `-${fmtMad(Math.abs(line.unitAmount))}` : fmtMad(line.unitAmount),
+    total: line.totalAmount < 0 ? `-${fmtMad(Math.abs(line.totalAmount))}` : fmtMad(line.totalAmount),
+  })));
 
   // Detail of this payment
   y -= 4;
@@ -480,13 +467,16 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   ]);
 
   y = totalsBlock(page, font, fontB, 40, y, 515, [
-    ...(adjustmentSummary.supplementsTotal > 0 ? [{ label: "Suppléments devis", value: `+${fmtMad(adjustmentSummary.supplementsTotal)}` }] : []),
-    ...(adjustmentSummary.discountsTotal > 0 ? [{ label: "Réductions devis", value: `-${fmtMad(adjustmentSummary.discountsTotal)}` }] : []),
-    { label: "Total réservation", value: fmtMad(total) },
+    ...(totals.supplementsTotal > 0 ? [{ label: "Suppléments devis", value: `+${fmtMad(totals.supplementsTotal)}` }] : []),
+    ...(totals.discountsTotal > 0 ? [{ label: "Réductions devis", value: `-${fmtMad(totals.discountsTotal)}` }] : []),
+    { label: "Total réservation", value: fmtMad(totals.totalTTC) },
     { label: "Montant de ce paiement", value: fmtMad(Number(d.payment.amount_mad)), accent: true },
-    { label: "Montant payé (cumul)", value: fmtMad(paid), bold: true },
-    { label: "Reste à payer", value: fmtMad(remaining), bold: true },
+    { label: "Montant payé (cumul)", value: fmtMad(totals.paidAmount), bold: true },
+    { label: "Reste à payer", value: fmtMad(totals.remainingAmount), bold: true },
   ]);
+
+  const participants = (d.participants ?? []).map(participantName).filter(Boolean);
+  y = drawSectionList(page, font, fontB, "Participants", participants.map((name, index) => `${index + 1}. ${name}`), 40, y - 4, 515);
 
   y -= 14;
   drawText(page, "Merci pour votre confiance.", 40, y, fontB, 11, RED);
@@ -499,6 +489,82 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
   // Cachet société à l'intérieur du cadre signature
   await drawStamp(pdf, page, 365, 95, 185, 95, agency);
 
+  await footer(pdf, page, font, agency);
+  return await pdf.save();
+}
+
+export type InvoiceData = QuoteData & {
+  invoiceType?: InvoiceType;
+};
+
+export async function generateInvoicePdf(d: InvoiceData): Promise<Uint8Array> {
+  const totals = calculateCommercialDocumentTotals({
+    booking: d.booking,
+    trip: d.trip,
+    extras: d.extras,
+    quoteAdjustments: d.quote_adjustments,
+    payments: d.payments,
+  });
+  const type = d.invoiceType ?? totals.invoiceType;
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595.28, 841.89]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const fontB = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const agency = normalizeAgencySettings(d.agency);
+  await header(pdf, page, invoiceTypeLabel(type).toUpperCase(), d.number, fontB, font, agency);
+
+  let y = 700;
+  drawText(page, `Date d'émission : ${fmtDate(new Date())}`, 40, y, font, 10);
+  drawText(page, `Référence réservation : ${d.booking?.reference ?? "—"}`, 320, y, font, 10);
+  y -= 18;
+
+  const clientLines = [
+    d.booking?.contact_name ?? "—",
+    d.booking?.contact_email ?? "",
+    d.booking?.contact_phone ?? "",
+    d.booking?.contact_city ?? "",
+  ].filter(Boolean);
+  const tripLines = [
+    d.trip?.title ?? "—",
+    d.trip?.season ?? "",
+    d.trip?.start_date || d.trip?.end_date ? `Dates : ${fmtDate(d.trip?.start_date)} - ${fmtDate(d.trip?.end_date)}` : "",
+    `Voyageurs : ${totals.pax}`,
+    d.booking?.room_type ? `Chambre : ${d.booking.room_type}` : "",
+    d.booking?.formula ? `Hôtel : ${d.booking.formula}` : "",
+  ].filter(Boolean);
+  infoBlock(page, font, fontB, 40, y, 250, "CLIENT", clientLines);
+  infoBlock(page, font, fontB, 305, y, 250, "RÉSERVATION", tripLines);
+  y -= Math.max(clientLines.length, tripLines.length) * 13 + 50;
+
+  y = table(page, font, fontB, 40, y, 515, totals.lines.map((line) => ({
+    label: line.kind === "trip" ? `${line.label}${d.trip?.start_date ? " — départ " + fmtDate(d.trip.start_date) : ""}` : line.label,
+    qty: String(line.qty || ""),
+    unit: line.totalAmount < 0 ? `-${fmtMad(Math.abs(line.unitAmount))}` : fmtMad(line.unitAmount),
+    total: line.totalAmount < 0 ? `-${fmtMad(Math.abs(line.totalAmount))}` : fmtMad(line.totalAmount),
+  })));
+
+  y = totalsBlock(page, font, fontB, 40, y, 515, [
+    { label: "Total HT", value: fmtMad(totals.totalHT) },
+    { label: "Total TTC", value: fmtMad(totals.totalTTC), bold: true },
+    ...(type === "deposit" ? [{ label: "Montant de l'acompte reçu", value: fmtMad(totals.paidAmount), accent: true }] : []),
+    { label: "Paiements reçus", value: fmtMad(totals.paidAmount) },
+    { label: "Reste à payer", value: fmtMad(totals.remainingAmount), bold: true },
+  ]);
+
+  const participants = (d.participants ?? []).map(participantName).filter(Boolean);
+  y = drawSectionList(page, font, fontB, "Participants", participants.map((name, index) => `${index + 1}. ${name}`), 40, y - 4, 515);
+  const tripDetails = [
+    d.trip?.title ? `Voyage : ${d.trip.title}` : "",
+    d.trip?.start_date || d.trip?.end_date ? `Dates : du ${fmtDate(d.trip?.start_date)} au ${fmtDate(d.trip?.end_date)}` : "",
+    d.trip?.duration_days ? `Durée : ${d.trip.duration_days} jours` : "",
+    d.trip?.destination ? `Destination : ${d.trip.destination}` : "",
+  ].filter(Boolean);
+  y = drawSectionList(page, font, fontB, "Détails du voyage", tripDetails, 40, y, 515);
+
+  drawText(page, "Mentions", 40, Math.max(y, 130), fontB, 10, RED);
+  wrap("Document généré depuis le devis / la réservation source. Les paiements enregistrés sont pris en compte dans le solde restant.", font, 9, 515)
+    .forEach((line, index) => drawText(page, line, 40, Math.max(y, 130) - 14 - index * 11, font, 9, GREY));
+  await drawStamp(pdf, page, 380, 82, 175, 110, agency);
   await footer(pdf, page, font, agency);
   return await pdf.save();
 }

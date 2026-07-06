@@ -41,6 +41,11 @@ const isSafeParticipantMatch = (participant: any, lastName: string, email: strin
 const isSafeClientMatch = (client: any, lastName: string, email: string) =>
   nameMatchesLastName(client.full_name, lastName) || emailMatches(client.email, email);
 
+const isSafeVisaApplicationMatch = (application: any, lastName: string, email: string) =>
+  nameMatchesLastName(application.surname, lastName) ||
+  nameMatchesLastName(application.last_name, lastName) ||
+  emailMatches(application.residential_email, email);
+
 const asRecord = (value: unknown): Record<string, any> =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
 
@@ -56,6 +61,11 @@ const clientPassportCandidates = (client: any) => [
   client?.passport_number,
   client?.passport_no,
   ...passportOcrCandidates(clientPassportOcr(client)),
+];
+
+const visaApplicationPassportCandidates = (application: any) => [
+  application?.passport_no,
+  application?.passport_number,
 ];
 
 const clientProfessionalSituation = (client: any) => {
@@ -127,6 +137,45 @@ const clientIdentityPatch = (client: any, fallbackLastName: string, fallbackPass
     profession: client?.profession || asRecord(client?.metadata).profession || asRecord(client?.metadata).ocr_profession_source || null,
   };
 };
+
+const visaApplicationPatch = (application: any, linkedClient: any, fallbackPassportNo: string) => ({
+  ...(linkedClient ? clientIdentityPatch(linkedClient, application?.surname ?? "", fallbackPassportNo) : {}),
+  surname: application?.surname || null,
+  given_names: application?.given_names || null,
+  date_of_birth: application?.date_of_birth || linkedClient?.birthdate || null,
+  place_of_birth_city: application?.place_of_birth_city || null,
+  place_of_birth_state: application?.place_of_birth_state || null,
+  place_of_birth_country: application?.place_of_birth_country || null,
+  sex: normalizeVisaSex(application?.sex || linkedClient?.sex),
+  marital_status: application?.marital_status || linkedClient?.marital_status || null,
+  nationality: application?.nationality || linkedClient?.nationality || null,
+  former_nationality: application?.former_nationality || null,
+  national_id_no: application?.national_id_no || null,
+  passport_no: application?.passport_no || linkedClient?.passport_number || fallbackPassportNo,
+  passport_type: application?.passport_type || "ordinary",
+  passport_date_of_issue: application?.passport_date_of_issue || linkedClient?.passport_issue_date || null,
+  passport_date_of_expiry: application?.passport_date_of_expiry || linkedClient?.passport_expiry || null,
+  passport_place_of_issue: application?.passport_place_of_issue || null,
+  passport_issuing_authority: application?.passport_issuing_authority || null,
+  residential_address: application?.residential_address || linkedClient?.address || null,
+  residential_tel: application?.residential_tel || null,
+  residential_mobile: application?.residential_mobile || linkedClient?.phone || null,
+  residential_email: application?.residential_email || linkedClient?.email || null,
+  category: application?.category || clientProfessionalSituation(linkedClient) || null,
+  profession: application?.profession || linkedClient?.profession || null,
+  employer_name: application?.employer_name || null,
+  employer_tel: application?.employer_tel || null,
+  employer_address: application?.employer_address || null,
+  document_trip_id: application?.document_trip_id || null,
+  purpose_of_visit: application?.purpose_of_visit || "Tourisme",
+  intended_length_of_stay: application?.intended_length_of_stay || null,
+  date_of_arrival: application?.date_of_arrival || null,
+  port_of_entry: application?.port_of_entry || null,
+  airline_or_ship: application?.airline_or_ship || null,
+  hotel_name: application?.hotel_name || null,
+  hotel_tel: application?.hotel_tel || null,
+  hotel_address: application?.hotel_address || null,
+});
 
 const rpcPrefillPatch = (prefill: Record<string, any>, fallbackPassportNo: string) => ({
   surname: prefill.last_name || prefill.surname || null,
@@ -272,7 +321,7 @@ export async function lookupVisaPrefillByPassport(params: {
     const rpcResult = await tryRpcPrefill(passportNo, lastName, email);
     if (rpcResult?.status === "matched" || rpcResult?.status === "multiple") return rpcResult;
 
-    const [{ data: participants, error: participantError }, { data: directClients, error: directClientError }, { data: metadataClients, error: metadataClientError }] = await Promise.all([
+    const [{ data: participants, error: participantError }, { data: directClients, error: directClientError }, { data: metadataClients, error: metadataClientError }, { data: visaApplications, error: visaApplicationError }] = await Promise.all([
       db
         .from("booking_participants")
         .select("id,booking_id,client_id,trip_id,first_name,last_name,email,date_of_birth,nationality,sex,passport_no,passport_issue_date,passport_expiry")
@@ -288,6 +337,11 @@ export async function lookupVisaPrefillByPassport(params: {
         .select("id,full_name,email,phone,date_of_birth,birthdate,birth_date,nationality,sex,passport_no,passport_number,passport_issue_date,passport_expiry,address,city,country,profession,metadata,last_trip_id")
         .or(`metadata->passport_ocr->>passport_number.ilike.%${searchFragment}%,metadata->passport_ocr->>passport_no.ilike.%${searchFragment}%`)
         .limit(50),
+      db
+        .from("visa_applications")
+        .select("id,client_id,user_id,category,surname,given_names,date_of_birth,place_of_birth_city,place_of_birth_state,place_of_birth_country,sex,marital_status,nationality,former_nationality,national_id_no,passport_type,passport_no,passport_place_of_issue,passport_date_of_issue,passport_issuing_authority,passport_date_of_expiry,residential_address,residential_tel,residential_mobile,residential_email,profession,employer_name,employer_tel,employer_address,document_trip_id,purpose_of_visit,intended_length_of_stay,date_of_arrival,port_of_entry,airline_or_ship,hotel_name,hotel_tel,hotel_address,created_at")
+        .ilike("passport_no", `%${searchFragment}%`)
+        .limit(50),
     ]);
     const clientsById = new Map<string, any>();
     for (const client of [...(directClients ?? []), ...(metadataClients ?? [])]) {
@@ -295,7 +349,7 @@ export async function lookupVisaPrefillByPassport(params: {
     }
     const clients = Array.from(clientsById.values());
 
-    if (participantError && directClientError && metadataClientError) {
+    if (participantError && directClientError && metadataClientError && visaApplicationError) {
       return { status: "error", message: "Nous n’avons pas trouvé de fiche client avec ce numéro de passeport. Vérifiez le numéro ou complétez le formulaire manuellement." };
     }
 
@@ -303,12 +357,21 @@ export async function lookupVisaPrefillByPassport(params: {
     const matchingClients = (clients ?? []).filter((client: any) =>
       clientPassportCandidates(client).some((candidate) => passportMatches(candidate, passportNo))
     );
+    const matchingVisaApplications = (visaApplications ?? []).filter((application: any) =>
+      visaApplicationPassportCandidates(application).some((candidate) => passportMatches(candidate, passportNo))
+    );
     const safeParticipants = matchingParticipants.filter((participant: any) => isSafeParticipantMatch(participant, lastName, email));
     const safeClients = matchingClients.filter((client: any) => isSafeClientMatch(client, lastName, email));
+    const safeVisaApplications = matchingVisaApplications.filter((application: any) => isSafeVisaApplicationMatch(application, lastName, email));
     const effectiveParticipants = safeParticipants.length ? safeParticipants : matchingParticipants.length === 1 ? matchingParticipants : [];
     const effectiveClients = safeClients.length ? safeClients : matchingClients.length === 1 ? matchingClients : [];
+    const effectiveVisaApplications = safeVisaApplications.length ? safeVisaApplications : matchingVisaApplications.length === 1 ? matchingVisaApplications : [];
 
-    if ((matchingParticipants.length > 1 && !safeParticipants.length) || (matchingClients.length > 1 && !safeClients.length)) {
+    if (
+      (matchingParticipants.length > 1 && !safeParticipants.length) ||
+      (matchingClients.length > 1 && !safeClients.length) ||
+      (matchingVisaApplications.length > 1 && !safeVisaApplications.length)
+    ) {
       return { status: "multiple", message: "Plusieurs dossiers correspondent. Merci de contacter l'agence." };
     }
 
@@ -344,6 +407,37 @@ export async function lookupVisaPrefillByPassport(params: {
         sourceLabel: `Voyageur lié à une réservation${trip?.title ? ` · ${trip.title}` : ""}`,
         patch: {
           ...participantIdentityPatch(participant, enrichedClient, lastName, passportNo),
+          ...tripPatch(trip),
+        },
+      };
+    }
+
+    if (effectiveVisaApplications.length === 1) {
+      const visaApplication = effectiveVisaApplications[0];
+      const [{ data: linkedClient }, { data: trip }] = await Promise.all([
+        visaApplication.client_id
+          ? db
+            .from("clients")
+            .select("id,full_name,email,phone,date_of_birth,birthdate,birth_date,nationality,sex,passport_no,passport_number,passport_issue_date,passport_expiry,address,city,country,profession,marital_status,metadata,last_trip_id")
+            .eq("id", visaApplication.client_id)
+            .maybeSingle()
+          : Promise.resolve({ data: null }),
+        visaApplication.document_trip_id
+          ? db
+            .from("trips")
+            .select("id,title,start_date,end_date,duration_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
+            .eq("id", visaApplication.document_trip_id)
+            .maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+
+      return {
+        status: "matched",
+        source: "client",
+        sourceId: linkedClient?.id || visaApplication.id,
+        sourceLabel: `Ancienne demande visa${trip?.title ? ` · ${trip.title}` : ""}`,
+        patch: {
+          ...visaApplicationPatch(visaApplication, linkedClient, passportNo),
           ...tripPatch(trip),
         },
       };

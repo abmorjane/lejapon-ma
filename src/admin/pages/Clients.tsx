@@ -75,7 +75,7 @@ const exportHeaders = [
 ];
 
 const todayStamp = () => new Date().toISOString().slice(0, 10);
-const CLIENT_SELECT = "id, full_name, email, phone, city, country, source, passport_number, passport_expiry, birthdate, nationality, sex, passport_issue_date, passport_file_path, profession, marital_status, address, metadata, last_trip_label, loyalty_tier, is_returning, trips_completed, rewards_used, created_at";
+const CLIENT_SELECT = "id, full_name, email, phone, city, country, source, passport_number, passport_no, passport_expiry, birthdate, date_of_birth, nationality, sex, passport_issue_date, passport_file_path, passport_place_of_issue, passport_issuing_authority, national_id_no, profession, marital_status, address, metadata, last_trip_label, loyalty_tier, is_returning, trips_completed, rewards_used, archived_at, archive_reason, created_at";
 
 const MARITAL_STATUS_OPTIONS = [
   { value: "celibataire", label: "Célibataire" },
@@ -148,6 +148,7 @@ const passportOcrMetadata = (fields: PassportOcrFields) => ({
 });
 
 const getPassportOcr = (metadata: unknown) => asRecord(asRecord(metadata).passport_ocr);
+const isVisaImportedClient = (client: any) => Boolean(asRecord(client?.metadata).visa_imported);
 
 const fadeIn = {
   initial: { opacity: 0, y: 10 },
@@ -165,6 +166,7 @@ export default function Clients() {
   const [maritalFilter, setMaritalFilter] = useState("all");
   const [cityFilter, setCityFilter] = useState("");
   const [ageFilter, setAgeFilter] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [open, setOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -189,22 +191,45 @@ export default function Clients() {
   const [clientDocuments, setClientDocuments] = useState<any[]>([]);
 
   const fetchClients = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from("clients")
       .select(CLIENT_SELECT)
       .order("created_at", { ascending: false })
       .limit(150);
+    if (!showArchived) query = query.is("archived_at", null);
+    const { data, error } = await query;
     if (error) {
       toast.error(error.message);
       setRows([]);
       return;
     }
+    const clientIds = (data ?? []).map((client: any) => client.id).filter(Boolean);
+    const visaTripByClient = new Map<string, string>();
+    if (clientIds.length) {
+      const { data: visaRows } = await (supabase as any)
+        .from("visa_applications")
+        .select("client_id,document_trip_id,trips:document_trip_id(title,season,start_date)")
+        .in("client_id", clientIds)
+        .not("document_trip_id", "is", null)
+        .order("created_at", { ascending: false });
+      (visaRows ?? []).forEach((row: any) => {
+        if (!row.client_id || visaTripByClient.has(row.client_id)) return;
+        const trip = row.trips;
+        const label = [trip?.title, trip?.season, trip?.start_date ? fmtDate(trip.start_date) : ""].filter(Boolean).join(" · ");
+        if (label) visaTripByClient.set(row.client_id, label);
+      });
+    }
+
+    const enriched = (data ?? []).map((client: any) => ({
+      ...client,
+      visa_trip_label: visaTripByClient.get(client.id) ?? null,
+    }));
     const search = q.trim().toLowerCase();
     const profession = professionFilter.trim().toLowerCase();
     const city = cityFilter.trim().toLowerCase();
     const age = ageFilter.trim() ? Number(ageFilter) : null;
-    const filtered = (data ?? []).filter((c: any) => {
-      const haystack = [c.full_name, c.email, c.phone, c.city, c.profession, c.passport_number]
+    const filtered = enriched.filter((c: any) => {
+      const haystack = [c.full_name, c.email, c.phone, c.city, c.profession, c.passport_number, c.passport_no, c.last_trip_label, c.visa_trip_label]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -219,7 +244,7 @@ export default function Clients() {
     });
     setRows(filtered);
   };
-  useEffect(() => { fetchClients(); }, [q, professionFilter, maritalFilter, cityFilter, ageFilter]);
+  useEffect(() => { fetchClients(); }, [q, professionFilter, maritalFilter, cityFilter, ageFilter, showArchived]);
 
   const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
   const canManageClients = can("clients");
@@ -467,13 +492,54 @@ export default function Clients() {
     openClient(selected);
   };
 
+  const clientHasProtectedHistory = async (clientId: string) => {
+    const { data: bookings } = await supabase.from("bookings").select("id").eq("client_id", clientId).limit(1);
+    const { data: visas } = await (supabase as any).from("visa_applications").select("id").eq("client_id", clientId).limit(1);
+    if ((bookings ?? []).length > 0 || (visas ?? []).length > 0) return true;
+    return false;
+  };
+
+  const deleteOrArchiveClient = async (client: any) => {
+    const protectedHistory = await clientHasProtectedHistory(client.id);
+    if (protectedHistory) {
+      const { error } = await (supabase as any).from("clients").update({
+        archived_at: new Date().toISOString(),
+        archived_by: user?.id ?? null,
+        archive_reason: "Historique commercial/comptable ou visa conservé",
+      }).eq("id", client.id);
+      if (error) return { action: "error" as const, error };
+      return { action: "archived" as const };
+    }
+    const { error } = await supabase.from("clients").delete().eq("id", client.id);
+    if (error) return { action: "error" as const, error };
+    return { action: "deleted" as const };
+  };
+
   const deleteClient = async () => {
     if (!confirmDelete) return;
-    const { error } = await supabase.from("clients").delete().eq("id", confirmDelete.id);
-    if (error) return toast.error(error.message);
-    toast.success("Client supprimé");
+    const result = await deleteOrArchiveClient(confirmDelete);
+    if (result.action === "error") return toast.error(result.error.message);
+    toast.success(result.action === "archived" ? "Client archivé pour conserver l'historique." : "Client supprimé");
     if (selected?.id === confirmDelete.id) setSelected(null);
     setConfirmDelete(null);
+    fetchClients();
+  };
+
+  const deleteOrArchiveSelectedClients = async () => {
+    if (selectedRows.length === 0) return;
+    const confirmed = window.confirm(`${selectedRows.length} client(s) sélectionné(s). Les clients avec historique seront archivés au lieu d'être supprimés. Continuer ?`);
+    if (!confirmed) return;
+    let archived = 0;
+    let deleted = 0;
+    for (const client of selectedRows) {
+      const result = await deleteOrArchiveClient(client);
+      if (result.action === "archived") archived += 1;
+      if (result.action === "deleted") deleted += 1;
+      if (result.action === "error") toast.error(`${client.full_name}: ${result.error.message}`);
+    }
+    toast.success(`${deleted} supprimé(s), ${archived} archivé(s).`);
+    setSelectedIds(new Set());
+    if (selected && selectedRows.some((row) => row.id === selected.id)) setSelected(null);
     fetchClients();
   };
 
@@ -749,7 +815,18 @@ export default function Clients() {
               />
               <span>Tout sélectionner</span>
             </label>
-            <span className="text-xs text-muted-foreground">{selectedRows.length} sélectionné(s)</span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Checkbox checked={showArchived} onCheckedChange={(checked) => setShowArchived(Boolean(checked))} />
+                Clients archivés
+              </label>
+              {isAdmin && selectedRows.length > 0 && (
+                <Button size="sm" variant="destructive" onClick={deleteOrArchiveSelectedClients}>
+                  <Trash2 className="h-4 w-4" /> Supprimer / archiver
+                </Button>
+              )}
+              <span className="text-xs text-muted-foreground">{selectedRows.length} sélectionné(s)</span>
+            </div>
           </div>
           <div className="space-y-3 md:hidden">
             {rows.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground bg-background rounded-2xl border border-border">Aucun client.</p>}
@@ -776,6 +853,8 @@ export default function Clients() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-semibold">{c.full_name}</p>
                           <LoyaltyBadge tier={c.loyalty_tier} isReturning={c.is_returning} trips={c.trips_completed} />
+                          {isVisaImportedClient(c) && <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-800">Visa</span>}
+                          {c.archived_at && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Archivé</span>}
                         </div>
                         <p className="text-xs text-muted-foreground truncate">{c.email || "—"}</p>
                         <p className="text-xs text-muted-foreground truncate">{c.phone || c.city || "—"}</p>
@@ -786,7 +865,7 @@ export default function Clients() {
                   <QuickActions phone={c.phone} email={c.email} passport={c.passport_number} compact className="mt-3" />
                 </summary>
                 <div className="grid grid-cols-2 gap-3 border-t border-border p-4 text-sm">
-                  <div><p className="text-xs text-muted-foreground">Voyage</p><p className="font-medium">{c.last_trip_label ?? "—"}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Voyage</p><p className="font-medium">{c.last_trip_label ?? c.visa_trip_label ?? "—"}</p></div>
                   <div><p className="text-xs text-muted-foreground">Ville</p><p className="font-medium">{c.city ?? "—"}</p></div>
                   <div><p className="text-xs text-muted-foreground">Situation</p><p className="font-medium">{professionalSituationLabel(clientProfessionalSituation(c))}</p></div>
                   <div><p className="text-xs text-muted-foreground">Profession</p><p className="font-medium">{c.profession ?? "—"}</p></div>
@@ -841,6 +920,8 @@ export default function Clients() {
                       <div className="flex items-center gap-2 flex-wrap">
                         {c.full_name}
                         <LoyaltyBadge tier={c.loyalty_tier} isReturning={c.is_returning} trips={c.trips_completed} />
+                        {isVisaImportedClient(c) && <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-800">Import visa</span>}
+                        {c.archived_at && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Archivé</span>}
                       </div>
                       {(clientProfessionalSituation(c) || c.profession || c.marital_status) && (
                         <p className="mt-1 text-xs font-normal text-muted-foreground">
@@ -849,7 +930,7 @@ export default function Clients() {
                       )}
                     </td>
                     <td className="p-4 text-xs leading-5 text-muted-foreground">{c.email || "—"}<br/>{c.phone || "—"}</td>
-                    <td className="p-4 text-xs">{c.last_trip_label ?? "—"}</td>
+                    <td className="p-4 text-xs">{c.last_trip_label ?? c.visa_trip_label ?? "—"}</td>
                     <td className="p-4">{c.city ?? "—"}</td>
                     <td className="p-4 text-xs text-muted-foreground">{fmtDate(c.created_at)}</td>
                     <td className="p-4">
@@ -887,6 +968,16 @@ export default function Clients() {
                 <CardTitle className="text-lg leading-6">{selected.full_name}</CardTitle>
                 <LoyaltyBadge tier={selected.loyalty_tier} isReturning={selected.is_returning} trips={selected.trips_completed} />
               </div>
+              {isVisaImportedClient(selected) && (
+                <div className="mt-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-medium text-orange-900">
+                  Données importées depuis formulaire visa.
+                </div>
+              )}
+              {selected.archived_at && (
+                <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700">
+                  Client archivé le {fmtDate(selected.archived_at)}. {selected.archive_reason || ""}
+                </div>
+              )}
               <p className="text-xs text-muted-foreground">{selected.email || "—"}</p>
               </CardHeader>
               <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
@@ -922,14 +1013,14 @@ export default function Clients() {
               <div className="mb-4 rounded-xl border border-border bg-muted/20 p-3 text-xs">
                 <p className="mb-2 font-semibold uppercase text-muted-foreground">Passeport</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <div><p className="text-muted-foreground">N° passeport</p><p className="font-medium">{selected.passport_number || selectedPassportOcr.passport_number || "—"}</p></div>
+                  <div><p className="text-muted-foreground">N° passeport</p><p className="font-medium">{selected.passport_number || selected.passport_no || selectedPassportOcr.passport_number || "—"}</p></div>
                   <div><p className="text-muted-foreground">Nationalité</p><p className="font-medium">{selected.nationality || selectedPassportOcr.nationality || "—"}</p></div>
                   <div><p className="text-muted-foreground">Naissance</p><p className="font-medium">{selected.birthdate ? fmtDate(selected.birthdate) : selectedPassportOcr.birthdate ? fmtDate(selectedPassportOcr.birthdate) : "—"}</p></div>
                   <div><p className="text-muted-foreground">Sexe</p><p className="font-medium">{selected.sex || selectedPassportOcr.sex || "—"}</p></div>
                   <div><p className="text-muted-foreground">Émission</p><p className="font-medium">{selected.passport_issue_date ? fmtDate(selected.passport_issue_date) : selectedPassportOcr.passport_issue_date ? fmtDate(selectedPassportOcr.passport_issue_date) : "—"}</p></div>
                   <div><p className="text-muted-foreground">Expiration</p><p className="font-medium">{selected.passport_expiry ? fmtDate(selected.passport_expiry) : selectedPassportOcr.passport_expiry_date ? fmtDate(selectedPassportOcr.passport_expiry_date) : "—"}</p></div>
-                  <div><p className="text-muted-foreground">CIN</p><p className="font-medium">{selectedPassportOcr.cin || selectedPassportOcr.national_id_number || "—"}</p></div>
-                  <div><p className="text-muted-foreground">Autorité</p><p className="font-medium">{selectedPassportOcr.passport_authority || "—"}</p></div>
+                  <div><p className="text-muted-foreground">CIN</p><p className="font-medium">{selected.national_id_no || selectedPassportOcr.cin || selectedPassportOcr.national_id_number || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Autorité</p><p className="font-medium">{selected.passport_issuing_authority || selected.passport_place_of_issue || selectedPassportOcr.passport_authority || "—"}</p></div>
                   {selected.passport_file_path && (
                     <div className="col-span-2"><p className="text-muted-foreground">Image passeport</p><p className="truncate font-mono text-[10px]">{selected.passport_file_path}</p></div>
                   )}
@@ -1081,15 +1172,15 @@ export default function Clients() {
           <AlertDialogHeader>
             <AlertDialogTitle>Supprimer ce client ?</AlertDialogTitle>
             <AlertDialogDescription>
-              Cette action est définitive. La fiche de <strong>{confirmDelete?.full_name}</strong> ainsi
-              que ses notes et récompenses seront supprimées. Les réservations liées seront conservées
-              mais détachées du client.
+              Si <strong>{confirmDelete?.full_name}</strong> n'a aucun historique commercial, comptable ou visa,
+              la fiche sera supprimée. Sinon elle sera archivée pour protéger les réservations, paiements,
+              reçus, devis, factures et dossiers visa.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Annuler</AlertDialogCancel>
             <AlertDialogAction onClick={deleteClient} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Supprimer
+              Confirmer
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

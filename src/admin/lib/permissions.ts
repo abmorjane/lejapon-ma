@@ -50,6 +50,7 @@ export const MODULE_PERMISSIONS = {
   dashboard: ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent", "content_manager"],
   trips: ["super_admin", "admin", "manager"],
   bookings: ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent"],
+  accounting: ["super_admin", "admin", "manager"],
   travel_agreements: ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent"],
   clients: ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent"],
   partner_requests: ["super_admin", "admin", "manager"],

@@ -10,6 +10,7 @@ import { Seo } from "@/components/Seo";
 import { toast } from "sonner";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
 import { lookupVisaPrefillByPassport, normalizePassportNo } from "@/lib/visa-prefill";
+import { syncVisaApplicationToClient } from "@/lib/visa-crm-sync";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -108,6 +109,11 @@ export default function VisaList() {
       .single();
     setBusy(false);
     if (error) return toast.error(error.message);
+    try {
+      await syncVisaApplicationToClient(data!.id);
+    } catch {
+      // Non-blocking: the draft remains usable and will sync again on submission.
+    }
     if (prefillMessage) {
       if (prefillMessage.startsWith("Informations préremplies")) toast.success(prefillMessage);
       else toast.info(prefillMessage);

@@ -18,6 +18,7 @@ import {
   resolveBookingTripUnitPrice,
 } from "@/lib/booking-pricing";
 import { quoteAdjustmentsFromBooking } from "@/lib/quote-adjustments";
+import { calculateCommercialDocumentTotals } from "@/lib/commercial-documents";
 
 type Props = {
   open: boolean;
@@ -64,6 +65,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
       setTrips(nextTrips);
       const selectedTrip = nextTrips.find((t) => t.id === booking.trip_id);
       const tripUnitPrice = resolveBookingTripUnitPrice({ booking, trip: selectedTrip, extras: nextItems });
+      const metadata = bookingMetadata(booking);
       setForm({
         contact_name: booking.contact_name ?? "",
         contact_email: booking.contact_email ?? "",
@@ -78,6 +80,9 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         message: booking.message ?? "",
         status: booking.status,
         trip_unit_price_per_person_mad: Math.round(tripUnitPrice),
+        deposit_type: metadata.deposit_type ?? booking.deposit_type ?? "fixed",
+        deposit_value: metadata.deposit_value ?? booking.deposit_value ?? 25000,
+        deposit_is_per_person: metadata.deposit_is_per_person ?? booking.deposit_is_per_person ?? true,
         total_amount_mad: Number(booking.total_amount_mad ?? 0),
         paid_amount_mad: Number(booking.paid_amount_mad ?? 0),
       });
@@ -104,9 +109,14 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
     extras: items,
     quoteAdjustments,
   });
+  const commercialTotals = calculateCommercialDocumentTotals({
+    booking: pricingBooking,
+    trip,
+    extras: items,
+    quoteAdjustments,
+  });
   const computedTotal = pricing.calculatedBaseTotal;
-  const deposit = pax * 25000;
-  const remaining = pricing.remainingAmount;
+  const remaining = commercialTotals.remainingAmount;
 
   const setField = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
@@ -184,6 +194,10 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
       const nextMetadata = {
         ...bookingMetadata(booking),
         trip_unit_price_per_person_mad: nextTripUnitPrice,
+        deposit_type: updates.deposit_type === "percentage" ? "percentage" : "fixed",
+        deposit_value: Number(updates.deposit_value || 0),
+        deposit_is_per_person: updates.deposit_type === "percentage" ? false : updates.deposit_is_per_person !== false,
+        deposit_amount_calculated: commercialTotals.depositAmount,
         ...(tripPriceChanged
           ? {
               trip_price_manually_overridden: true,
@@ -192,6 +206,9 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
           : {}),
       };
       updates.metadata = nextMetadata;
+      delete updates.deposit_type;
+      delete updates.deposit_value;
+      delete updates.deposit_is_per_person;
 
       if (tripPriceChanged) {
         audits.push({
@@ -370,7 +387,32 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
               )}
               <div className="flex justify-between"><span className="text-muted-foreground">Total calculé</span><span className="font-medium">{fmtMAD(pricing.calculatedFinalTotal)}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Total saisi</span><span className="font-medium">{fmtMAD(pricing.enteredFinalTotal)}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Acompte (25 000 MAD × {pax} pers.)</span><span>{fmtMAD(deposit)}</span></div>
+              <div className="mt-3 grid gap-2 rounded-lg border border-border bg-background/70 p-3 sm:grid-cols-3">
+                <div>
+                  <Label className="text-xs">Mode acompte</Label>
+                  <Select value={form.deposit_type || "fixed"} onValueChange={(value) => setField("deposit_type", value)}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fixed">Montant fixe</SelectItem>
+                      <SelectItem value="percentage">Pourcentage</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">{form.deposit_type === "percentage" ? "Pourcentage" : "Montant MAD"}</Label>
+                  <Input className="h-9" type="number" min={0} value={form.deposit_value ?? ""} onChange={(e) => setField("deposit_value", e.target.value)} />
+                </div>
+                <label className="flex items-center gap-2 pt-5 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={form.deposit_type !== "percentage" && form.deposit_is_per_person !== false}
+                    disabled={form.deposit_type === "percentage"}
+                    onChange={(event) => setField("deposit_is_per_person", event.target.checked)}
+                  />
+                  Par personne
+                </label>
+              </div>
+              <div className="flex justify-between"><span className="text-muted-foreground">{commercialTotals.depositLabel}</span><span>{fmtMAD(commercialTotals.depositAmount)}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Reste à payer (selon total saisi)</span><span className="font-semibold">{fmtMAD(remaining)}</span></div>
               <Button size="sm" variant="outline" className="mt-2" onClick={applyComputedTotal}>Utiliser le total calculé</Button>
             </div>

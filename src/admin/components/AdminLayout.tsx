@@ -25,6 +25,7 @@ const nav: AdminNavItem[] = [
   { to: "/admin", icon: LayoutDashboard, label: "Vue d'ensemble", end: true, module: "dashboard", section: "Core" },
   { to: "/admin/trips", icon: Plane, label: "Voyages", module: "trips", section: "Sales" },
   { to: "/admin/bookings", icon: CalendarCheck, label: "Réservations", module: "bookings", section: "Sales" },
+  { to: "/admin/accounting", icon: Banknote, label: "Comptabilité", module: "accounting", section: "Sales" },
   { to: "/admin/travel-agreements", icon: FileSignature, label: "Accords de voyage", module: "travel_agreements", section: "Sales" },
   { to: "/admin/clients", icon: Users, label: "Clients (CRM)", module: "clients", section: "Sales" },
   { to: "/admin/extras", icon: Sparkles, label: "Extras", module: "extras", section: "Sales" },

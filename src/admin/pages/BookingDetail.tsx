@@ -13,7 +13,7 @@ import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
 import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck, Save, Upload } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { generateQuotePdf, generateReceiptPdf, downloadBytes } from "@/lib/booking-pdfs";
+import { generateQuotePdf, generateReceiptPdf, generateInvoicePdf, downloadBytes } from "@/lib/booking-pdfs";
 import { PdfPreviewDialog } from "../components/PdfPreviewDialog";
 import { EditBookingDialog } from "../components/EditBookingDialog";
 import { useNavigate } from "react-router-dom";
@@ -35,6 +35,7 @@ import {
   type QuoteAdjustmentDraft,
 } from "@/lib/quote-adjustments";
 import { getBookingPricingBreakdown } from "@/lib/booking-pricing";
+import { calculateCommercialDocumentTotals, invoiceTypeLabel } from "@/lib/commercial-documents";
 
 export default function BookingDetail() {
   const { id } = useParams();
@@ -43,13 +44,14 @@ export default function BookingDetail() {
   const [b, setB] = useState<any>(null);
   const [payments, setPayments] = useState<any[]>([]);
   const [extras, setExtras] = useState<any[]>([]);
+  const [participants, setParticipants] = useState<any[]>([]);
   const [docs, setDocs] = useState<any[]>([]);
   const [newPay, setNewPay] = useState({ amount_mad: "", method: "bank_transfer", status: "received", reference: "" });
   const [quoteAdjustments, setQuoteAdjustments] = useState<QuoteAdjustment[]>([]);
   const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
   const [editingAdjustmentId, setEditingAdjustmentId] = useState<string | null>(null);
   const [adjustmentDraft, setAdjustmentDraft] = useState<QuoteAdjustmentDraft>(emptyQuoteAdjustmentDraft);
-  const [preview, setPreview] = useState<null | { kind: "quote" | "receipt"; payment?: any }>(null);
+  const [preview, setPreview] = useState<null | { kind: "quote" | "receipt" | "invoice"; payment?: any }>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [linkClientOpen, setLinkClientOpen] = useState(false);
@@ -68,7 +70,7 @@ export default function BookingDetail() {
 
   const load = async () => {
     if (!id) return;
-    const { data, error } = await supabase.from("bookings").select("*, trips(title, season, destination, start_date, end_date, base_price_mad, promo_percent)").eq("id", id).single();
+    const { data, error } = await supabase.from("bookings").select("*, trips(title, season, destination, start_date, end_date, duration_days, highlights, base_price_mad, promo_percent)").eq("id", id).single();
     if (error || !data) {
       console.error("[booking-detail] booking load failed", error);
       toast.error("Impossible de charger la réservation.");
@@ -85,6 +87,13 @@ export default function BookingDetail() {
     const { data: e, error: extrasError } = await supabase.from("booking_extras").select("*").eq("booking_id", id);
     if (extrasError) console.warn("[booking-detail] extras unavailable", extrasError);
     setExtras(e ?? []);
+    const { data: participantRows, error: participantError } = await (supabase as any)
+      .from("booking_participants")
+      .select("id,first_name,last_name,client_type,room_type,passport_no")
+      .eq("booking_id", id)
+      .order("created_at", { ascending: true });
+    if (participantError) console.warn("[booking-detail] participants unavailable", participantError);
+    setParticipants(participantRows ?? []);
     const { data: d, error: docsError } = await supabase.from("booking_documents" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false });
     if (docsError) console.warn("[booking-detail] documents unavailable", docsError);
     setDocs((d as any) ?? []);
@@ -157,10 +166,12 @@ export default function BookingDetail() {
       trip: b?.trips ?? null,
       extras: extras as any,
       quote_adjustments: quoteAdjustments,
+      payments,
+      participants,
       agency,
       number: `DEV-${b?.reference ?? ""}-${String(docs.filter((x) => x.kind === "quote").length + 1).padStart(2, "0")}`,
     }),
-    [b, extras, docs, agency, quoteAdjustments]
+    [b, extras, docs, agency, quoteAdjustments, payments, participants]
   );
 
   const buildReceipt = useCallback(
@@ -170,10 +181,36 @@ export default function BookingDetail() {
       payment: preview?.payment ?? payments[0] ?? { amount_mad: 0 },
       extras: extras as any,
       quote_adjustments: quoteAdjustments,
+      payments,
+      participants,
       agency,
       number: `REC-${b?.reference ?? ""}-${String(docs.filter((x) => x.kind === "receipt").length + 1).padStart(2, "0")}`,
     }),
-    [b, payments, preview, docs, extras, agency, quoteAdjustments]
+    [b, payments, preview, docs, extras, agency, quoteAdjustments, participants]
+  );
+
+  const buildInvoice = useCallback(
+    () => {
+      const totals = calculateCommercialDocumentTotals({
+        booking: b,
+        trip: b?.trips ?? null,
+        extras: extras as any,
+        quoteAdjustments,
+        payments,
+      });
+      return generateInvoicePdf({
+        booking: b,
+        trip: b?.trips ?? null,
+        extras: extras as any,
+        quote_adjustments: quoteAdjustments,
+        payments,
+        participants,
+        agency,
+        invoiceType: totals.invoiceType,
+        number: `FAC-${b?.reference ?? ""}-${String(docs.filter((x) => x.kind === "invoice").length + 1).padStart(2, "0")}`,
+      });
+    },
+    [b, extras, quoteAdjustments, payments, participants, agency, docs]
   );
 
   if (!b) return <p className="text-muted-foreground">Chargement…</p>;
@@ -294,13 +331,22 @@ export default function BookingDetail() {
     navigate("/admin/bookings");
   };
 
-  const saveAndDownload = async (kind: "quote" | "receipt", payment?: any) => {
+  const saveAndDownload = async (kind: "quote" | "receipt" | "invoice", payment?: any) => {
     if (!b) return;
     setBusy(true);
     try {
       const number = kind === "quote"
         ? `DEV-${b.reference}-${String(docs.filter((x) => x.kind === "quote").length + 1).padStart(2, "0")}`
-        : `REC-${b.reference}-${String(docs.filter((x) => x.kind === "receipt").length + 1).padStart(2, "0")}`;
+        : kind === "invoice"
+          ? `FAC-${b.reference}-${String(docs.filter((x) => x.kind === "invoice").length + 1).padStart(2, "0")}`
+          : `REC-${b.reference}-${String(docs.filter((x) => x.kind === "receipt").length + 1).padStart(2, "0")}`;
+      const commercialTotals = calculateCommercialDocumentTotals({
+        booking: b,
+        trip: b.trips,
+        extras: extras as any,
+        quoteAdjustments,
+        payments,
+      });
       const bytes = kind === "quote"
         ? await generateQuotePdf({
             booking: b,
@@ -309,19 +355,51 @@ export default function BookingDetail() {
             agency,
             number,
             quote_adjustments: quoteAdjustments,
+            payments,
+            participants,
           })
-        : await generateReceiptPdf({ booking: b, trip: b.trips, payment: payment ?? payments[0] ?? { amount_mad: 0 }, extras: extras as any, quote_adjustments: quoteAdjustments, agency, number });
+        : kind === "invoice"
+          ? await generateInvoicePdf({
+              booking: b,
+              trip: b.trips,
+              extras: extras as any,
+              agency,
+              number,
+              quote_adjustments: quoteAdjustments,
+              payments,
+              participants,
+              invoiceType: commercialTotals.invoiceType,
+            })
+          : await generateReceiptPdf({ booking: b, trip: b.trips, payment: payment ?? payments[0] ?? { amount_mad: 0 }, extras: extras as any, quote_adjustments: quoteAdjustments, payments, participants, agency, number });
       const path = `${b.id}/${number}.pdf`;
       const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       const { error: upErr } = await supabase.storage.from("booking-docs").upload(path, new Blob([ab], { type: "application/pdf" }), { upsert: true, contentType: "application/pdf" });
       if (upErr) throw upErr;
-      await supabase.from("booking_documents" as any).insert({
-        booking_id: b.id, kind, number, storage_path: path,
-        total_mad: b.total_amount_mad, paid_mad: b.paid_amount_mad,
-        payment_id: payment?.id ?? null, created_by: user?.id ?? null,
-      } as any);
+      const documentPayload: any = {
+        booking_id: b.id,
+        kind,
+        document_type: kind === "invoice" ? commercialTotals.invoiceType : kind,
+        invoice_type: kind === "invoice" ? commercialTotals.invoiceType : null,
+        title: kind === "invoice" ? invoiceTypeLabel(commercialTotals.invoiceType) : kind === "quote" ? "Devis" : "Reçu",
+        number,
+        storage_path: path,
+        total_mad: commercialTotals.totalTTC,
+        paid_mad: commercialTotals.paidAmount,
+        remaining_mad: commercialTotals.remainingAmount,
+        payment_id: payment?.id ?? null,
+        created_by: user?.id ?? null,
+        meta: kind === "invoice" ? { invoice_type: commercialTotals.invoiceType, remaining_mad: commercialTotals.remainingAmount } : { remaining_mad: commercialTotals.remainingAmount },
+      };
+      const documentInsert = await supabase.from("booking_documents" as any).insert(documentPayload);
+      if (documentInsert.error) {
+        const missingAccountingColumn = /invoice_type|remaining_mad|issued_at|schema cache|column/i.test(documentInsert.error.message ?? "");
+        if (!missingAccountingColumn || kind === "invoice") throw documentInsert.error;
+        const { invoice_type, remaining_mad, ...fallbackPayload } = documentPayload;
+        const fallbackInsert = await supabase.from("booking_documents" as any).insert(fallbackPayload);
+        if (fallbackInsert.error) throw fallbackInsert.error;
+      }
       downloadBytes(bytes, `${number}.pdf`);
-      toast.success(kind === "quote" ? "Devis généré" : "Reçu généré");
+      toast.success(kind === "quote" ? "Devis généré" : kind === "invoice" ? `${invoiceTypeLabel(commercialTotals.invoiceType)} générée` : "Reçu généré");
       load();
     } catch (e: any) {
       toast.error(e.message ?? "Erreur lors de la génération");
@@ -441,9 +519,16 @@ export default function BookingDetail() {
     extras,
     quoteAdjustments,
   });
+  const commercialTotals = calculateCommercialDocumentTotals({
+    booking: b,
+    trip: b.trips,
+    extras,
+    quoteAdjustments,
+    payments,
+  });
   const quoteSummary = pricing.enteredAdjustmentSummary;
-  const displayedQuoteTotal = pricing.enteredFinalTotal;
-  const remainingAmount = pricing.remainingAmount;
+  const displayedQuoteTotal = commercialTotals.totalTTC;
+  const remainingAmount = commercialTotals.remainingAmount;
   const paidPercent = displayedQuoteTotal > 0
     ? Math.min(100, Math.round((Number(b.paid_amount_mad || 0) / displayedQuoteTotal) * 100))
     : 0;
@@ -861,6 +946,15 @@ export default function BookingDetail() {
               <Button size="sm" className="min-h-11" variant="outline" onClick={() => setPreview({ kind: "receipt", payment: payments[0] })} disabled={busy || payments.length === 0}>
                 <Eye className="w-4 h-4" /> Aperçu
               </Button>
+              <Button size="sm" className="min-h-11" onClick={() => saveAndDownload("invoice")} disabled={busy}>
+                <FileText className="w-4 h-4" /> Créer facture
+              </Button>
+              <Button size="sm" className="min-h-11" variant="outline" onClick={() => setPreview({ kind: "invoice" })} disabled={busy}>
+                <Eye className="w-4 h-4" /> Aperçu facture
+              </Button>
+              <p className="col-span-2 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+                Type automatique : <span className="font-medium text-foreground">{invoiceTypeLabel(commercialTotals.invoiceType)}</span>
+              </p>
             </div>
             <div className="mb-4 space-y-2 rounded-xl border border-border bg-muted/30 p-3">
               <div>
@@ -1028,6 +1122,13 @@ export default function BookingDetail() {
         title="Aperçu du reçu"
         filename={`recu-${b?.reference ?? ""}.pdf`}
         generate={buildReceipt}
+      />
+      <PdfPreviewDialog
+        open={preview?.kind === "invoice"}
+        onOpenChange={(v) => !v && setPreview(null)}
+        title={`Aperçu ${invoiceTypeLabel(commercialTotals.invoiceType)}`}
+        filename={`facture-${b?.reference ?? ""}.pdf`}
+        generate={buildInvoice}
       />
 
       {canEdit && (

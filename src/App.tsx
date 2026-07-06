@@ -60,6 +60,7 @@ const AdminDashboard = lazy(() => import("@/admin/pages/Dashboard"));
 const AdminTrips = lazy(() => import("@/admin/pages/Trips"));
 const AdminBookings = lazy(() => import("@/admin/pages/Bookings"));
 const AdminBookingDetail = lazy(() => import("@/admin/pages/BookingDetail"));
+const AdminAccounting = lazy(() => import("@/admin/pages/Accounting"));
 const AdminTravelAgreements = lazy(() => import("@/admin/pages/TravelAgreements"));
 const AdminClients = lazy(() => import("@/admin/pages/Clients"));
 const AdminExtras = lazy(() => import("@/admin/pages/Extras"));
@@ -301,6 +302,7 @@ const AppRoutes = () => {
         <Route path="trips" element={<RequireRole module="trips"><AdminTrips /></RequireRole>} />
         <Route path="bookings" element={<RequireRole module="bookings"><AdminBookings /></RequireRole>} />
         <Route path="bookings/:id" element={<RequireRole module="bookings"><AdminBookingDetail /></RequireRole>} />
+        <Route path="accounting" element={<RequireRole module="accounting"><AdminAccounting /></RequireRole>} />
         <Route path="travel-agreements" element={<RequireRole module="travel_agreements"><AdminTravelAgreements /></RequireRole>} />
         <Route path="clients" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
         <Route path="clients/:id" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
