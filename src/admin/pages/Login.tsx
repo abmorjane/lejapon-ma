@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { portalHomeForRoles } from "@/admin/lib/portal-access";
 import { useRecaptcha } from "@/hooks/useRecaptcha";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,7 @@ import { toast } from "sonner";
 import logo from "@/assets/logo-lejapon.png";
 
 export default function AdminLogin() {
-  const { user, signIn, signUp, loading } = useAuth();
+  const { user, roles, signIn, signUp, loading } = useAuth();
   const nav = useNavigate();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
@@ -24,7 +25,9 @@ export default function AdminLogin() {
     error: recaptchaError,
   } = useRecaptcha();
 
-  useEffect(() => { if (!loading && user) nav("/admin", { replace: true }); }, [user, loading, nav]);
+  useEffect(() => {
+    if (!loading && user) nav(portalHomeForRoles(roles), { replace: true });
+  }, [user, roles, loading, nav]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,7 +69,6 @@ export default function AdminLogin() {
         const { error } = await signIn(email, password);
         if (error) throw error;
         toast.success("Connecté");
-        nav("/admin", { replace: true });
       } else {
         const { error } = await signUp(email, password, fullName);
         if (error) throw error;

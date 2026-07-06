@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, BedDouble, CircleDollarSign, ClipboardList, Plane, Ticket, Users } from "lucide-react";
+import { ArrowRight, BedDouble, ClipboardList, Plane, Ticket, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { PageHeader } from "../../components/PageHeader";
@@ -44,33 +44,54 @@ const quoteBadgeClass = (status: string) => {
 };
 
 export default function SupplierTrips() {
-  const { user, roles } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [trips, setTrips] = useState<TripCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [supplierIds, setSupplierIds] = useState<string[]>([]);
   const [quoteTableMissing, setQuoteTableMissing] = useState(false);
-  const isAdmin = roles.some((role) => ["super_admin", "admin"].includes(role));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [hasSupplierMembership, setHasSupplierMembership] = useState(true);
 
   useEffect(() => {
     (async () => {
       if (!user) return;
       setLoading(true);
       setQuoteTableMissing(false);
+      setLoadError(null);
 
-      const { data: members } = await db
+      const { data: members, error: membersError } = await db
         .from("supplier_members")
         .select("supplier_id")
         .eq("user_id", user.id);
+      if (membersError && !isAdmin) {
+        setTrips([]);
+        setHasSupplierMembership(false);
+        setLoadError("Impossible de charger votre rattachement fournisseur.");
+        setLoading(false);
+        return;
+      }
       const currentSupplierIds = Array.from(new Set((members ?? []).map((member: any) => member.supplier_id).filter(Boolean)));
       setSupplierIds(currentSupplierIds);
+      setHasSupplierMembership(isAdmin || currentSupplierIds.length > 0);
 
       let assignedTripIds: string[] = [];
       if (currentSupplierIds.length) {
-        const { data: assignments } = await db
+        const { data: assignments, error: assignmentError } = await db
           .from("trip_suppliers")
           .select("trip_id")
           .in("supplier_id", currentSupplierIds);
+        if (assignmentError && !isAdmin) {
+          setTrips([]);
+          setLoadError("Impossible de charger vos voyages assignés.");
+          setLoading(false);
+          return;
+        }
         assignedTripIds = Array.from(new Set((assignments ?? []).map((item: any) => item.trip_id).filter(Boolean)));
+      }
+      if (!isAdmin && !assignedTripIds.length) {
+        setTrips([]);
+        setLoading(false);
+        return;
       }
 
       let tripQuery = db
@@ -80,13 +101,12 @@ export default function SupplierTrips() {
 
       if (assignedTripIds.length) {
         tripQuery = tripQuery.in("id", assignedTripIds);
-      } else if (!isAdmin) {
-        tripQuery = tripQuery.or("status.eq.active,status.eq.published,is_public.eq.true");
       }
 
       const { data: tripRows, error: tripError } = await tripQuery;
       if (tripError) {
         setTrips([]);
+        setLoadError("Impossible de charger vos voyages assignés.");
         setLoading(false);
         return;
       }
@@ -151,8 +171,8 @@ export default function SupplierTrips() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Japan Office - voyages actifs"
-        description="Vue opérationnelle fournisseurs: participants, chambres, activités et devis Japon par voyage."
+        title="Japan Office - vue fournisseur"
+        description="Vos voyages assignés, devis Japon, rooming, participants, documents et messages opérationnels."
       />
 
       {quoteTableMissing && (
@@ -162,7 +182,7 @@ export default function SupplierTrips() {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={Plane} label="Voyages" value={summary.trips} />
+        <StatCard icon={Plane} label="Voyages assignés" value={summary.trips} />
         <StatCard icon={Users} label="Participants" value={summary.participants} />
         <StatCard icon={BedDouble} label="Hôtels / blocs" value={summary.rooms} />
         <StatCard icon={Ticket} label="Extras sélectionnés" value={summary.extras} />
@@ -170,16 +190,27 @@ export default function SupplierTrips() {
 
       {loading ? (
         <p className="text-muted-foreground">Chargement…</p>
+      ) : loadError ? (
+        <Card className="p-10 text-center">
+          <Plane className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+          <p className="font-medium">{loadError}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Contactez l'équipe LeJapon.ma si le problème persiste.
+          </p>
+        </Card>
       ) : trips.length === 0 ? (
         <Card className="p-10 text-center">
           <Plane className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="font-medium">Aucun voyage visible</p>
+          <p className="font-medium">
+            {hasSupplierMembership ? "Aucun voyage ne vous est actuellement assigné." : "Votre compte fournisseur n'est pas encore relié à un fournisseur."}
+          </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Les fournisseurs voient leurs voyages assignés. Sans assignation en V1, ils voient les voyages actifs/publics.
+            Dès qu'un voyage vous sera assigné, il apparaîtra ici avec ses onglets opérationnels.
           </p>
         </Card>
       ) : (
         <div className="grid gap-3">
+          <h2 className="font-display text-xl">Mes voyages assignés</h2>
           {trips.map((trip) => (
             <Card key={trip.id} className="p-4 transition-colors hover:border-primary/50">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

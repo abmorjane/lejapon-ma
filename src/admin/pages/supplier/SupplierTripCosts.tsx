@@ -14,6 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { fmtDate } from "@/lib/format";
+import {
+  DEFAULT_GUIDE_ROWS,
+  DEFAULT_HOTEL_ROOM_TYPES,
+  DEFAULT_OPTIONAL_ACTIVITIES,
+  DEFAULT_REQUIRED_ACTIVITIES,
+} from "@/admin/lib/supplier-defaults";
 
 const db = supabase as any;
 
@@ -211,52 +217,13 @@ const transportTypes = ["bus", "metro", "taxi", "train", "shinkansen", "boat", "
 const guideTypes = ["francophone", "anglophone", "japanese", "assistant", "other"];
 const roomTypes = ["double/twin", "single", "triple", "TL"];
 
-const DEFAULT_HOTEL_ROOM_TYPES = ["double/twin", "single", "triple", "TL"] as const;
-
-const DEFAULT_GUIDE_ROWS = [
-  { day_number: 2, guide_type: "French or English speaking assistant", daily_price_jpy: 30000 },
-  { day_number: 3, guide_type: "French or English speaking guide (Shibuya)", daily_price_jpy: 50000 },
-  { day_number: 4, guide_type: "French or English speaking guide (Odaiba)", daily_price_jpy: 50000 },
-  { day_number: 5, guide_type: "French or English speaking guide (Kamakura)", daily_price_jpy: 60000 },
-  { day_number: 6, guide_type: "French or English speaking guide (Hakone)", daily_price_jpy: 60000 },
-  { day_number: 7, guide_type: "French speaking guide (Kyoto) - Monsieur Koenuma", daily_price_jpy: 65000 },
-  { day_number: 9, guide_type: "French speaking guide (Kyoto - Nara - Osaka)", daily_price_jpy: 65000 },
-  { day_number: 10, guide_type: "French speaking guide (Hiroshima - Miyajima) - Madame Sekimura", daily_price_jpy: 55000 },
-  { day_number: 11, guide_type: "French or English speaking guide (Osaka) - Monsieur Koenuma", daily_price_jpy: 65000 },
-  { day_number: 15, guide_type: "French or English speaking guide (Asakusa - Akihabara) - Monsieur Atsushi au Kanto", daily_price_jpy: 55000 },
-  { day_number: 16, guide_type: "French or English speaking assistant", daily_price_jpy: 30000 },
-] as const;
-
-const DEFAULT_REQUIRED_ACTIVITIES = [
-  { day_number: 3, activity_name: "Team Lab Planet Tokyo", unit_price_jpy: 5600 },
-  { day_number: 4, activity_name: "Kamakura Buddha", unit_price_jpy: 300 },
-  { day_number: 5, activity_name: "Hakone Pirate Ship", unit_price_jpy: 2000 },
-  { day_number: 6, activity_name: "Golden Pavilion", unit_price_jpy: 500 },
-  { day_number: 6, activity_name: "Kiyomizudera Temple", unit_price_jpy: 500 },
-  { day_number: 6, activity_name: "Ryoanji Temple", unit_price_jpy: 600 },
-  { day_number: 6, activity_name: "Nijo-jo", unit_price_jpy: 1300 },
-  { day_number: 9, activity_name: "Memorial Museum", unit_price_jpy: 200 },
-  { day_number: 9, activity_name: "Ferry to Miyajima", unit_price_jpy: 200 },
-  { day_number: 9, activity_name: "Hiroshima Tax", unit_price_jpy: 100 },
-  { day_number: 10, activity_name: "Kaiyukan", unit_price_jpy: 3500 },
-  { day_number: 10, activity_name: "Osaka Castle", unit_price_jpy: 1200 },
-] as const;
-
-const DEFAULT_OPTIONAL_ACTIVITIES = [
-  { day_number: 7, activity_name: "Morning Meditation in Kyoto at Kounji", unit_price_jpy: 1000, aliases: ["meditation", "morning meditation", "kounji"] },
-  { day_number: 7, activity_name: "Tea Ceremony in Kyoto", unit_price_jpy: 3500, aliases: ["tea ceremony", "ceremonie du the", "cérémonie du thé"] },
-  { day_number: 7, activity_name: "Geisha Make Up in Kyoto", unit_price_jpy: 12000, aliases: ["geisha makeup", "geisha make up", "maquillage geisha"] },
-  { day_number: 7, activity_name: "Maiko Dinner Experience", unit_price_jpy: 23925, aliases: ["maiko dinner", "geisha dinner", "maiko dinner experience"] },
-  { day_number: 11, activity_name: "Universal Studios", unit_price_jpy: 10900, aliases: ["universal studio", "universal studios", "usj"] },
-  { day_number: 13, activity_name: "Disney Sea/Land", unit_price_jpy: 10900, aliases: ["disney", "disneyland", "disney sea", "disney land"] },
-] as const;
-
 export default function SupplierTripCosts() {
   const { tripId } = useParams();
-  const { user, roles } = useAuth();
+  const { user, roles, isAdmin } = useAuth();
   const [trip, setTrip] = useState<any>(null);
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [supplierName, setSupplierName] = useState<string>("Japan office");
+  const [accessDenied, setAccessDenied] = useState<string | null>(null);
   const [quote, setQuote] = useState<any>(null);
   const [rows, setRows] = useState<Record<QuoteSection, QuoteRow[]>>({
     hotels: [],
@@ -304,7 +271,6 @@ export default function SupplierTripCosts() {
   const [documentBusy, setDocumentBusy] = useState(false);
   const [documentsSqlMissing, setDocumentsSqlMissing] = useState(false);
 
-  const isAdmin = roles.some((role) => ["super_admin", "admin"].includes(role));
   const canEdit = isAdmin || ["draft", "submitted", "revision_requested"].includes(status);
   const unreadMessageCount = useMemo(
     () => messages.filter((message) => message.sender_id !== user?.id && !messageReads[message.id]).length,
@@ -324,7 +290,7 @@ export default function SupplierTripCosts() {
 
   useEffect(() => {
     void load();
-  }, [tripId, user?.id]);
+  }, [isAdmin, tripId, user?.id]);
 
   useEffect(() => {
     if (activeTab === "messages") void markMessagesRead(messages);
@@ -333,14 +299,42 @@ export default function SupplierTripCosts() {
   const load = async () => {
     if (!tripId || !user) return;
     setSqlMissing(false);
+    setAccessDenied(null);
 
-    const { data: memberRows } = await db
+    const { data: memberRows, error: memberError } = await db
       .from("supplier_members")
       .select("supplier_id,suppliers(name)")
-      .eq("user_id", user.id)
-      .limit(1);
-    const member = memberRows?.[0];
-    const currentSupplierId = member?.supplier_id ?? null;
+      .eq("user_id", user.id);
+    const supplierIds = Array.from(new Set((memberRows ?? []).map((member: any) => member.supplier_id).filter(Boolean)));
+    let currentSupplierId = supplierIds[0] ?? null;
+    let member = (memberRows ?? [])[0];
+
+    if (!isAdmin) {
+      if (memberError) {
+        setTrip(null);
+        setAccessDenied("Impossible de vérifier votre rattachement fournisseur.");
+        return;
+      }
+      if (!supplierIds.length) {
+        setTrip(null);
+        setAccessDenied("Votre compte fournisseur n'est pas encore relié à un fournisseur.");
+        return;
+      }
+
+      const { data: assignmentRows, error: assignmentError } = await db
+        .from("trip_suppliers")
+        .select("supplier_id")
+        .eq("trip_id", tripId)
+        .in("supplier_id", supplierIds);
+      if (assignmentError || !assignmentRows?.length) {
+        setTrip(null);
+        setAccessDenied("Ce voyage ne vous est pas assigné.");
+        return;
+      }
+      currentSupplierId = assignmentRows[0].supplier_id;
+      member = (memberRows ?? []).find((row: any) => row.supplier_id === currentSupplierId) ?? member;
+    }
+
     setSupplierId(currentSupplierId);
     setSupplierName(member?.suppliers?.name ?? (isAdmin ? "Japan office / admin" : "Japan office"));
 
@@ -938,13 +932,19 @@ export default function SupplierTripCosts() {
         { name: "Emergency Contacts", rows: book.emergencyContactRows },
       ]);
     } else {
+      const commentRows = buildCommentsExportRows({ operationalState, messages });
       await exportWorkbook(`${fileBase}-global.xlsx`, [
-        { name: "Devis", rows: context.quoteRows },
-        { name: "Vue opérationnelle", rows: context.operationalRows },
+        { name: "Summary", rows: buildOperationalSummaryRows({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName }) },
+        { name: "Financial Quote", rows: context.totalRows },
+        { name: "Hotels", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.hotels) },
+        { name: "Transport", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.transport) },
+        { name: "Activities", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.activities) },
+        { name: "Guides", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.guides) },
         { name: "Participants", rows: context.participantRows },
-        { name: "Chambres", rows: context.roomRows },
+        { name: "Rooming List", rows: context.roomRows },
         { name: "Extras", rows: context.extraRows },
-        { name: "Totaux", rows: context.totalRows },
+        { name: "Operational Programme", rows: context.operationalRows },
+        { name: "Comments", rows: commentRows },
       ]);
     }
   };
@@ -1003,6 +1003,19 @@ export default function SupplierTripCosts() {
       },
     }));
   };
+
+  if (accessDenied) {
+    return (
+      <Card className="p-10 text-center">
+        <Plane className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+        <h1 className="font-display text-xl">Accès fournisseur restreint</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{accessDenied}</p>
+        <Button asChild variant="outline" className="mt-5">
+          <Link to="/supplier/trips">Retour à mes voyages</Link>
+        </Button>
+      </Card>
+    );
+  }
 
   if (!trip) return <p className="text-muted-foreground">Chargement…</p>;
 
@@ -1842,6 +1855,7 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
     onRowsChange(rows.map((row, rowIndex) => rowIndex === index ? normalizeRow(section, { ...row, [key]: value }, rowIndex) : row));
   };
   const remove = (index: number) => onRowsChange(rows.filter((_, rowIndex) => rowIndex !== index));
+  const bulkSetStatus = (status: RowStatus) => onRowsChange(rows.map((row, index) => normalizeRow(section, { ...row, status }, index)));
   const move = (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= rows.length) return;
@@ -1863,9 +1877,17 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
           <h2 className="font-display text-lg">{sectionLabels[section]}</h2>
           <p className="text-sm text-muted-foreground">{rows.length} ligne(s) · Total {fmtJPY(total)}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={onAdd} disabled={!canEdit}>
-          <Plus className="h-4 w-4" /> Ajouter une ligne
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("confirmed")} disabled={!canEdit || rows.length === 0}>
+            Tout confirmer
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("todo")} disabled={!canEdit || rows.length === 0}>
+            Tout remettre à faire
+          </Button>
+          <Button variant="outline" size="sm" onClick={onAdd} disabled={!canEdit}>
+            <Plus className="h-4 w-4" /> Ajouter une ligne
+          </Button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1120px] text-sm">
@@ -2548,8 +2570,8 @@ const columnsForSection = (section: QuoteSection) => {
     { key: "check_out", label: "Check-out", type: "date" },
     { key: "nights", label: "Nuits", type: "number" },
     { key: "room_type", label: "Type", type: "select", options: roomTypes },
-    { key: "rooms_count", label: "Personnes", type: "number" },
-    { key: "unit_price_jpy", label: "Prix/pers./nuit JPY", type: "number" },
+    { key: "person_count", label: "Personnes", type: "number" },
+    { key: "price_per_person_per_night_jpy", label: "Prix/pers./nuit JPY", type: "number" },
   ];
   if (section === "transport") return [
     { key: "service_date", label: "Date", type: "date" },
@@ -2585,7 +2607,7 @@ const columnsForSection = (section: QuoteSection) => {
 
 const blankRow = (section: QuoteSection, index: number): QuoteRow => {
   const base = { local_id: crypto.randomUUID(), sort_order: index, status: "todo" as RowStatus, comment: "", assigned_to: "" };
-  if (section === "hotels") return { ...base, city: "", hotel_name: "", check_in: "", check_out: "", nights: 1, room_type: "double/twin", rooms_count: 1, unit_price_jpy: 0 };
+  if (section === "hotels") return { ...base, city: "", hotel_name: "", check_in: "", check_out: "", nights: 1, room_type: "double/twin", person_count: 1, price_per_person_per_night_jpy: 0 };
   if (section === "transport") return { ...base, service_date: "", day_number: index + 1, city_route: "", transport_type: "bus", description: "", quantity: 1, unit_price_jpy: 0 };
   if (section === "activities") return { ...base, service_date: "", day_number: index + 1, activity_name: "", participant_count: 1, quantity: 1, unit_price_jpy: 0, optional: false };
   if (section === "guides") return { ...base, service_date: "", day_number: index + 1, city: "", guide_type: "francophone", guides_count: 1, daily_price_jpy: 0 };
@@ -2602,7 +2624,7 @@ const hasValue = (value: unknown) => value !== null && value !== undefined && va
 
 const subtotal = (row: QuoteRow, section?: QuoteSection) => {
   if (section === "hotels" || (!section && ("hotel_name" in row || "rooms_count" in row || "room_count" in row))) {
-    return numeric(row.rooms_count ?? row.room_count) * numeric(row.nights || 0) * numeric(row.unit_price_jpy ?? row.price_per_room_per_night_jpy);
+    return numeric(row.person_count ?? row.rooms_count ?? row.room_count) * numeric(row.nights || 0) * numeric(row.price_per_person_per_night_jpy ?? row.unit_price_jpy ?? row.price_per_room_per_night_jpy);
   }
   if (section === "transport") {
     return numeric(row.quantity) * numeric(row.unit_price_jpy);
@@ -2630,8 +2652,8 @@ const serializeRow = (section: QuoteSection, row: QuoteRow, quoteId: string, ind
   };
   const clean = (keys: string[]) => Object.fromEntries(keys.map((key) => [key, normalized[key] ?? null]));
   if (section === "hotels") {
-    const peopleCount = numeric(normalized.rooms_count ?? normalized.room_count);
-    const unitPrice = numeric(normalized.unit_price_jpy ?? normalized.price_per_room_per_night_jpy);
+    const peopleCount = numeric(normalized.person_count ?? normalized.rooms_count ?? normalized.room_count);
+    const unitPrice = numeric(normalized.price_per_person_per_night_jpy ?? normalized.unit_price_jpy ?? normalized.price_per_room_per_night_jpy);
     return {
       ...base,
       ...clean(["city", "hotel_name", "check_in", "check_out", "nights", "room_type"]),
@@ -2704,6 +2726,30 @@ const buildExportContext = ({ trip, rows, totals, programmeDays, hotels, rooms, 
     { poste: "Coût par personne MAD", montant_mad: roundNumber(totals.costPerPersonMad) },
   ];
   return { participantRows, extraRows, roomRows, operationalRows, quoteRows, totalRows };
+};
+
+const buildCommentsExportRows = ({ operationalState, messages }: { operationalState: OperationalState; messages: TripMessage[] }) => {
+  const dayCommentRows = Object.entries(operationalState.day_comments ?? {}).flatMap(([dayNumber, comments]) =>
+    (comments ?? []).map((comment) => ({
+      source: "Vue opérationnelle",
+      section: `Jour ${dayNumber}`,
+      type: "Commentaire jour",
+      auteur: comment.author_name || comment.author_email || "",
+      role: comment.source,
+      message: comment.body,
+      date: formatDateForDisplay(comment.created_at),
+    }))
+  );
+  const messageRows = (messages ?? []).map((message) => ({
+    source: "Messages",
+    section: messageTypeLabel[message.message_type] ?? message.message_type,
+    type: "Message",
+    auteur: message.sender_name || "",
+    role: message.sender_role || message.sender_source || "",
+    message: message.body,
+    date: formatDateForDisplay(message.created_at),
+  }));
+  return [...dayCommentRows, ...messageRows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 };
 
 const buildOperationalBookContext = ({
@@ -2958,8 +3004,8 @@ const buildQuoteExportRows = (rows: Record<QuoteSection, QuoteRow[]>, includeAdm
         check_out: formatDateForDisplay(row.check_out),
         nuits: row.nights,
         type_chambre: row.room_type,
-        personnes: row.rooms_count ?? row.room_count,
-        prix_personne_nuit_jpy: row.unit_price_jpy ?? row.price_per_room_per_night_jpy,
+        personnes: row.person_count ?? row.rooms_count ?? row.room_count,
+        prix_personne_nuit_jpy: row.price_per_person_per_night_jpy ?? row.unit_price_jpy ?? row.price_per_room_per_night_jpy,
       });
       if (section === "transport") Object.assign(base, {
         date: formatDateForDisplay(row.service_date),
@@ -3133,10 +3179,12 @@ const normalizeRow = (section: QuoteSection, row: any, index: number): QuoteRow 
   };
 
   if (section === "hotels") {
-    const peopleCount = numeric(row.rooms_count ?? row.room_count);
-    const unitPrice = numeric(row.unit_price_jpy ?? row.price_per_room_per_night_jpy);
+    const peopleCount = numeric(row.person_count ?? row.rooms_count ?? row.room_count);
+    const unitPrice = numeric(row.price_per_person_per_night_jpy ?? row.unit_price_jpy ?? row.price_per_room_per_night_jpy);
+    normalized.person_count = peopleCount;
     normalized.rooms_count = peopleCount;
     normalized.room_count = peopleCount;
+    normalized.price_per_person_per_night_jpy = unitPrice;
     normalized.unit_price_jpy = unitPrice;
     normalized.price_per_room_per_night_jpy = unitPrice;
   } else if (section === "transport") {
@@ -3185,7 +3233,7 @@ const buildInitialRows = ({ trip, programmeDays, hotels, rooms, assignments, boo
         check_out: dateOnly(hotel.check_out),
         nights: nightsBetween(hotel.check_in, hotel.check_out) || 1,
         room_type: roomType,
-        rooms_count: peopleCounts[roomType] ?? 0,
+        person_count: peopleCounts[roomType] ?? 0,
       };
     });
   });

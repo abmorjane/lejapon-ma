@@ -3,12 +3,14 @@ import { useAuth } from "@/hooks/useAuth";
 import { canAccess, ModuleKey } from "../lib/permissions";
 import { ShieldOff } from "lucide-react";
 import { Navigate } from "react-router-dom";
+import { SUPPLIER_PORTAL_PATH } from "../lib/portal-access";
 
 const salesFitRoles = ["manager", "sales", "sales_user", "sales_manager"];
 const partnerFitRoles = ["partner_agency_admin", "partner_agent"];
 
 export const RequireRole = ({ module, children }: { module: ModuleKey; children: ReactNode }) => {
-  const { roles } = useAuth();
+  const { roles, isSupplierOnly } = useAuth();
+  if (isSupplierOnly) return <Navigate to={SUPPLIER_PORTAL_PATH} replace />;
   if (!canAccess(roles, module)) {
     if (
       module === "fit_quotes"

@@ -2,12 +2,16 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, R
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { canAccess, ModuleKey } from "@/admin/lib/permissions";
+import { hasAdminRole, hasInternalStaffRole, hasSupplierRole, isSupplierOnlyRole } from "@/admin/lib/portal-access";
 
 type AuthCtx = {
   user: User | null;
   session: Session | null;
   roles: string[];
   isStaff: boolean;
+  isInternalStaff: boolean;
+  isSupplier: boolean;
+  isSupplierOnly: boolean;
   isAdmin: boolean;
   isSuperAdmin: boolean;
   can: (module: ModuleKey) => boolean;
@@ -33,20 +37,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const loadRoles = async (uid: string) => {
     const { data } = await supabase.from("user_roles").select("role").eq("user_id", uid);
-    setRoles((data ?? []).map((r) => r.role as string));
+    const nextRoles = (data ?? []).map((r) => r.role as string);
+    setRoles(nextRoles);
+    return nextRoles;
   };
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setLoading(true);
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) setTimeout(() => loadRoles(s.user.id), 0);
-      else setRoles([]);
+      if (s?.user) {
+        setTimeout(() => {
+          void loadRoles(s.user.id).finally(() => setLoading(false));
+        }, 0);
+      } else {
+        setRoles([]);
+        setLoading(false);
+      }
     });
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
+    supabase.auth.getSession().then(async ({ data: { session: s } }) => {
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) loadRoles(s.user.id);
+      if (s?.user) await loadRoles(s.user.id);
       setLoading(false);
     });
     return () => subscription.unsubscribe();
@@ -71,15 +84,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
   const signOut = useCallback(async () => { await supabase.auth.signOut(); }, []);
 
-  const isStaff = roles.some((r) =>
-    ["super_admin", "admin", "manager", "sales", "sales_user", "sales_manager", "agent", "content_manager", "supplier"].includes(r)
-  );
-  const isAdmin = roles.includes("admin") || roles.includes("super_admin");
+  const isInternalStaff = hasInternalStaffRole(roles);
+  const isSupplier = hasSupplierRole(roles);
+  const isSupplierOnly = isSupplierOnlyRole(roles);
+  const isStaff = isInternalStaff;
+  const isAdmin = hasAdminRole(roles);
   const isSuperAdmin = roles.includes("super_admin");
   const can = useCallback((module: ModuleKey) => canAccess(roles, module), [roles]);
   const value = useMemo(
-    () => ({ user, session, roles, isStaff, isAdmin, isSuperAdmin, can, loading, signIn, signUp, signOut }),
-    [user, session, roles, isStaff, isAdmin, isSuperAdmin, can, loading, signIn, signUp, signOut],
+    () => ({ user, session, roles, isStaff, isInternalStaff, isSupplier, isSupplierOnly, isAdmin, isSuperAdmin, can, loading, signIn, signUp, signOut }),
+    [user, session, roles, isStaff, isInternalStaff, isSupplier, isSupplierOnly, isAdmin, isSuperAdmin, can, loading, signIn, signUp, signOut],
   );
 
   return (

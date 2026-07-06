@@ -15,6 +15,7 @@ export default function SupplierCosts() {
   const [legacyRows, setLegacyRows] = useState<any[]>([]);
   const [quotes, setQuotes] = useState<any[]>([]);
   const [quoteRowCounts, setQuoteRowCounts] = useState<Record<string, number>>({});
+  const [quoteCalculatedTotals, setQuoteCalculatedTotals] = useState<Record<string, any>>({});
   const [suppliers, setSuppliers] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -34,6 +35,7 @@ export default function SupplierCosts() {
         setLegacyRows([]);
         setQuotes([]);
         setQuoteRowCounts({});
+        setQuoteCalculatedTotals({});
         return;
       }
 
@@ -57,24 +59,50 @@ export default function SupplierCosts() {
       const quoteIds = (quoteRows ?? []).map((quote: any) => quote.id).filter(Boolean);
       if (!quoteIds.length) {
         setQuoteRowCounts({});
+        setQuoteCalculatedTotals({});
         return;
       }
 
       const rowTables = [
-        "supplier_quote_hotel_rows",
-        "supplier_quote_transport_rows",
-        "supplier_quote_activity_rows",
-        "supplier_quote_guide_rows",
-        "supplier_quote_other_rows",
+        { key: "hotels", table: "supplier_quote_hotel_rows" },
+        { key: "transport", table: "supplier_quote_transport_rows" },
+        { key: "activities", table: "supplier_quote_activity_rows" },
+        { key: "guides", table: "supplier_quote_guide_rows" },
+        { key: "other", table: "supplier_quote_other_rows" },
       ];
-      const results = await Promise.all(rowTables.map((table) => db.from(table).select("id,quote_id").in("quote_id", quoteIds)));
+      const results = await Promise.all(rowTables.map(({ table }) => db.from(table).select("*").in("quote_id", quoteIds)));
       const counts: Record<string, number> = {};
-      results.forEach(({ data }: any) => {
+      const calculated: Record<string, any> = {};
+      results.forEach(({ data }: any, index: number) => {
+        const section = rowTables[index].key;
         (data ?? []).forEach((row: any) => {
           counts[row.quote_id] = (counts[row.quote_id] ?? 0) + 1;
+          if (!calculated[row.quote_id]) {
+            calculated[row.quote_id] = { hotels: 0, transport: 0, activities: 0, guides: 0, other: 0 };
+          }
+          calculated[row.quote_id][section] += supplierRowSubtotal(section, row);
         });
       });
+      Object.entries(calculated).forEach(([quoteId, totals]: [string, any]) => {
+        const quote = (quoteRows ?? []).find((item: any) => item.id === quoteId);
+        const grandTotalJpy = ["hotels", "transport", "activities", "guides", "other"].reduce((sum, key) => sum + Number(totals[key] || 0), 0);
+        const commissionPct = Number(quote?.commission_percentage ?? quote?.commission_percent ?? 10);
+        const commissionAmountJpy = grandTotalJpy * commissionPct / 100;
+        const finalTotalJpy = grandTotalJpy + commissionAmountJpy;
+        const exchangeRate = Number(quote?.exchange_rate_jpy_mad ?? 0.068);
+        const finalTotalMad = finalTotalJpy * exchangeRate;
+        const participantCount = Math.max(1, Number(quote?.participant_count || 1));
+        calculated[quoteId] = {
+          ...totals,
+          grand_total_jpy: grandTotalJpy,
+          commission_amount_jpy: commissionAmountJpy,
+          final_total_jpy: finalTotalJpy,
+          final_total_mad: finalTotalMad,
+          cost_per_person_mad: finalTotalMad / participantCount,
+        };
+      });
       setQuoteRowCounts(counts);
+      setQuoteCalculatedTotals(calculated);
     })();
   }, [tripId]);
 
@@ -122,22 +150,31 @@ export default function SupplierCosts() {
       <div className="space-y-6">
         {quotes.map((quote) => {
           const rowCount = quoteRowCounts[quote.id] ?? 0;
+          const fallbackTotals = quoteCalculatedTotals[quote.id] ?? {};
+          const totalHotels = Number(quote.total_hotels_jpy || fallbackTotals.hotels || 0);
+          const totalTransport = Number(quote.total_transport_jpy || fallbackTotals.transport || 0);
+          const totalActivities = Number(quote.total_activities_jpy || fallbackTotals.activities || 0);
+          const totalGuides = Number(quote.total_guides_jpy || fallbackTotals.guides || 0);
+          const totalOther = Number(quote.total_other_jpy || fallbackTotals.other || 0);
+          const grandTotal = Number(quote.grand_total_jpy || fallbackTotals.grand_total_jpy || 0);
+          const finalTotalJpy = Number(quote.final_total_jpy || fallbackTotals.final_total_jpy || grandTotal || 0);
+          const finalTotalMad = Number(quote.final_total_mad || fallbackTotals.final_total_mad || 0);
           const hasTotals = [
-            quote.total_hotels_jpy,
-            quote.total_transport_jpy,
-            quote.total_activities_jpy,
-            quote.total_guides_jpy,
-            quote.total_other_jpy,
-            quote.grand_total_jpy,
-            quote.final_total_jpy,
-            quote.final_total_mad,
+            totalHotels,
+            totalTransport,
+            totalActivities,
+            totalGuides,
+            totalOther,
+            grandTotal,
+            finalTotalJpy,
+            finalTotalMad,
           ].some((value) => Number(value || 0) > 0);
           return (
             <Card key={quote.id}>
               <CardHeader className="flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base">{quote.supplier_id ? suppliers[quote.supplier_id] ?? "Fournisseur" : "Japan office / admin"}</CardTitle>
                 <span className="font-display text-xl text-primary">
-                  {hasTotals ? fmtJPY(Number(quote.final_total_jpy || quote.grand_total_jpy || 0)) : "Devis créé"}
+                  {hasTotals ? fmtJPY(finalTotalJpy) : "Devis créé"}
                 </span>
               </CardHeader>
               <CardContent>
@@ -147,19 +184,26 @@ export default function SupplierCosts() {
                   </p>
                 )}
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <Metric label="Total hôtels" value={fmtJPY(quote.total_hotels_jpy)} />
-                  <Metric label="Total transport" value={fmtJPY(quote.total_transport_jpy)} />
-                  <Metric label="Total activités" value={fmtJPY(quote.total_activities_jpy)} />
-                  <Metric label="Total guides" value={fmtJPY(quote.total_guides_jpy)} />
-                  <Metric label="Total autres" value={fmtJPY(quote.total_other_jpy)} />
-                  <Metric label="Total brut" value={fmtJPY(quote.grand_total_jpy)} />
+                  <Metric label="Total hôtels" value={fmtJPY(totalHotels)} />
+                  <Metric label="Total transport" value={fmtJPY(totalTransport)} />
+                  <Metric label="Total activités" value={fmtJPY(totalActivities)} />
+                  <Metric label="Total guides" value={fmtJPY(totalGuides)} />
+                  <Metric label="Total autres" value={fmtJPY(totalOther)} />
+                  <Metric label="Total brut" value={fmtJPY(grandTotal)} />
                   <Metric label="Commission" value={`${Number(quote.commission_percentage ?? quote.commission_percent ?? 10)} %`} />
-                  <Metric label="Total final JPY" value={fmtJPY(quote.final_total_jpy)} />
-                  <Metric label="Total final MAD" value={fmtMAD(quote.final_total_mad)} />
-                  <Metric label="Coût / personne MAD" value={fmtMAD(quote.cost_per_person_mad)} />
+                  <Metric label="Total final JPY" value={fmtJPY(finalTotalJpy)} />
+                  <Metric label="Total final MAD" value={fmtMAD(finalTotalMad)} />
+                  <Metric label="Coût / personne MAD" value={fmtMAD(quote.cost_per_person_mad || fallbackTotals.cost_per_person_mad)} />
                   <Metric label="Participants" value={String(quote.participant_count ?? "—")} />
                   <Metric label="Lignes devis" value={String(rowCount)} />
+                  <Metric label="Dernière mise à jour" value={quote.updated_at ? new Date(quote.updated_at).toLocaleString("fr-FR") : "—"} />
+                  <Metric label="Statut fournisseur" value={quote.validation_status || quote.status || "draft"} />
                 </div>
+                {tripId && (
+                  <Button asChild variant="outline" size="sm" className="mt-4">
+                    <Link to={`/supplier/trips/${tripId}/quote`}>Ouvrir ce devis</Link>
+                  </Button>
+                )}
               </CardContent>
             </Card>
           );
@@ -213,6 +257,26 @@ export default function SupplierCosts() {
     </div>
   );
 }
+
+const supplierNumeric = (value: unknown) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const supplierRowSubtotal = (section: string, row: any) => {
+  if (section === "hotels") {
+    return supplierNumeric(row.person_count ?? row.rooms_count ?? row.room_count)
+      * supplierNumeric(row.nights || 0)
+      * supplierNumeric(row.price_per_person_per_night_jpy ?? row.unit_price_jpy ?? row.price_per_room_per_night_jpy);
+  }
+  if (section === "activities") {
+    return supplierNumeric(row.participant_count ?? row.quantity) * supplierNumeric(row.unit_price_jpy);
+  }
+  if (section === "guides") {
+    return supplierNumeric(row.guides_count ?? row.guide_count) * supplierNumeric(row.daily_price_jpy);
+  }
+  return supplierNumeric(row.quantity) * supplierNumeric(row.unit_price_jpy);
+};
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (

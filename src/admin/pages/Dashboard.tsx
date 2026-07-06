@@ -1,18 +1,22 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Plane, CalendarCheck, Users, Wallet, ArrowRight } from "lucide-react";
 import { fmtMAD, fmtDateTime } from "@/lib/format";
 import { motion, useReducedMotion } from "framer-motion";
+import { useAuth } from "@/hooks/useAuth";
+import { SUPPLIER_PORTAL_PATH } from "@/admin/lib/portal-access";
 
 type Stats = { trips: number; openTrips: number; leads: number; confirmed: number; paid: number; clients: number; revenue: number };
 
 export default function Dashboard() {
+  const { isSupplierOnly } = useAuth();
   const [s, setS] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<any[]>([]);
   const reduceMotion = useReducedMotion();
 
   useEffect(() => {
+    if (isSupplierOnly) return;
     (async () => {
       const [tripsAll, tripsOpen, leads, confirmed, paid, clients, payments, recentBookings] = await Promise.all([
         supabase.from("trips").select("id", { count: "exact", head: true }),
@@ -35,7 +39,9 @@ export default function Dashboard() {
       });
       setRecent(recentBookings.data ?? []);
     })();
-  }, []);
+  }, [isSupplierOnly]);
+
+  if (isSupplierOnly) return <Navigate to={SUPPLIER_PORTAL_PATH} replace />;
 
   const cards = [
     { label: "Voyages ouverts", value: s ? `${s.openTrips} / ${s.trips}` : "—", icon: Plane, color: "bg-accent/15 text-accent" },

@@ -16,6 +16,7 @@ import { ADMIN_THEMES, type AdminThemeId, isAdminThemeId, readAdminTheme } from 
 import { AdminQuickActionBar } from "./AdminQuickActionBar";
 import { registerAdminPushSubscription } from "@/admin/lib/push-notifications";
 import { toast } from "sonner";
+import { SUPPLIER_PORTAL_PATH } from "../lib/portal-access";
 
 type NavSection = "Core" | "Sales" | "Content" | "Partners" | "System";
 type AdminNavItem = { to: string; icon: any; label: string; end?: boolean; module: ModuleKey; section: NavSection };
@@ -71,7 +72,7 @@ const PlatformVersionBadge = ({ compact = false }: { compact?: boolean }) => (
 );
 
 export const AdminLayout = ({ children }: { children?: ReactNode }) => {
-  const { user, isStaff, loading, signOut, roles, can } = useAuth();
+  const { user, isStaff, isSupplierOnly, loading, signOut, roles, can } = useAuth();
   const loc = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<AdminThemeId>(() => readAdminTheme());
@@ -95,6 +96,7 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Chargement…</div>;
   if (!user) return <Navigate to="/admin/login" state={{ from: loc.pathname }} replace />;
+  if (isSupplierOnly) return <Navigate to={SUPPLIER_PORTAL_PATH} replace />;
   if (!isStaff) return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-8 text-center">
       <h1 className="font-display text-2xl">Accès refusé</h1>
