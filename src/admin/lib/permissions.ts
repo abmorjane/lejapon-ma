@@ -58,6 +58,7 @@ export const MODULE_PERMISSIONS = {
   extras: ["super_admin", "admin"],
   suppliers: ["super_admin", "admin"],
   supplier_costs: ["super_admin", "admin"],
+  operations_center: ["super_admin", "admin", "manager", "agent"],
   fit_quotes: ["super_admin", "admin"],
   partner_fit_quotes: ["manager", "sales", "sales_user", "sales_manager", "partner_agency_admin", "partner_agent"],
   international_payments: ["super_admin", "admin"],

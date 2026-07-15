@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { LoyaltyBadge, tierLabel } from "../components/LoyaltyBadge";
 import { QuickActions } from "../components/QuickActions";
+import { OperationChecklistPanel } from "../components/OperationChecklistPanel";
 import { PassportScannerDialog, type PassportOcrFields } from "../components/PassportScannerDialog";
 import { checkPassportExpiry } from "@/lib/passport-mrz";
 import { exportCsv } from "@/admin/lib/export-csv";
@@ -982,6 +983,14 @@ export default function Clients() {
               </CardHeader>
               <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
               <QuickActions phone={selected.phone} email={selected.email} passport={selected.passport_number} className="mb-4" />
+              <div className="mb-4">
+                <OperationChecklistPanel
+                  title="Checklist opérationnelle client"
+                  description="Tâches opérationnelles liées aux réservations et dossiers de ce client."
+                  customerId={selected.id}
+                  compact
+                />
+              </div>
               <div className="mb-4 rounded-xl border border-border bg-muted/20 p-3 text-xs">
                 <p className="mb-2 font-semibold uppercase text-muted-foreground">Informations personnelles</p>
                 <div className="grid grid-cols-2 gap-2">

@@ -17,6 +17,24 @@ export type CommercialLine = {
   adjustment?: QuoteAdjustment;
 };
 
+export type CommercialParticipantInput = {
+  full_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  name?: string | null;
+  client_type?: string | null;
+  traveler_type?: string | null;
+  room_type?: string | null;
+  room_label?: string | null;
+  relation?: string | null;
+};
+
+export type CommercialParticipant = {
+  name: string;
+  details: string[];
+  label: string;
+};
+
 export type CommercialDocumentTotals = {
   lines: CommercialLine[];
   pax: number;
@@ -53,11 +71,14 @@ const hasStoredTripUnitPrice = (booking: any) => {
 
 const readDepositConfig = (booking: any, pax: number) => {
   const metadata = bookingMetadata(booking);
-  const rawType = booking?.deposit_type ?? metadata.deposit_type;
+  const rawType = metadata.deposit_type ?? booking?.deposit_type;
   const depositType: DepositType = rawType === "percentage" ? "percentage" : "fixed";
-  const rawValue = booking?.deposit_value ?? metadata.deposit_value;
-  const depositValue = Math.max(0, numberOrZero(rawValue || (depositType === "percentage" ? 0 : 25000)));
-  const depositIsPerPerson = booking?.deposit_is_per_person ?? metadata.deposit_is_per_person ?? metadata.deposit_per_person ?? true;
+  const rawValue = metadata.deposit_value ?? booking?.deposit_value;
+  const hasValue = rawValue !== null && rawValue !== undefined && rawValue !== "";
+  const depositValue = Math.max(0, hasValue ? numberOrZero(rawValue) : (depositType === "percentage" ? 0 : 25000));
+  const depositIsPerPerson = depositType === "percentage"
+    ? false
+    : (metadata.deposit_is_per_person ?? metadata.deposit_per_person ?? booking?.deposit_is_per_person ?? true);
   return {
     depositType,
     depositValue: depositValue || (depositType === "fixed" ? 25000 : 0),
@@ -84,6 +105,43 @@ export const invoiceTypeLabel = (type: InvoiceType) => {
   if (type === "deposit") return "Facture d'acompte";
   return "Facture";
 };
+
+const titleCase = (value: string) =>
+  value
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase("fr-FR"));
+
+const travelerTypeLabel = (value?: string | null) => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (["adult", "adulte"].includes(normalized)) return "adulte";
+  if (["child", "children", "enfant"].includes(normalized)) return "enfant";
+  if (["baby", "infant", "bebe", "bébé"].includes(normalized)) return "bébé";
+  if (normalized === "lead") return "responsable";
+  return titleCase(normalized);
+};
+
+export const normalizeCommercialParticipants = (participants?: CommercialParticipantInput[] | null): CommercialParticipant[] =>
+  (participants ?? [])
+    .map((participant) => {
+      const name = String(
+        participant.full_name ||
+        participant.name ||
+        [participant.first_name, participant.last_name].filter(Boolean).join(" ")
+      ).replace(/\s+/g, " ").trim();
+      if (!name) return null;
+      const type = travelerTypeLabel(participant.client_type ?? participant.traveler_type ?? participant.relation);
+      const room = String(participant.room_type ?? participant.room_label ?? "").trim();
+      const details = [type, room].filter(Boolean);
+      return {
+        name,
+        details,
+        label: details.length ? `${name} (${details.join(" · ")})` : name,
+      };
+    })
+    .filter((participant): participant is CommercialParticipant => Boolean(participant));
 
 export function calculateCommercialDocumentTotals({
   booking,
@@ -159,10 +217,10 @@ export function calculateCommercialDocumentTotals({
     : Math.round(depositConfig.depositValue * (depositConfig.depositIsPerPerson ? pax : 1));
   const depositAmount = Math.min(totalTTC, Math.max(0, rawDeposit));
   const depositLabel = depositConfig.depositType === "percentage"
-    ? `Acompte demandé (${depositConfig.depositValue}% du total)`
+    ? `Acompte demandé : ${depositConfig.depositValue}% du total`
     : depositConfig.depositIsPerPerson
-      ? `Acompte demandé (${depositConfig.depositValue.toLocaleString("fr-FR")} MAD × ${pax} pers.)`
-      : "Acompte demandé";
+      ? `Acompte demandé : ${depositConfig.depositValue.toLocaleString("fr-FR")} MAD × ${pax} pers.`
+      : "Acompte demandé : montant global";
 
   return {
     lines: [...baseLines, ...adjustmentLines],

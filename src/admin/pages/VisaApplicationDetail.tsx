@@ -9,11 +9,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ArrowLeft, Download, Eye, FileText, Mail, Pencil, Save } from "lucide-react";
 import { toast } from "sonner";
 import { generateVisaPdf, downloadBlob } from "@/lib/visa-pdf";
 import { generateInvitationLetter, generateGuaranteeLetter } from "@/lib/visa-letters";
 import { generateTravelConfirmationPdf, generateTravelProgrammePdf } from "@/lib/travel-documents-pdf";
+import {
+  buildVisaProgramV2Draft,
+  generateVisaProgramV2Pdf,
+  sanitizeVisaProgramV2Filename,
+  validateVisaProgramV2Draft,
+  VISA_PROGRAM_V2_DOCUMENT_TYPE,
+  type VisaProgramV2Draft,
+} from "@/lib/visa-program-v2-pdf";
 import { isVisaProcurationDocument, upsertVisaProcurationDocument } from "@/lib/visa-procuration-pdf";
 import { isVisaChecklistDocument, upsertVisaChecklistDocument } from "@/lib/visa-checklist-pdf";
 import {
@@ -38,6 +47,7 @@ import {
   parsePreviousJapanStay,
   RETIRED_NOT_APPLICABLE,
 } from "@/lib/visa-format";
+import { visaTripDatesFromTrip } from "@/lib/visa-trip-dates";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -62,6 +72,12 @@ const normalizeMatchText = (value: unknown) =>
     .trim();
 
 const hasText = (value: unknown) => String(value ?? "").trim().length > 0;
+
+const isVisaProgramV2Document = (doc: any) =>
+  String(doc?.storage_path ?? "").includes("/generated-program-v2/") ||
+  String(doc?.storage_path ?? "").includes(`/${VISA_PROGRAM_V2_DOCUMENT_TYPE}/`) ||
+  String(doc?.file_name ?? "").toLowerCase().includes("programme_visa_v2") ||
+  String(doc?.file_name ?? "").toLowerCase().includes("travel_itinerary");
 
 type TravelContext = {
   trip?: any | null;
@@ -220,6 +236,8 @@ export default function VisaApplicationDetail() {
   const [visaDraft, setVisaDraft] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<null | "visa" | "invitation" | "guarantee" | "programme" | "confirmation">(null);
+  const [visaProgramV2Open, setVisaProgramV2Open] = useState(false);
+  const [visaProgramV2Draft, setVisaProgramV2Draft] = useState<VisaProgramV2Draft | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -227,7 +245,7 @@ export default function VisaApplicationDetail() {
       supabase.from("visa_documents").select("*").eq("application_id", id!).order("created_at"),
       supabase.from("visa_settings").select("*").limit(1).maybeSingle(),
       supabase.from("visa_document_checklists").select("*").eq("is_active", true).order("sort_order"),
-      supabase.from("trips").select("id,title,season,start_date,end_date,label").order("start_date", { ascending: false }),
+      supabase.from("trips").select("id,title,season,start_date,end_date,label,total_trip_days,duration_days,japan_stay_days,visa_japan_arrival_date,visa_japan_departure_date").order("start_date", { ascending: false }),
       fetchAgencySettings(),
     ]).then(async ([a, d, s, c, t, agency]) => {
       if (!a.data) { toast.error("Demande introuvable"); nav("/admin/visa"); return; }
@@ -255,8 +273,10 @@ export default function VisaApplicationDetail() {
       const ctx = await loadTravelContextForTrip(effectiveTravelTripId, participants, agency);
 
       if (ctx.trip) {
+          const visaTripDates = visaTripDatesFromTrip(ctx.trip);
           const patch: any = {};
-          if (!appRow.date_of_arrival && ctx.trip.visa_japan_arrival_date) patch.date_of_arrival = ctx.trip.visa_japan_arrival_date;
+          if (!appRow.date_of_arrival && visaTripDates.japanArrivalDate) patch.date_of_arrival = visaTripDates.japanArrivalDate;
+          if (!appRow.intended_length_of_stay && visaTripDates.japanStayDays) patch.intended_length_of_stay = `${visaTripDates.japanStayDays} jours`;
           if (!appRow.port_of_entry && ctx.trip.visa_arrival_port) patch.port_of_entry = ctx.trip.visa_arrival_port;
           if (!appRow.airline_or_ship && ctx.trip.visa_arrival_flight_number) patch.airline_or_ship = ctx.trip.visa_arrival_flight_number;
           if (!appRow.hotel_name && ctx.trip.visa_hotel_name) patch.hotel_name = ctx.trip.visa_hotel_name;
@@ -469,11 +489,35 @@ export default function VisaApplicationDetail() {
     toast.success("Informations voyage enregistrées");
   };
 
+  const applyTripVisaDates = async () => {
+    if (!app?.id || !travelCtx.trip) return toast.error("Aucun voyage sélectionné.");
+    const dates = visaTripDatesFromTrip(travelCtx.trip);
+    const patch = {
+      date_of_arrival: dates.japanArrivalDate || null,
+      intended_length_of_stay: dates.japanStayDays ? `${dates.japanStayDays} jours` : null,
+    };
+    const { error } = await supabase.from("visa_applications").update(patch).eq("id", app.id);
+    if (error) return toast.error(error.message);
+    setApp({ ...app, ...patch });
+    toast.success("Dates visa du voyage appliquées.");
+  };
+
   const documentTripId = app?.document_trip_id ?? null;
+  const canonicalVisaTripDates = visaTripDatesFromTrip(travelCtx.trip);
+  const expectedVisaStayLabel = canonicalVisaTripDates.japanStayDays ? `${canonicalVisaTripDates.japanStayDays} jours` : "";
+  const currentStayNumber = String(app?.intended_length_of_stay ?? "").match(/\d+/)?.[0] ?? "";
+  const visaDatesMismatch = Boolean(
+    travelCtx.trip?.id && (
+      (canonicalVisaTripDates.japanArrivalDate && app?.date_of_arrival && app.date_of_arrival !== canonicalVisaTripDates.japanArrivalDate) ||
+      (canonicalVisaTripDates.japanStayDays && currentStayNumber && Number(currentStayNumber) !== canonicalVisaTripDates.japanStayDays)
+    )
+  );
   const travelTripWarnings = [
     !selectedTravelTripId ? "Aucun voyage n'est sélectionné pour les documents de voyage." : null,
     !documentTripId && !bookingTripId ? "Aucun voyage n'est lié à la réservation de cette demande visa." : null,
     !travelCtx.trip?.id ? "Aucun voyage n'est sélectionné pour les documents de voyage." : null,
+    travelCtx.trip?.id && !canonicalVisaTripDates.japanStayDays ? "Le nombre de jours au Japon n'est pas renseigné sur ce voyage." : null,
+    visaDatesMismatch ? "Les dates visa ne correspondent pas aux dates configurées pour ce voyage." : null,
   ].filter(Boolean) as string[];
 
   const confirmationWarnings = [
@@ -641,6 +685,88 @@ export default function VisaApplicationDetail() {
       downloadBlob(bytes, `${app.reference}-${suffix}.pdf`);
     } catch (e: any) { toast.error(e.message ?? "Erreur PDF"); }
     finally { setBusy(false); }
+  };
+
+  const openVisaProgramV2 = () => {
+    if (!ensureTravelTripSelected()) return;
+    const draft = buildVisaProgramV2Draft(app ?? {}, travelCtx);
+    setVisaProgramV2Draft(draft);
+    setVisaProgramV2Open(true);
+  };
+
+  const updateVisaProgramV2Draft = (patch: Partial<VisaProgramV2Draft>) => {
+    setVisaProgramV2Draft((current) => current ? { ...current, ...patch } : current);
+  };
+
+  const updateVisaProgramV2Row = (index: number, field: keyof VisaProgramV2Draft["rows"][number], value: string) => {
+    setVisaProgramV2Draft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        rows: current.rows.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row),
+      };
+    });
+  };
+
+  const currentVisaProgramV2Errors = visaProgramV2Draft
+    ? validateVisaProgramV2Draft(visaProgramV2Draft, app ?? {}, travelCtx)
+    : [];
+
+  const generateVisaProgramV2Bytes = async () => {
+    if (!visaProgramV2Draft) throw new Error("Programme visa V2 non préparé.");
+    return generateVisaProgramV2Pdf(visaProgramV2Draft, app ?? {}, travelCtx);
+  };
+
+  const downloadVisaProgramV2 = async () => {
+    if (!app || !visaProgramV2Draft) return;
+    const errors = validateVisaProgramV2Draft(visaProgramV2Draft, app, travelCtx);
+    if (errors.length) return toast.error(errors[0]);
+    setBusy(true);
+    try {
+      const bytes = await generateVisaProgramV2Bytes();
+      downloadBlob(bytes, sanitizeVisaProgramV2Filename(app, travelCtx));
+      toast.success("Programme visa V2 généré");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erreur génération Programme visa V2");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveVisaProgramV2Document = async () => {
+    if (!app?.id || !app?.user_id || !visaProgramV2Draft) {
+      return toast.error("Dossier visa ou utilisateur introuvable.");
+    }
+    const errors = validateVisaProgramV2Draft(visaProgramV2Draft, app, travelCtx);
+    if (errors.length) return toast.error(errors[0]);
+    setBusy(true);
+    try {
+      const bytes = await generateVisaProgramV2Bytes();
+      const filename = sanitizeVisaProgramV2Filename(app, travelCtx);
+      const path = `${app.user_id}/${app.id}/generated-program-v2/${Date.now()}-${filename}`;
+      const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)], { type: "application/pdf" });
+      const upload = await supabase.storage.from("visa-docs").upload(path, blob, {
+        contentType: "application/pdf",
+        upsert: false,
+      });
+      if (upload.error) throw upload.error;
+      const insert = await supabase.from("visa_documents").insert({
+        application_id: app.id,
+        user_id: app.user_id,
+        doc_type: "other",
+        storage_path: path,
+        file_name: filename,
+        mime_type: "application/pdf",
+        size_bytes: bytes.byteLength,
+      }).select("*").single();
+      if (insert.error) throw insert.error;
+      setDocs((current) => [insert.data, ...current]);
+      toast.success("Programme visa V2 enregistré dans le dossier");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erreur enregistrement Programme visa V2");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const generateProcuration = async () => {
@@ -989,6 +1115,22 @@ export default function VisaApplicationDetail() {
                 </SelectContent>
               </Select>
             </div>
+            {travelCtx.trip?.id && (
+              <div className="my-4 rounded-lg border border-border bg-background p-3">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Dates visa selon le voyage</p>
+                <Row label="Voyage" value={[travelCtx.trip.title, travelCtx.trip.season].filter(Boolean).join(" · ")} />
+                <Row label="Départ du voyage" value={formatVisaDate(travelCtx.trip.start_date)} />
+                <Row label="Arrivée au Japon" value={formatVisaDate(canonicalVisaTripDates.japanArrivalDate)} />
+                <Row label="Départ du Japon" value={formatVisaDate(canonicalVisaTripDates.japanDepartureDate)} />
+                <Row label="Fin du voyage" value={formatVisaDate(travelCtx.trip.end_date)} />
+                <Row label="Séjour au Japon" value={expectedVisaStayLabel} />
+                {visaDatesMismatch && (
+                  <Button size="sm" variant="outline" className="mt-3 min-h-10" onClick={applyTripVisaDates} disabled={busy}>
+                    Appliquer les dates du voyage
+                  </Button>
+                )}
+              </div>
+            )}
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-xs text-muted-foreground">Arrivée Japon</label>
@@ -1130,6 +1272,13 @@ export default function VisaApplicationDetail() {
                 </Button>
               </div>
             ))}
+            <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50/70 p-3">
+              <p className="text-sm font-semibold text-orange-950">Programme visa V2 – Format Ambassade du Japon</p>
+              <p className="mt-1 text-xs text-orange-900/80">Nouveau document distinct du programme visa actuel. Préparation éditable avant génération.</p>
+              <Button variant="outline" size="sm" className="mt-3 w-full min-h-11 justify-start bg-white" onClick={openVisaProgramV2} disabled={busy}>
+                <Eye className="w-4 h-4" /> Préparer le Programme visa V2
+              </Button>
+            </div>
             <Separator className="my-3" />
             <Button size="sm" className="w-full min-h-11" onClick={downloadAll} disabled={busy}>
               <Package className="w-4 h-4" /> Tout télécharger (ZIP)
@@ -1184,7 +1333,7 @@ export default function VisaApplicationDetail() {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm truncate">{d.file_name}</p>
                     <p className="text-xs text-muted-foreground capitalize">
-                      {isVisaChecklistDocument(d) ? "Liste des documents · générée" : isVisaProcurationDocument(d) ? "Procuration · à signer / à recevoir" : d.doc_type}
+                      {isVisaProgramV2Document(d) ? "Programme visa V2 · Format Ambassade du Japon" : isVisaChecklistDocument(d) ? "Liste des documents · générée" : isVisaProcurationDocument(d) ? "Procuration · à signer / à recevoir" : d.doc_type}
                     </p>
                   </div>
                   <Download className="w-4 h-4 text-muted-foreground" />
@@ -1224,6 +1373,107 @@ export default function VisaApplicationDetail() {
           </Card>
         </div>
       </div>
+
+      <Dialog open={visaProgramV2Open} onOpenChange={setVisaProgramV2Open}>
+        <DialogContent className="flex max-h-[92dvh] w-[96vw] max-w-6xl flex-col overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b p-4">
+            <DialogTitle>Programme visa V2 – Format Ambassade du Japon</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Préparez le tableau en anglais avant génération. Ces corrections s'appliquent uniquement au PDF généré.
+            </p>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto p-4">
+            {!visaProgramV2Draft ? (
+              <p className="text-sm text-muted-foreground">Chargement du brouillon…</p>
+            ) : (
+              <div className="space-y-4">
+                {currentVisaProgramV2Errors.length > 0 && (
+                  <Alert className="border-red-300 bg-red-50 text-red-950">
+                    <AlertTriangle className="h-4 w-4 text-red-700" />
+                    <AlertTitle>Informations obligatoires manquantes</AlertTitle>
+                    <AlertDescription>
+                      <ul className="mt-2 list-disc space-y-1 pl-4">
+                        {currentVisaProgramV2Errors.map((error) => (
+                          <li key={error}>{error}</li>
+                        ))}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground">Date d'établissement</label>
+                    <Input
+                      type="date"
+                      value={visaProgramV2Draft.generatedDate}
+                      onChange={(event) => updateVisaProgramV2Draft({ generatedDate: event.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">Length of stay in Japan</label>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={visaProgramV2Draft.lengthOfStayDays}
+                      onChange={(event) => updateVisaProgramV2Draft({ lengthOfStayDays: Number(event.target.value || 0) })}
+                    />
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/20 p-3 text-xs text-muted-foreground">
+                    <p className="font-semibold text-foreground">{travelCtx.trip?.title || "Voyage non sélectionné"}</p>
+                    <p>Arrivée Japon: {canonicalVisaTripDates.japanArrivalDate || "—"}</p>
+                    <p>Départ Japon: {canonicalVisaTripDates.japanDepartureDate || "—"}</p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <table className="min-w-[1120px] w-full border-collapse text-sm">
+                    <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs font-semibold text-slate-700">
+                      <tr>
+                        <th className="w-32 border-b border-r p-2">Date (y/m/d)</th>
+                        <th className="w-24 border-b border-r p-2">Day</th>
+                        <th className="w-[360px] border-b border-r p-2">Activity Plan</th>
+                        <th className="w-[240px] border-b border-r p-2">Contact</th>
+                        <th className="w-[260px] border-b p-2">Accommodation</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visaProgramV2Draft.rows.map((row, index) => (
+                        <tr key={`${row.day}-${index}`} className="align-top">
+                          <td className="border-r border-t p-2">
+                            <Input value={row.date} onChange={(event) => updateVisaProgramV2Row(index, "date", event.target.value)} />
+                          </td>
+                          <td className="border-r border-t p-2">
+                            <Input value={row.day} onChange={(event) => updateVisaProgramV2Row(index, "day", event.target.value)} />
+                          </td>
+                          <td className="border-r border-t p-2">
+                            <Textarea rows={4} value={row.activityPlan} onChange={(event) => updateVisaProgramV2Row(index, "activityPlan", event.target.value)} />
+                          </td>
+                          <td className="border-r border-t p-2">
+                            <Textarea rows={4} value={row.contact} onChange={(event) => updateVisaProgramV2Row(index, "contact", event.target.value)} />
+                          </td>
+                          <td className="border-t p-2">
+                            <Textarea rows={4} value={row.accommodation} onChange={(event) => updateVisaProgramV2Row(index, "accommodation", event.target.value)} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="shrink-0 border-t bg-white p-4">
+            <Button variant="outline" onClick={() => setVisaProgramV2Open(false)} disabled={busy}>Fermer</Button>
+            <Button variant="outline" onClick={downloadVisaProgramV2} disabled={busy || !visaProgramV2Draft || currentVisaProgramV2Errors.length > 0}>
+              <Download className="h-4 w-4" /> Télécharger PDF
+            </Button>
+            <Button onClick={saveVisaProgramV2Document} disabled={busy || !visaProgramV2Draft || currentVisaProgramV2Errors.length > 0}>
+              <Save className="h-4 w-4" /> Enregistrer dans le dossier
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PdfPreviewDialog
         open={preview === "visa"}

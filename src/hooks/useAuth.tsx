@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { canAccess, ModuleKey } from "@/admin/lib/permissions";
@@ -34,6 +34,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const loadedRolesForUser = useRef<string | null>(null);
 
   const loadRoles = async (uid: string) => {
     const { data } = await supabase.from("user_roles").select("role").eq("user_id", uid);
@@ -43,15 +44,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
-      setLoading(true);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.user) {
-        setTimeout(() => {
-          void loadRoles(s.user.id).finally(() => setLoading(false));
-        }, 0);
+        const shouldReloadRoles = loadedRolesForUser.current !== s.user.id || event === "SIGNED_IN" || event === "USER_UPDATED";
+        if (shouldReloadRoles) {
+          if (loadedRolesForUser.current !== s.user.id) setLoading(true);
+          setTimeout(() => {
+            void loadRoles(s.user.id).then(() => {
+              loadedRolesForUser.current = s.user.id;
+            }).finally(() => setLoading(false));
+          }, 0);
+        }
       } else {
+        loadedRolesForUser.current = null;
         setRoles([]);
         setLoading(false);
       }
@@ -59,7 +66,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     supabase.auth.getSession().then(async ({ data: { session: s } }) => {
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) await loadRoles(s.user.id);
+      if (s?.user) {
+        await loadRoles(s.user.id);
+        loadedRolesForUser.current = s.user.id;
+      }
       setLoading(false);
     });
     return () => subscription.unsubscribe();

@@ -98,9 +98,15 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
     num_children: Number(form.num_children || 0),
     total_amount_mad: Number(form.total_amount_mad || 0),
     paid_amount_mad: Number(form.paid_amount_mad || 0),
+    deposit_type: form.deposit_type === "percentage" ? "percentage" : "fixed",
+    deposit_value: Number(form.deposit_value || 0),
+    deposit_is_per_person: form.deposit_type === "percentage" ? false : form.deposit_is_per_person !== false,
     metadata: {
       ...bookingMetadata(booking),
       trip_unit_price_per_person_mad: Number(form.trip_unit_price_per_person_mad || 0),
+      deposit_type: form.deposit_type === "percentage" ? "percentage" : "fixed",
+      deposit_value: Number(form.deposit_value || 0),
+      deposit_is_per_person: form.deposit_type === "percentage" ? false : form.deposit_is_per_person !== false,
     },
   };
   const pricing = getBookingPricingBreakdown({
@@ -172,6 +178,11 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
       updates.num_children = Number(updates.num_children) || 0;
       updates.total_amount_mad = Number(updates.total_amount_mad) || 0;
       updates.paid_amount_mad = Number(updates.paid_amount_mad) || 0;
+      updates.deposit_type = updates.deposit_type === "percentage" ? "percentage" : "fixed";
+      updates.deposit_value = Number(updates.deposit_value || 0);
+      updates.deposit_is_per_person = updates.deposit_type === "percentage" ? false : updates.deposit_is_per_person !== false;
+      updates.deposit_amount = commercialTotals.depositAmount;
+      updates.deposit_amount_mad = commercialTotals.depositAmount;
       const nextTripUnitPrice = Number(updates.trip_unit_price_per_person_mad) || 0;
       delete updates.trip_unit_price_per_person_mad;
       if (!updates.trip_id) updates.trip_id = null;
@@ -198,6 +209,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         deposit_value: Number(updates.deposit_value || 0),
         deposit_is_per_person: updates.deposit_type === "percentage" ? false : updates.deposit_is_per_person !== false,
         deposit_amount_calculated: commercialTotals.depositAmount,
+        deposit_amount_mad: commercialTotals.depositAmount,
         ...(tripPriceChanged
           ? {
               trip_price_manually_overridden: true,
@@ -206,9 +218,6 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
           : {}),
       };
       updates.metadata = nextMetadata;
-      delete updates.deposit_type;
-      delete updates.deposit_value;
-      delete updates.deposit_is_per_person;
 
       if (tripPriceChanged) {
         audits.push({
@@ -221,8 +230,14 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         });
       }
 
-      const { error: updErr } = await supabase.from("bookings").update(updates).eq("id", booking.id);
-      if (updErr) throw updErr;
+      const updateResult = await supabase.from("bookings").update(updates).eq("id", booking.id);
+      if (updateResult.error) {
+        const missingDepositColumns = /deposit_type|deposit_value|deposit_is_per_person|deposit_amount|deposit_amount_mad|schema cache|column/i.test(updateResult.error.message ?? "");
+        if (!missingDepositColumns) throw updateResult.error;
+        const { deposit_type, deposit_value, deposit_is_per_person, deposit_amount, deposit_amount_mad, ...fallbackUpdates } = updates;
+        const fallbackResult = await supabase.from("bookings").update(fallbackUpdates).eq("id", booking.id);
+        if (fallbackResult.error) throw fallbackResult.error;
+      }
 
       // Replace extras (simple strategy)
       await supabase.from("booking_extras").delete().eq("booking_id", booking.id);
@@ -390,7 +405,16 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
               <div className="mt-3 grid gap-2 rounded-lg border border-border bg-background/70 p-3 sm:grid-cols-3">
                 <div>
                   <Label className="text-xs">Mode acompte</Label>
-                  <Select value={form.deposit_type || "fixed"} onValueChange={(value) => setField("deposit_type", value)}>
+                  <Select
+                    value={form.deposit_type || "fixed"}
+                    onValueChange={(value) => {
+                      setForm((current: any) => ({
+                        ...current,
+                        deposit_type: value,
+                        deposit_is_per_person: value === "percentage" ? false : current.deposit_is_per_person !== false,
+                      }));
+                    }}
+                  >
                     <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="fixed">Montant fixe</SelectItem>

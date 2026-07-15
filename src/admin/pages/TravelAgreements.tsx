@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Download, Eye, FileSignature, Plus, RefreshCw, Save, Search, Send, Trash2 } from "lucide-react";
+import { CheckCircle2, Copy, Download, Eye, FileSignature, MessageSquare, Plus, RefreshCw, Save, Search, Send, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/admin/components/PageHeader";
 import { PdfPreviewDialog } from "@/admin/components/PdfPreviewDialog";
@@ -74,16 +74,142 @@ const mergeStandardSections = (sections?: TravelAgreementTemplateSection[]) => {
 const includedServicesFromTemplate = (sections: TravelAgreementTemplateSection[]) =>
   sections.find((section) => section.key === "included_services")?.body || DEFAULT_INCLUDED_SERVICES_TEXT;
 
+const stringifyFunctionValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value instanceof Error) return value.message;
+  if (typeof value === "object") {
+    const record = value as Record<string, any>;
+    const nested = record.message ?? record.error ?? record.details ?? record.detail ?? record.description;
+    if (nested && nested !== value) return stringifyFunctionValue(nested);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return Object.prototype.toString.call(value);
+    }
+  }
+  return String(value);
+};
+
+const cleanFunctionDetail = (value: unknown) =>
+  stringifyFunctionValue(value)
+    .replace(/(apikey|api_key|authorization|bearer|token|password|secret|service_role)[^,\s]*/gi, "$1:[masqué]")
+    .slice(0, 500);
+
+type FunctionErrorDetails = {
+  message: string;
+  code?: string;
+  status?: number;
+  details?: string;
+};
+
+async function extractFunctionErrorDetails(data: any, error: any): Promise<FunctionErrorDetails | null> {
+  let payload = data && typeof data === "object" ? data : null;
+  const response = error?.context;
+  if (!payload && response && typeof response.clone === "function") {
+    try {
+      payload = await response.clone().json();
+    } catch {
+      try {
+        payload = { detail: await response.clone().text() };
+      } catch {
+        payload = null;
+      }
+    }
+  }
+  if (!error && payload?.ok !== false) return null;
+  const status = response?.status ?? payload?.status;
+  const code = stringifyFunctionValue(payload?.code || error?.code || error?.name);
+  const main = cleanFunctionDetail(
+    payload?.message ??
+    payload?.error ??
+    error?.message ??
+    "Envoi impossible."
+  );
+  const detail = cleanFunctionDetail(payload?.details ?? payload?.detail ?? error?.details);
+  return { message: main, code: code || undefined, status, details: detail || undefined };
+}
+
+const formatFunctionError = (details: FunctionErrorDetails) =>
+  [
+    details.message,
+    details.code ? `Code: ${details.code}` : null,
+    details.status ? `HTTP: ${details.status}` : null,
+    details.details ? `Détail: ${details.details}` : null,
+  ].filter(Boolean).join(" · ");
+
+const shouldRunSendDebug = (details: FunctionErrorDetails) =>
+  !details.code ||
+  details.code === "travel_agreement_error" ||
+  details.code === "internal_unhandled_error" ||
+  details.code === "FunctionsHttpError";
+
+const summarizeSendDebug = (debug: any) => {
+  const firstError = Array.isArray(debug?.errors) ? debug.errors[0] : null;
+  if (firstError) {
+    return [
+      `Diagnostic: ${cleanFunctionDetail(firstError.step || "étape inconnue")}`,
+      cleanFunctionDetail(firstError.code),
+      cleanFunctionDetail(firstError.message),
+    ].filter(Boolean).join(" · ");
+  }
+  const missing = Array.isArray(debug?.missing) ? debug.missing.filter(Boolean) : [];
+  if (missing.length) return `Diagnostic: éléments manquants (${missing.join(", ")})`;
+  const warnings = Array.isArray(debug?.warnings) ? debug.warnings.filter(Boolean) : [];
+  if (warnings.length) return `Diagnostic: ${cleanFunctionDetail(warnings[0]?.message || warnings[0]?.code)}`;
+  return null;
+};
+
+async function debugAgreementSendRequirements(agreementId: string) {
+  const { data, error } = await supabase.functions.invoke("travel-agreement", {
+    body: { action: "debug_send_requirements", agreement_id: agreementId },
+  });
+  if (import.meta.env.DEV) {
+    console.info("[travel-agreements] debug_send_requirements", { agreement_id: agreementId, data, error });
+  }
+  const debugError = await extractFunctionErrorDetails(data, error);
+  if (debugError) {
+    return {
+      ok: false,
+      errors: [{
+        step: "debug_send_requirements",
+        code: debugError.code || "debug_send_requirements_failed",
+        message: formatFunctionError(debugError),
+      }],
+      missing: [],
+      warnings: [],
+    };
+  }
+  return data;
+}
+
+async function buildAgreementSendFailureMessage(data: any, error: any, agreementId: string) {
+  const details = await extractFunctionErrorDetails(data, error);
+  if (!details) return null;
+  let message = formatFunctionError(details);
+  if (shouldRunSendDebug(details)) {
+    const debug = await debugAgreementSendRequirements(agreementId);
+    const summary = summarizeSendDebug(debug);
+    if (summary) message = `${message} · ${summary}`;
+  }
+  return message;
+}
+
 export default function TravelAgreements() {
   const [agreements, setAgreements] = useState<TravelAgreement[]>([]);
   const [acceptances, setAcceptances] = useState<Record<string, TravelAgreementAcceptance | null>>({});
+  const [acceptanceHistory, setAcceptanceHistory] = useState<Record<string, TravelAgreementAcceptance[]>>({});
   const [bookings, setBookings] = useState<any[]>([]);
   const [query, setQuery] = useState("");
+  const [reviewFilter, setReviewFilter] = useState<"all" | "needs_review">("all");
   const [bookingSearch, setBookingSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [previewAgreement, setPreviewAgreement] = useState<TravelAgreement | null>(null);
+  const [reviewAgreementId, setReviewAgreementId] = useState<string | null>(null);
+  const realtimeReviewIdsRef = useRef<Set<string>>(new Set());
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [templateTitle, setTemplateTitle] = useState("Texte standard accord de voyage");
   const [standardSections, setStandardSections] = useState<TravelAgreementTemplateSection[]>(DEFAULT_STANDARD_AGREEMENT_SECTIONS);
@@ -139,14 +265,21 @@ export default function TravelAgreements() {
           .from("travel_agreement_acceptances")
           .select("*")
           .in("agreement_id", ids)
-          .order("accepted_at", { ascending: false });
-        const map: Record<string, TravelAgreementAcceptance | null> = {};
+          .order("created_at", { ascending: false });
+        const acceptedMap: Record<string, TravelAgreementAcceptance | null> = {};
+        const historyMap: Record<string, TravelAgreementAcceptance[]> = {};
         (acceptanceRows ?? []).forEach((acceptance: TravelAgreementAcceptance) => {
-          if (acceptance.agreement_id && !map[acceptance.agreement_id]) map[acceptance.agreement_id] = acceptance;
+          if (!acceptance.agreement_id) return;
+          historyMap[acceptance.agreement_id] = [...(historyMap[acceptance.agreement_id] ?? []), acceptance];
+          if (acceptance.status === "accepted" && !acceptedMap[acceptance.agreement_id]) {
+            acceptedMap[acceptance.agreement_id] = acceptance;
+          }
         });
-        setAcceptances(map);
+        setAcceptances(acceptedMap);
+        setAcceptanceHistory(historyMap);
       } else {
         setAcceptances({});
+        setAcceptanceHistory({});
       }
     } catch (error: any) {
       toast.error(error?.message ?? "Impossible de charger les accords.");
@@ -159,6 +292,32 @@ export default function TravelAgreements() {
     void load();
     void loadTemplate();
   }, [load, loadTemplate]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("admin-travel-agreement-review-requests")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "travel_agreement_acceptances",
+          filter: "status=eq.needs_review",
+        },
+        (payload) => {
+          const reviewId = String((payload.new as { id?: string } | null)?.id ?? "");
+          if (reviewId && realtimeReviewIdsRef.current.has(reviewId)) return;
+          if (reviewId) realtimeReviewIdsRef.current.add(reviewId);
+          toast.info("Nouvelle remarque reçue pour un accord de voyage");
+          void load();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [load]);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,19 +342,42 @@ export default function TravelAgreements() {
     };
   }, [draft.bookingId]);
 
+  const getAgreementReviews = useCallback((agreementId: string) =>
+    (acceptanceHistory[agreementId] ?? [])
+      .filter((acceptance) => acceptance.status === "needs_review" && Boolean(acceptance.message?.trim()))
+      .sort((a, b) => String(b.created_at ?? b.accepted_at).localeCompare(String(a.created_at ?? a.accepted_at))),
+  [acceptanceHistory]);
+
+  const reviewRequests = useMemo(
+    () => Object.values(acceptanceHistory)
+      .flat()
+      .filter((acceptance) => acceptance.status === "needs_review" && Boolean(acceptance.message?.trim())),
+    [acceptanceHistory]
+  );
+
+  const unreadReviewCount = useMemo(
+    () => reviewRequests.filter((acceptance) => !acceptance.admin_seen_at).length,
+    [reviewRequests]
+  );
+
   const filteredAgreements = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return agreements;
-    return agreements.filter((agreement) =>
-      [
-        agreement.client_name,
-        agreement.client_email,
-        agreement.booking_reference,
-        agreement.trip_title,
-        STATUS_LABELS[agreement.status],
-      ].some((value) => String(value ?? "").toLowerCase().includes(needle))
-    );
-  }, [agreements, query]);
+    const baseRows = reviewFilter === "needs_review"
+      ? agreements.filter((agreement) => getAgreementReviews(agreement.id).length > 0)
+      : agreements;
+    if (!needle) return baseRows;
+    return baseRows.filter((agreement) => {
+      const reviews = getAgreementReviews(agreement.id);
+      return [
+          agreement.client_name,
+          agreement.client_email,
+          agreement.booking_reference,
+          agreement.trip_title,
+          STATUS_LABELS[agreement.status],
+          reviews[0]?.message,
+        ].some((value) => String(value ?? "").toLowerCase().includes(needle));
+    });
+  }, [agreements, getAgreementReviews, query, reviewFilter]);
 
   const filteredBookings = useMemo(() => {
     const needle = bookingSearch.trim().toLowerCase();
@@ -289,10 +471,13 @@ export default function TravelAgreements() {
       if (error) throw error;
 
       if (sendAfterCreate) {
+        if (!inserted?.id) throw new Error("Impossible d’envoyer : identifiant de l’accord manquant.");
+        if (import.meta.env.DEV) console.info("[travel-agreements] send", { action: "send", agreement_id: inserted.id });
         const { data, error: sendError } = await supabase.functions.invoke("travel-agreement", {
           body: { action: "send", agreement_id: inserted.id },
         });
-        if (sendError || data?.ok === false) throw new Error(data?.error || sendError?.message || "Envoi impossible");
+        const detailedError = await buildAgreementSendFailureMessage(data, sendError, inserted.id);
+        if (detailedError) throw new Error(detailedError);
         trackEvent("travel_agreement_email_sent", { status: "sent" });
         toast.success("Accord créé et envoyé au client.");
       } else {
@@ -360,12 +545,18 @@ export default function TravelAgreements() {
   };
 
   const sendAgreement = async (agreement: TravelAgreement) => {
+    if (!agreement?.id) {
+      toast.error("Impossible d’envoyer : identifiant de l’accord manquant.");
+      return;
+    }
     setBusyId(agreement.id);
     try {
+      if (import.meta.env.DEV) console.info("[travel-agreements] send", { action: "send", agreement_id: agreement.id });
       const { data, error } = await supabase.functions.invoke("travel-agreement", {
         body: { action: "send", agreement_id: agreement.id },
       });
-      if (error || data?.ok === false) throw new Error(data?.error || error?.message || "Envoi impossible");
+      const detailedError = await buildAgreementSendFailureMessage(data, error, agreement.id);
+      if (detailedError) throw new Error(detailedError);
       trackEvent("travel_agreement_email_sent", { status: data.agreement?.status || "sent" });
       toast.success("Accord envoyé au client.");
       await load();
@@ -382,6 +573,50 @@ export default function TravelAgreements() {
       acceptance: acceptances[agreement.id] ?? null,
     });
     downloadTravelAgreementPdf(bytes, filenameFor(agreement));
+  };
+
+  const reviewAgreement = reviewAgreementId ? agreements.find((agreement) => agreement.id === reviewAgreementId) ?? null : null;
+  const reviewHistory = reviewAgreement ? getAgreementReviews(reviewAgreement.id) : [];
+  const unreadReviewIds = reviewHistory
+    .filter((review) => review.id && !review.admin_seen_at)
+    .map((review) => review.id as string);
+
+  const copyReviewHistory = async () => {
+    if (!reviewAgreement || reviewHistory.length === 0) return;
+    const text = reviewHistory
+      .map((review, index) => [
+        `Remarque ${index + 1}`,
+        `Date : ${fmtDateTime(review.created_at ?? review.accepted_at)}`,
+        `Client : ${review.typed_name || reviewAgreement.client_name || "Client"}`,
+        `Email : ${review.client_email || reviewAgreement.client_email || "Email manquant"}`,
+        "",
+        review.message?.trim() || "Remarque vide",
+      ].join("\n"))
+      .join("\n\n---\n\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Remarque copiée.");
+    } catch {
+      toast.error("Impossible de copier la remarque.");
+    }
+  };
+
+  const markReviewsAsRead = async () => {
+    if (!reviewAgreement || unreadReviewIds.length === 0) return;
+    setBusyId(`review-${reviewAgreement.id}`);
+    try {
+      const { error } = await db
+        .from("travel_agreement_acceptances")
+        .update({ admin_seen_at: new Date().toISOString() })
+        .in("id", unreadReviewIds);
+      if (error) throw error;
+      toast.success("Remarque marquée comme lue.");
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Impossible de marquer la remarque comme lue.");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -404,10 +639,32 @@ export default function TravelAgreements() {
 
         <TabsContent value="agreements" className="space-y-5">
           <Card>
-            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+            <CardContent className="flex flex-col gap-3 p-4 xl:flex-row xl:items-center">
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input className="pl-9" placeholder="Rechercher client, référence, voyage..." value={query} onChange={(event) => setQuery(event.target.value)} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={reviewFilter === "all" ? "default" : "outline"}
+                  onClick={() => setReviewFilter("all")}
+                >
+                  Tous les accords
+                </Button>
+                <Button
+                  variant={reviewFilter === "needs_review" ? "default" : "outline"}
+                  className={reviewFilter === "needs_review" ? "" : "border-orange-200 text-orange-700 hover:bg-orange-50"}
+                  onClick={() => setReviewFilter("needs_review")}
+                >
+                  <MessageSquare className="h-4 w-4" /> Révisions demandées
+                </Button>
+              </div>
+              <div className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+                unreadReviewCount > 0
+                  ? "border-orange-200 bg-orange-50 text-orange-800"
+                  : "border-slate-200 bg-slate-50 text-slate-600"
+              }`}>
+                Révisions demandées : {unreadReviewCount}
               </div>
               <Button variant="outline" onClick={load} disabled={loading}>
                 <RefreshCw className="h-4 w-4" /> Actualiser
@@ -430,6 +687,9 @@ export default function TravelAgreements() {
             ) : (
               filteredAgreements.map((agreement) => {
                 const acceptance = acceptances[agreement.id];
+                const reviews = getAgreementReviews(agreement.id);
+                const latestReview = reviews[0];
+                const hasUnreadReview = reviews.some((review) => !review.admin_seen_at);
                 return (
                   <div key={agreement.id} className="grid gap-3 border-b px-4 py-4 last:border-b-0 lg:grid-cols-[1.25fr_1.15fr_.8fr_1fr_auto] lg:items-center">
                     <div className="min-w-0">
@@ -451,16 +711,31 @@ export default function TravelAgreements() {
                       {agreement.sent_at && <p>Envoyé : {fmtDateTime(agreement.sent_at)}</p>}
                       {agreement.opened_at && <p>Ouvert : {fmtDateTime(agreement.opened_at)}</p>}
                       {acceptance?.accepted_at && <p>Accepté : {fmtDateTime(acceptance.accepted_at)}</p>}
+                      {latestReview && (
+                        <p className={hasUnreadReview ? "font-medium text-orange-700" : "text-muted-foreground"}>
+                          Révision : {fmtDateTime(latestReview.created_at ?? latestReview.accepted_at)}
+                        </p>
+                      )}
                       {!agreement.sent_at && <p>Non envoyé</p>}
+                      {reviews.length > 0 && (
+                        <Badge variant="outline" className={hasUnreadReview ? "mt-1 border-orange-200 bg-orange-50 text-orange-700" : "mt-1 border-slate-200 bg-slate-50 text-slate-600"}>
+                          Révision demandée{reviews.length > 1 ? ` · ${reviews.length}` : ""}
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                      {reviews.length > 0 && (
+                        <Button size="sm" variant="outline" className="border-orange-200 text-orange-700 hover:bg-orange-50" onClick={() => setReviewAgreementId(agreement.id)}>
+                          <MessageSquare className="h-4 w-4" /> Voir la remarque
+                        </Button>
+                      )}
                       <Button size="sm" variant="outline" onClick={() => setPreviewAgreement(agreement)}>
                         <Eye className="h-4 w-4" /> Aperçu
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => void downloadAgreement(agreement)}>
                         <Download className="h-4 w-4" /> PDF
                       </Button>
-                      <Button size="sm" onClick={() => void sendAgreement(agreement)} disabled={busyId === agreement.id || !agreement.client_email || agreement.status === "accepted"}>
+                      <Button size="sm" onClick={() => void sendAgreement(agreement)} disabled={busyId === agreement.id || agreement.status === "accepted"}>
                         <Send className="h-4 w-4" /> Envoyer
                       </Button>
                       <Button
@@ -607,6 +882,85 @@ export default function TravelAgreements() {
             </Button>
             <Button onClick={() => void createAgreement(true)} disabled={busyId === "create-send" || !draft.bookingId || !draftContent?.summary.client_email}>
               <Send className="h-4 w-4" /> Envoyer au client
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(reviewAgreement)} onOpenChange={(open) => !open && setReviewAgreementId(null)}>
+        <DialogContent className="flex max-h-[90dvh] w-[95vw] max-w-3xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b px-6 py-4 pr-12">
+            <DialogTitle>Remarque client sur l’accord de voyage</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5 pr-3 sm:pr-6">
+            {reviewAgreement ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <ReadOnlyBlock label="Client" value={reviewAgreement.client_name || "Client à confirmer"} />
+                  <ReadOnlyBlock label="Email" value={reviewAgreement.client_email || "Email manquant"} />
+                  <ReadOnlyBlock label="Réservation" value={reviewAgreement.booking_reference || "Référence manquante"} />
+                  <ReadOnlyBlock label="Voyage" value={reviewAgreement.trip_title || "Voyage à confirmer"} />
+                  <ReadOnlyBlock label="Identifiant accord" value={reviewAgreement.id} />
+                  <ReadOnlyBlock label="Statut accord" value={STATUS_LABELS[reviewAgreement.status]} />
+                </div>
+
+                {reviewHistory.length === 0 ? (
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+                    Aucune remarque de révision n’est associée à cet accord.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                        Historique des remarques
+                      </p>
+                      <Badge variant="outline" className={unreadReviewIds.length ? "border-orange-200 bg-orange-50 text-orange-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}>
+                        {unreadReviewIds.length ? `${unreadReviewIds.length} non lue(s)` : "Tout est lu"}
+                      </Badge>
+                    </div>
+                    {reviewHistory.map((review) => (
+                      <div key={review.id ?? `${review.agreement_id}-${review.accepted_at}`} className={`rounded-lg border p-4 ${review.admin_seen_at ? "bg-background" : "border-orange-200 bg-orange-50/60"}`}>
+                        <div className="mb-3 flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="font-semibold">{review.typed_name || reviewAgreement.client_name || "Client"}</p>
+                            <p className="text-muted-foreground">{review.client_email || reviewAgreement.client_email || "Email manquant"}</p>
+                          </div>
+                          <div className="text-left text-xs text-muted-foreground sm:text-right">
+                            <p>{fmtDateTime(review.created_at ?? review.accepted_at)}</p>
+                            {review.admin_seen_at ? (
+                              <p>Lu le {fmtDateTime(review.admin_seen_at)}</p>
+                            ) : (
+                              <p className="font-medium text-orange-700">Non lue</p>
+                            )}
+                          </div>
+                        </div>
+                        <p className="whitespace-pre-wrap rounded-md bg-background/80 p-3 text-sm leading-6">
+                          {review.message?.trim() || "Remarque vide"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Chargement de la remarque…</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2 border-t bg-background px-6 py-4 sm:gap-2">
+            <Button variant="outline" onClick={() => void copyReviewHistory()} disabled={!reviewAgreement || reviewHistory.length === 0}>
+              <Copy className="h-4 w-4" /> Copier la remarque
+            </Button>
+            {reviewAgreement?.booking_id ? (
+              <Button variant="outline" asChild>
+                <Link to={`/admin/bookings/${reviewAgreement.booking_id}`}>
+                  Ouvrir le dossier
+                </Link>
+              </Button>
+            ) : (
+              <Button variant="outline" disabled>Ouvrir le dossier</Button>
+            )}
+            <Button onClick={() => void markReviewsAsRead()} disabled={!reviewAgreement || unreadReviewIds.length === 0 || busyId === `review-${reviewAgreement?.id}`}>
+              <CheckCircle2 className="h-4 w-4" /> Marquer comme lue
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -2,7 +2,7 @@ import { memo, useCallback, useState, useMemo, useEffect, useRef, type ChangeEve
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, ArrowRight, CalendarDays, Check, Clock3, Loader2, MessageCircle, Minus, Plus, PhoneCall, Plane, Hotel, Users, BedDouble, Gift, Sparkles, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, Check, Clock3, Loader2, MessageCircle, Minus, Plus, PhoneCall, Plane, Hotel, Users, BedDouble, Sparkles, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -42,7 +42,7 @@ type TripRow = {
 const fmt = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n)) + " MAD";
 
 const WHATSAPP_FALLBACK = "212661800008";
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 3;
 
 const Booking = () => {
   const { t } = useTranslation();
@@ -58,9 +58,14 @@ const Booking = () => {
   const [children, setChildren] = useState(0);
   const [room, setRoom] = useState<RoomKey>("double");
   const [extras, setExtras] = useState<Record<string, number>>({});
-  const { extras: extrasList } = useExtras({ enabled: step >= 3 });
   const [info, setInfo] = useState({ name: "", email: "", phone: "", city: "", notes: "" });
   const [done, setDone] = useState(false);
+  const { extras: extrasList, loading: extrasLoading } = useExtras({ enabled: done });
+  const [createdBookingId, setCreatedBookingId] = useState<string | null>(null);
+  const [postBookingExtrasOpen, setPostBookingExtrasOpen] = useState(false);
+  const [postBookingExtrasConfirmed, setPostBookingExtrasConfirmed] = useState(false);
+  const [postBookingExtrasSkipped, setPostBookingExtrasSkipped] = useState(false);
+  const [savingPostBookingExtras, setSavingPostBookingExtras] = useState(false);
   const [returning, setReturning] = useState<{ trips: number; tier: string; reward?: string } | null>(null);
   const { ready: captchaReady, executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha({ active: step >= TOTAL_STEPS });
   const [submitting, setSubmitting] = useState(false);
@@ -161,8 +166,8 @@ const Booking = () => {
     // Child (3-11): adult price minus a flat 3000 MAD discount
     const childPrice = adultPrice - CHILD_DISCOUNT_MAD;
     const peopleTotal = adultPrice * adults + childPrice * children;
-    const extrasTotal = extrasList.reduce((s, e) => s + (extras[e.id] || 0) * e.price_mad, 0);
-    const total = peopleTotal + extrasTotal;
+    const extrasTotal = extrasList.reduce((s, e) => s + Math.max(0, extras[e.id] || 0) * e.price_mad, 0);
+    const total = peopleTotal;
     const pax = adults + children;
     const deposit = pax * 25000;
     return { adultPrice, childPrice, peopleTotal, extrasTotal, total, deposit };
@@ -286,17 +291,6 @@ const Booking = () => {
         source: "website",
       });
       if (error) throw error;
-      // Add chosen extras (priced from admin source of truth)
-      const chosenExtras = extrasList.filter((e) => extras[e.id] > 0);
-      if (chosenExtras.length) {
-        await supabase.from("booking_extras").insert(chosenExtras.map((e) => ({
-          booking_id: newBookingId,
-          extra_id: e.id,
-          name_snapshot: e.name,
-          qty: extras[e.id],
-          unit_price_mad: e.price_mad,
-        })));
-      }
       const { data: fullBookingData, error: fullBookingError } = await supabase
         .from("bookings")
         .select("*, clients(*), trips(*), booking_extras(*)")
@@ -318,9 +312,15 @@ const Booking = () => {
         source: "public_site",
         trip_id: tripMeta?.id ?? null,
         travelers_count: adults + children,
-        extras_count: chosenExtras.length,
+        extras_count: 0,
       });
+      setCreatedBookingId(newBookingId);
+      setExtras({});
+      setPostBookingExtrasOpen(false);
+      setPostBookingExtrasConfirmed(false);
+      setPostBookingExtrasSkipped(false);
       setDone(true);
+      trackEvent("booking_success_extras_shown", { trip_id: tripMeta?.id ?? null });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
       toast.error(e.message ?? "Erreur lors de l'envoi");
@@ -329,15 +329,252 @@ const Booking = () => {
     }
   };
 
+  const selectedPostBookingExtras = useMemo(
+    () => extrasList.filter((extra) => Math.max(0, extras[extra.id] || 0) > 0),
+    [extras, extrasList],
+  );
+
+  const confirmPostBookingExtras = async () => {
+    if (!createdBookingId || savingPostBookingExtras || postBookingExtrasConfirmed) return;
+    const chosenExtras = selectedPostBookingExtras;
+    if (!chosenExtras.length) {
+      toast.info("Sélectionnez au moins une expérience, ou cliquez sur « Je le ferai plus tard ».");
+      return;
+    }
+    setSavingPostBookingExtras(true);
+    try {
+      const extrasTotal = chosenExtras.reduce((sum, extra) => sum + Math.max(0, extras[extra.id] || 0) * extra.price_mad, 0);
+      const { error } = await supabase.from("booking_extras").insert(chosenExtras.map((extra) => ({
+        booking_id: createdBookingId,
+        extra_id: extra.id,
+        name_snapshot: extra.name,
+        qty: Math.max(0, extras[extra.id] || 0),
+        unit_price_mad: extra.price_mad,
+      })));
+      if (error) throw error;
+      const { error: updateError } = await supabase
+        .from("bookings")
+        .update({ total_amount_mad: Math.round(pricing.peopleTotal + extrasTotal) })
+        .eq("id", createdBookingId);
+      if (updateError) throw updateError;
+      setPostBookingExtrasConfirmed(true);
+      trackEvent("post_booking_extras_confirmed", {
+        trip_id: selectedTrip?.id ?? null,
+        extras_count: chosenExtras.length,
+        extras_total: Math.round(extrasTotal),
+      });
+      toast.success("Expériences ajoutées à votre réservation.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Impossible d'ajouter ces expériences.");
+    } finally {
+      setSavingPostBookingExtras(false);
+    }
+  };
+
   if (done) {
+    const postBookingExtrasTotal = selectedPostBookingExtras.reduce(
+      (sum, extra) => sum + Math.max(0, extras[extra.id] || 0) * extra.price_mad,
+      0,
+    );
     return (
-      <div className="container-app py-32 max-w-2xl text-center">
-        <div className="w-16 h-16 mx-auto mb-8 rounded-2xl bg-gradient-vermillion text-accent-foreground flex items-center justify-center font-display text-2xl shadow-cta">✓</div>
-        <h1 className="font-display text-5xl md:text-6xl mb-6">{t("booking.success.title")}</h1>
-        <p className="text-foreground/70 text-lg leading-relaxed mb-10">{t("booking.success.body")}</p>
-        <button type="button" onClick={() => { setDone(false); setStep(1); }} className="inline-flex items-center gap-2 border border-foreground px-6 py-3 hover:bg-foreground hover:text-background transition-all">
-          {t("booking.success.reset")}
-        </button>
+      <div className="container-app py-24 md:py-32">
+        <Seo
+          title="Réservation enregistrée — LeJapon.ma"
+          description="Votre réservation LeJapon.ma est enregistrée. Vous pouvez ajouter des expériences optionnelles après réservation."
+          canonical="/reserver"
+        />
+        <div className="mx-auto max-w-4xl">
+          <div className="mx-auto mb-12 max-w-2xl text-center">
+            <div className="w-16 h-16 mx-auto mb-8 rounded-2xl bg-gradient-vermillion text-accent-foreground flex items-center justify-center font-display text-2xl shadow-cta">✓</div>
+            <h1 className="font-display text-4xl md:text-6xl mb-6">Votre réservation est enregistrée 🎉</h1>
+            <p className="text-foreground/70 text-lg leading-relaxed">
+              Votre place pour le Japon est maintenant réservée. Notre équipe vous recontacte sous 24 heures pour confirmer les derniers détails.
+            </p>
+            <div className="mt-8 rounded-2xl border border-accent/20 bg-accent-soft/30 p-4 text-left sm:p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="font-display text-xl">Accéder à mon espace voyage</h2>
+                  <p className="mt-1 text-sm leading-6 text-foreground/70">
+                    Votre espace utilise le même email que celui indiqué dans cette réservation.
+                  </p>
+                </div>
+                <a
+                  href="/espace-voyage/login"
+                  className="inline-flex min-h-11 shrink-0 items-center justify-center border border-accent bg-accent px-5 py-3 text-sm font-semibold text-accent-foreground transition-all hover:bg-foreground"
+                >
+                  Accéder à mon espace voyage
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-background p-5 shadow-soft sm:p-8">
+            {postBookingExtrasSkipped ? (
+              <div className="mx-auto max-w-2xl text-center">
+                <p className="eyebrow mb-3 text-accent">C'est noté</p>
+                <h2 className="font-display mb-4 text-2xl md:text-3xl">Vous pourrez voir ces expériences plus tard avec notre équipe.</h2>
+                <p className="mb-8 text-foreground/70">
+                  Votre réservation reste bien enregistrée. Un conseiller vous contactera pour confirmer votre place et répondre à vos questions.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDone(false);
+                    setStep(minStep);
+                    setCreatedBookingId(null);
+                    setPostBookingExtrasSkipped(false);
+                  }}
+                  className="inline-flex min-h-11 items-center justify-center border border-foreground px-6 py-3 font-semibold transition-all hover:bg-foreground hover:text-background"
+                >
+                  {t("booking.success.reset")}
+                </button>
+              </div>
+            ) : !postBookingExtrasOpen ? (
+              <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
+                <div>
+                  <p className="eyebrow mb-3 text-accent">Étape facultative</p>
+                  <h2 className="font-display mb-4 text-2xl md:text-3xl">Personnalisez encore votre expérience au Japon</h2>
+                  <div className="space-y-3 text-sm leading-6 text-foreground/75 md:text-base">
+                    <p className="font-medium text-foreground">Votre voyage est déjà très riche.</p>
+                    <p>
+                      Votre programme comprend les villes, visites, transports et activités prévues au programme, ainsi que l'accompagnement et les guides.
+                    </p>
+                    <p>
+                      Les expériences ci-dessous sont entièrement optionnelles. Nous les avons sélectionnées pour ceux qui souhaitent vivre un moment encore plus particulier, selon leurs envies dans leurs journées libres.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-3">
+                  <button
+                    type="button"
+                    className="inline-flex min-h-12 items-center justify-center gap-2 bg-accent px-5 py-3 font-semibold text-accent-foreground transition-all hover:bg-foreground"
+                    onClick={() => {
+                      setPostBookingExtrasOpen(true);
+                      trackEvent("booking_success_extras_opened", { trip_id: selectedTrip?.id ?? null });
+                    }}
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Découvrir les expériences
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex min-h-12 items-center justify-center gap-2 border border-border px-5 py-3 font-semibold transition-all hover:border-accent hover:text-accent"
+                    onClick={() => {
+                      trackEvent("booking_success_extras_skipped", { trip_id: selectedTrip?.id ?? null });
+                      setPostBookingExtrasSkipped(true);
+                    }}
+                  >
+                    Je le ferai plus tard
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="mb-8">
+                  <p className="eyebrow mb-3 text-accent">100 % optionnel</p>
+                  <h2 className="font-display mb-3 text-2xl md:text-4xl">Personnalisez votre expérience</h2>
+                  <p className="max-w-2xl text-foreground/70">
+                    Des expériences spéciales, 100 % optionnelles.
+                  </p>
+                </div>
+
+                <div className="mb-6 rounded-xl border border-accent/30 bg-accent-soft/30 p-4 text-sm leading-6 text-foreground/80">
+                  Votre voyage est déjà très complet. Ces expériences ne sont pas nécessaires pour profiter pleinement du programme.
+                  Elles sont proposées uniquement pour vous permettre d'ajouter des moments particuliers selon vos envies.
+                </div>
+
+                <div className="mb-8 grid gap-4 md:grid-cols-2">
+                  <div className="rounded-xl border border-border bg-secondary/30 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Voyage réservé</p>
+                    <p className="mt-2 font-display text-2xl text-foreground">{fmt(pricing.peopleTotal)}</p>
+                  </div>
+                  <div className="rounded-xl border border-border bg-secondary/30 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Expériences optionnelles</p>
+                    <p className="mt-2 font-display text-2xl text-accent">{fmt(postBookingExtrasTotal)}</p>
+                  </div>
+                </div>
+
+                {extrasLoading ? (
+                  <div className="rounded-xl border border-border p-6 text-sm text-muted-foreground">Chargement des expériences…</div>
+                ) : extrasList.length === 0 ? (
+                  <div className="rounded-xl border border-border p-6 text-sm text-muted-foreground">Aucune expérience optionnelle active pour le moment.</div>
+                ) : (
+                  <div className="space-y-px overflow-hidden rounded-xl border border-border bg-border">
+                    {extrasList.map((extra) => {
+                      const qty = Math.max(0, extras[extra.id] || 0);
+                      return (
+                        <div key={extra.id} className="grid gap-4 bg-background p-4 sm:grid-cols-[96px_minmax(0,1fr)_120px] sm:items-center">
+                          <div className="h-24 overflow-hidden rounded-lg bg-secondary">
+                            {extra.image_url ? (
+                              <img src={extra.image_url} alt={extra.alt_text || extra.name} className="h-full w-full object-cover" loading="lazy" />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-muted-foreground">
+                                <Sparkles className="h-5 w-5" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-baseline justify-between gap-2">
+                              <h3 className="font-display text-lg leading-tight">{extra.name}</h3>
+                              <span className="text-sm font-semibold text-accent">{fmtExtraPrice(extra.price_mad)}</span>
+                            </div>
+                            {extra.description && <p className="mt-1 text-sm leading-6 text-foreground/65">{extra.description}</p>}
+                            {(extra.city || extra.category) && (
+                              <p className="mt-2 text-xs uppercase tracking-[0.14em] text-muted-foreground">{[extra.city, extra.category].filter(Boolean).join(" · ")}</p>
+                            )}
+                          </div>
+                          <div className="sm:justify-self-end">
+                            {postBookingExtrasConfirmed ? (
+                              <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-center text-xs font-semibold text-emerald-700">
+                                Confirmé x{qty}
+                              </div>
+                            ) : (
+                              <Counter
+                                mini
+                                value={qty}
+                                onChange={(value) => {
+                                  updateExtraQty(extra.id, value);
+                                  if (value > 0) {
+                                    trackEvent("post_booking_extra_selected", { trip_id: selectedTrip?.id ?? null, extra_id: extra.id });
+                                  }
+                                }}
+                                min={0}
+                              />
+                            )}
+                            {qty > 0 && <p className="mt-2 text-right text-xs text-muted-foreground">Total: {fmt(qty * extra.price_mad)}</p>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="mt-8 flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    type="button"
+                    className="inline-flex min-h-11 items-center justify-center border border-border px-5 py-3 text-sm font-semibold transition-all hover:border-accent hover:text-accent"
+                    onClick={() => {
+                      trackEvent("booking_success_extras_skipped", { trip_id: selectedTrip?.id ?? null, source: "extras_selection" });
+                      setPostBookingExtrasSkipped(true);
+                      setPostBookingExtrasOpen(false);
+                    }}
+                  >
+                    Je le ferai plus tard
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingPostBookingExtras || postBookingExtrasConfirmed || selectedPostBookingExtras.length === 0}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 bg-accent px-5 py-3 text-sm font-semibold text-accent-foreground transition-all hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={confirmPostBookingExtras}
+                  >
+                    {savingPostBookingExtras ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                    {postBookingExtrasConfirmed ? "Expériences ajoutées" : "Confirmer les expériences"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -451,7 +688,7 @@ const Booking = () => {
                 <div>
                   <h2 className="font-display mb-2 text-2xl">Votre formule en 1 minute</h2>
                   <p className="mb-6 text-sm text-foreground/70">
-                    Voyageurs, chambre et hôtel. Les options restent facultatives à l'étape suivante.
+                    Voyageurs, chambre et hôtel. Les expériences spéciales resteront facultatives après réservation.
                   </p>
 
                   {selectedTrip && (
@@ -520,44 +757,6 @@ const Booking = () => {
 
               {step === 3 && (
                 <div>
-                  <h2 className="font-display text-2xl mb-2">{t("booking.s4.title")}</h2>
-                  <p className="eyebrow mb-6">{t("booking.s4.optional")}</p>
-                  <div className="space-y-px bg-border">
-                    {extrasList.length === 0 && (
-                      <p className="bg-background p-4 text-sm text-foreground/60">Aucune activité disponible.</p>
-                    )}
-                    {extrasList.map((e) => (
-                      <div key={e.id} className="flex flex-col gap-3 bg-background p-4 sm:flex-row sm:items-start sm:gap-4 sm:p-5">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
-                            <h3 className="font-display min-w-0 break-words text-base leading-tight sm:text-lg">{e.name}</h3>
-                            <span className="text-xs text-accent sm:shrink-0 sm:whitespace-nowrap sm:text-sm">{fmtExtraPrice(e.price_mad)}</span>
-                          </div>
-                          {e.description && <p className="text-xs text-foreground/60 mt-1">{e.description}</p>}
-                          {(() => {
-                            const qty = extras[e.id] || 0;
-                            const travelers = adults + children;
-                            if (qty > 0 && travelers > 1 && qty < travelers) {
-                              return (
-                                <p className="text-xs text-accent/80 mt-2 italic">
-                                  Vous avez sélectionné {travelers} voyageurs. Êtes-vous sûr de la quantité choisie pour cette option&nbsp;?
-                                </p>
-                              );
-                            }
-                            return null;
-                          })()}
-                        </div>
-                        <div className="self-start pt-0.5 sm:shrink-0">
-                          <Counter mini value={extras[e.id] || 0} onChange={(v) => updateExtraQty(e.id, v)} min={0} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {step === 4 && (
-                <div>
                   <h2 className="font-display text-2xl mb-3">{t("booking.s5.title")}</h2>
                   <p className="mb-6 text-sm text-foreground/70">
                     Minimum requis: nom et email. Le téléphone aide notre conseiller à vous rappeler plus vite.
@@ -623,7 +822,6 @@ const Booking = () => {
                   <SummaryItem icon={<Hotel className="w-4 h-4" />} label="Hôtel Kyoto" value={hotels[hotel].name} />
                   <SummaryItem icon={<Users className="w-4 h-4" />} label={t("booking.summary.travelers")} value={`${adults} + ${children}`} />
                   <SummaryItem icon={<BedDouble className="w-4 h-4" />} label={t("booking.s3.room")} value={t(`booking.s3.${room}`)} />
-                  <SummaryItem icon={<Gift className="w-4 h-4" />} label={t("booking.summary.extras")} value={fmt(pricing.extrasTotal)} />
                 </ul>
 
                 <div className="relative my-7">

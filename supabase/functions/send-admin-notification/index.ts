@@ -12,6 +12,7 @@ type EventType =
   | "contact_client"
   | "booking_internal"
   | "booking_client"
+  | "client_portal_invitation"
   | "booking_created"
   | "agency_booking_internal"
   | "agency_fit_request"
@@ -973,6 +974,85 @@ LeJapon.ma / Moroccan Express Travel & Events`,
   }, payload);
 }
 
+function firstNameFrom(value: unknown) {
+  const first = String(value ?? "").trim().split(/\s+/).filter(Boolean)[0];
+  return first || "";
+}
+
+function publicClientLoginUrl() {
+  const base = (Deno.env.get("PUBLIC_SITE_URL") || Deno.env.get("SITE_URL") || "https://www.lejapon.ma").replace(/\/$/, "");
+  return `${base}/espace-voyage/login`;
+}
+
+async function clientPortalInvitationEmail(admin: any, bookingId: string): Promise<EmailPayload> {
+  if (!bookingId) throw new Error("missing_booking_id");
+  const { data: booking, error } = await admin
+    .from("bookings")
+    .select("id,reference,contact_name,contact_email,client_id,clients(full_name,email),trips(title,season)")
+    .eq("id", bookingId)
+    .maybeSingle();
+
+  if (error || !booking) {
+    console.error("[admin-email] client portal invitation booking fetch failed", {
+      booking_id: bookingId || null,
+      error_code: "booking_fetch_failed",
+      detail: error?.message ?? "Booking not found",
+    });
+    throw new Error(error?.message ?? "Booking not found");
+  }
+
+  const recipient = normalizeEmail(booking.contact_email || booking.clients?.email);
+  if (!recipient) throw new Error("missing_client_email");
+
+  const clientNameRaw = String(booking.contact_name || booking.clients?.full_name || "").trim();
+  const clientName = plainMissing(clientNameRaw);
+  const clientFirstName = firstNameFrom(clientNameRaw);
+  const tripLabel = [booking.trips?.season, booking.trips?.title].filter(Boolean).join(" — ") || "votre voyage";
+  const loginLink = publicClientLoginUrl();
+  const fallbackHtml = emailShell(
+    "Votre espace voyage LeJapon.ma est prêt",
+    `Bonjour${clientFirstName ? ` ${plain(clientFirstName)}` : ""},\n\nVotre espace voyage est disponible pour votre réservation ${plainMissing(booking.reference)}.\n\nConnectez-vous avec l'email utilisé lors de votre réservation. Si vous n'avez pas encore de mot de passe, utilisez le bouton Créer mon mot de passe sur la page de connexion.`,
+    [
+      ["Référence", booking.reference],
+      ["Voyage", tripLabel],
+      ["Email de connexion", recipient],
+    ],
+    { label: "Accéder à mon espace voyage", href: loginLink },
+    "LeJapon.ma / Moroccan Express Travel & Events · info@lejapon.ma · +212 711 449 838",
+  );
+
+  const payload: EmailPayload = {
+    eventType: "client_portal_invitation",
+    recipient,
+    subject: `Votre espace voyage LeJapon.ma est prêt — ${plainMissing(booking.reference)}`,
+    html: fallbackHtml,
+    text: `Bonjour${clientFirstName ? ` ${clientFirstName}` : ""},
+
+Votre espace voyage LeJapon.ma est prêt pour votre réservation ${plainMissing(booking.reference)}.
+Voyage : ${tripLabel}
+
+Connectez-vous avec l'email utilisé lors de votre réservation.
+Si vous n'avez pas encore de mot de passe, cliquez sur "Créer mon mot de passe" sur la page de connexion.
+Si vous avez déjà un compte, ce même bouton vous permet de récupérer votre accès.
+
+Accès : ${loginLink}
+
+L'équipe LeJapon.ma`,
+    related_booking_id: booking.id,
+    metadata: { reference: booking.reference, template_key: "client_portal_invitation", login_link: loginLink },
+  };
+
+  return await applyEmailTemplate(admin, "client_portal_invitation", {
+    client_name: clientName,
+    client_first_name: clientFirstName || clientName,
+    booking_reference: plainMissing(booking.reference),
+    trip_title: tripLabel,
+    login_link: loginLink,
+    download_link: loginLink,
+    date: fmtDateOnly(new Date().toISOString()),
+  }, payload);
+}
+
 async function paymentEmail(admin: any, paymentId: string, paymentPayload?: any, bookingIdHint?: string): Promise<EmailPayload> {
   const { data: fetchedPayment, error } = paymentPayload
     ? { data: paymentPayload, error: null }
@@ -1555,6 +1635,7 @@ async function requireStaff(admin: any, req: Request) {
 function eventTypeFromBody(body: any): EventType {
   const type = String(body?.type ?? "");
   if (type === "booking" || type === "new_booking") return "booking_internal";
+  if (type === "client_portal_invitation") return "client_portal_invitation";
   if (type === "agency_booking") return "agency_booking_internal";
   if (type === "agency_fit_request") return "agency_fit_request";
   if (type === "agency_fit_quote_ready") return "agency_fit_quote_ready";
@@ -1565,10 +1646,10 @@ function eventTypeFromBody(body: any): EventType {
   if (type === "test") return "test";
   if (type === "test_template") return "test_template";
   if (type === "resend") return "resend_log";
-  if (["contact_internal", "contact_client", "booking_internal", "booking_client", "new_visa_request", "agency_fit_request", "agency_fit_quote_ready"].includes(type)) return type as EventType;
+  if (["contact_internal", "contact_client", "booking_internal", "booking_client", "client_portal_invitation", "new_visa_request", "agency_fit_request", "agency_fit_quote_ready"].includes(type)) return type as EventType;
 
   const eventType = String(body?.event_type ?? "");
-  if (["booking_created", "new_booking", "agency_booking_internal", "agency_fit_request", "agency_fit_quote_ready", "payment_recorded", "new_payment", "new_visa_request", "visa_request", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log"].includes(eventType)) {
+  if (["booking_created", "new_booking", "client_portal_invitation", "agency_booking_internal", "agency_fit_request", "agency_fit_quote_ready", "payment_recorded", "new_payment", "new_visa_request", "visa_request", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log"].includes(eventType)) {
     if (eventType === "new_booking") return "booking_created";
     if (eventType === "new_payment") return "payment_recorded";
     if (eventType === "visa_request") return "new_visa_request";
@@ -1623,6 +1704,10 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
     if (!fullBookingData && !bookingId) throw new Error("missing_booking_email_data");
     return [await bookingEmail(admin, bookingId, fullBookingData), await bookingClientEmail(admin, bookingId, fullBookingData)];
   }
+  if (type === "client_portal_invitation") {
+    await requireStaff(admin, req);
+    return [await clientPortalInvitationEmail(admin, String(payload.booking_id ?? body.booking_id ?? payload.id ?? ""))];
+  }
   if (type === "agency_booking") {
     return [await agencyBookingEmail(admin, String(body.payload?.request_id ?? body.payload?.id ?? body.request_id ?? ""))];
   }
@@ -1671,6 +1756,10 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
   if (eventType === "booking_created" || eventType === "new_booking") {
     const bookingId = String(body.booking_id ?? body.payload?.booking_id ?? "");
     return [await bookingEmail(admin, bookingId, body.fullBookingData), await bookingClientEmail(admin, bookingId, body.fullBookingData)];
+  }
+  if (eventType === "client_portal_invitation") {
+    await requireStaff(admin, req);
+    return [await clientPortalInvitationEmail(admin, String(body.booking_id ?? body.payload?.booking_id ?? ""))];
   }
   if (eventType === "agency_booking_internal") return [await agencyBookingEmail(admin, String(body.request_id ?? body.payload?.request_id ?? ""))];
   if (eventType === "agency_fit_request") return [await agencyFitRequestEmail(admin, String(body.request_id ?? body.payload?.request_id ?? body.payload?.id ?? ""))];
@@ -1742,9 +1831,9 @@ Deno.serve(async (req) => {
     const result = {
       ok: failed.length === 0,
       results,
-      log_ids: results.map((item) => item.log_id).filter(Boolean),
+      log_ids: results.map((item: any) => item?.log_id).filter(Boolean),
       error: failed.length ? "one_or_more_emails_failed" : undefined,
-      detail: failed.length ? failed.map((item) => item.detail || item.error).filter(Boolean).join(" | ") : undefined,
+      detail: failed.length ? failed.map((item: any) => item?.detail || item?.error).filter(Boolean).join(" | ") : undefined,
     };
     return new Response(JSON.stringify(result), {
       status: 200,

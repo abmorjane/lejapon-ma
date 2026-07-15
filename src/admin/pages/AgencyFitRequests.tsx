@@ -12,11 +12,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtDate, fmtDateTime, fmtMAD } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
+import { calculateDualCommissionSnapshot } from "@/agency/commissionEngine";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
 
 const statusLabels: Record<string, string> = {
+  draft: "Brouillon",
+  submitted: "Soumise",
+  under_review: "En analyse",
+  information_required: "Infos manquantes",
+  quote_in_progress: "Devis en préparation",
+  quoted: "Devis reçu",
+  revision_requested: "Révision demandée",
+  converted_to_booking: "Convertie en réservation",
+  cancelled: "Annulée",
   new: "Nouveau",
   in_progress: "En cours",
   missing_info: "Infos manquantes",
@@ -33,6 +43,24 @@ const requestColumns = `
   *,
   organizations:organization_id(id,display_name,legal_name,email)
 `;
+
+const isSchemaMissingError = (message = "") =>
+  /agency_fit_requests|agency_fit_request_messages|agency_fit_request_files|schema cache|could not find the table|relation .* does not exist/i.test(message);
+
+const getAdminFitErrorMessage = (error: any) => {
+  const message = String(error?.message ?? error ?? "");
+  if (isSchemaMissingError(message)) {
+    return `Schéma FIT incomplet dans Lovable/Supabase: ${message}`;
+  }
+  return message || "Erreur demandes FIT.";
+};
+
+const getCommissionAmounts = (request: any) => {
+  const gross = Number(request.gross_agency_commission_amount_mad || 0);
+  const agent = Number(request.sales_agent_commission_amount_mad || 0);
+  const net = request.agency_net_commission_amount_mad != null ? Number(request.agency_net_commission_amount_mad || 0) : Math.max(gross - agent, 0);
+  return { gross, agent, net };
+};
 
 export default function AdminAgencyFitRequests() {
   const { user } = useAuth();
@@ -53,7 +81,7 @@ export default function AdminAgencyFitRequests() {
       .select(requestColumns)
       .order("created_at", { ascending: false });
     if (error) {
-      toast.error(error.message);
+      toast.error(getAdminFitErrorMessage(error));
       setRows([]);
       setLoading(false);
       return;
@@ -77,6 +105,11 @@ export default function AdminAgencyFitRequests() {
           fit_quote_id: row.fit_quote_id ?? "",
           base_price_per_person: row.base_price_per_person ?? "",
           base_total_price: row.base_total_price ?? "",
+          eligible_sale_amount_mad: row.eligible_sale_amount_mad ?? row.final_client_price ?? row.base_total_price ?? "",
+          gross_agency_commission_type: row.gross_agency_commission_type ?? "percentage",
+          gross_agency_commission_value: row.gross_agency_commission_value ?? "",
+          sales_agent_commission_type: row.sales_agent_commission_type ?? "fixed_amount",
+          sales_agent_commission_value: row.sales_agent_commission_value ?? "",
           agency_visible_message: row.agency_visible_message ?? "",
           admin_internal_notes: row.admin_internal_notes ?? "",
           message: "",
@@ -108,20 +141,47 @@ export default function AdminAgencyFitRequests() {
     const draft = drafts[request.id] ?? {};
     setBusyId(request.id);
     const quoteReady = draft.quote_link && draft.quote_link !== request.quote_link;
+    const eligibleSaleAmount = Number(draft.eligible_sale_amount_mad || draft.base_total_price || request.final_client_price || request.base_total_price || 0);
+    const assignedSalesAgentId = draft.assigned_to || request.assigned_sales_agent_id || request.assigned_to || null;
+    const hasGrossCommission = draft.gross_agency_commission_value !== "" && draft.gross_agency_commission_value != null;
+    const commission = hasGrossCommission
+      ? calculateDualCommissionSnapshot({
+        eligibleSaleAmountMad: eligibleSaleAmount,
+        grossType: draft.gross_agency_commission_type,
+        grossValue: Number(draft.gross_agency_commission_value || 0),
+        salesAgentId: assignedSalesAgentId,
+        salesAgentType: draft.sales_agent_commission_type,
+        salesAgentValue: Number(draft.sales_agent_commission_value || 0),
+        ruleSource: "admin_fit_request",
+      })
+      : null;
     const patch = {
       status: draft.status,
       assigned_to: draft.assigned_to || null,
+      assigned_sales_agent_id: assignedSalesAgentId,
+      sales_agent_id: assignedSalesAgentId,
       quote_link: draft.quote_link || null,
       fit_quote_id: draft.fit_quote_id || null,
       base_price_per_person: draft.base_price_per_person === "" ? null : Number(draft.base_price_per_person),
       base_total_price: draft.base_total_price === "" ? null : Number(draft.base_total_price),
+      eligible_sale_amount_mad: eligibleSaleAmount || null,
+      gross_agency_commission_type: commission?.gross_agency_commission_type ?? null,
+      gross_agency_commission_value: commission?.gross_agency_commission_value ?? null,
+      gross_agency_commission_amount_mad: commission?.gross_agency_commission_amount_mad ?? null,
+      sales_agent_commission_type: commission?.sales_agent_commission_type ?? null,
+      sales_agent_commission_value: commission?.sales_agent_commission_value ?? null,
+      sales_agent_commission_amount_mad: commission?.sales_agent_commission_amount_mad ?? null,
+      agency_net_commission_amount_mad: commission?.agency_net_commission_amount_mad ?? null,
+      commission_snapshot: commission ?? {},
+      commission_calculated_at: commission ? new Date().toISOString() : null,
+      commission_rule_source: commission?.rule_source ?? null,
       agency_visible_message: draft.agency_visible_message || null,
       admin_internal_notes: draft.admin_internal_notes || null,
       quoted_at: quoteReady ? new Date().toISOString() : request.quoted_at,
     };
     const { error } = await db.from("agency_fit_requests").update(patch).eq("id", request.id);
     if (error) {
-      toast.error(error.message);
+      toast.error(getAdminFitErrorMessage(error));
       setBusyId(null);
       return;
     }
@@ -178,6 +238,7 @@ export default function AdminAgencyFitRequests() {
         <div className="grid gap-5">
           {visibleRows.map((request) => {
             const draft = drafts[request.id] ?? {};
+            const commission = getCommissionAmounts(request);
             return (
               <Card key={request.id} className="p-5">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -251,6 +312,35 @@ export default function AdminAgencyFitRequests() {
                       <div className="grid gap-3 sm:grid-cols-2">
                         <Field label="Prix base / personne"><Input type="number" value={draft.base_price_per_person ?? ""} onChange={(e) => updateDraft(request.id, "base_price_per_person", e.target.value)} /></Field>
                         <Field label="Prix base total"><Input type="number" value={draft.base_total_price ?? ""} onChange={(e) => updateDraft(request.id, "base_total_price", e.target.value)} /></Field>
+                      </div>
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                        <p className="mb-3 text-sm font-semibold text-amber-950">Commission agence et commercial</p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Field label="Montant éligible"><Input type="number" value={draft.eligible_sale_amount_mad ?? ""} onChange={(e) => updateDraft(request.id, "eligible_sale_amount_mad", e.target.value)} /></Field>
+                          <Field label="Commission agence">
+                            <div className="grid grid-cols-[1fr_120px] gap-2">
+                              <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draft.gross_agency_commission_type ?? "percentage"} onChange={(e) => updateDraft(request.id, "gross_agency_commission_type", e.target.value)}>
+                                <option value="percentage">Pourcentage</option>
+                                <option value="fixed_amount">Montant fixe</option>
+                              </select>
+                              <Input type="number" value={draft.gross_agency_commission_value ?? ""} onChange={(e) => updateDraft(request.id, "gross_agency_commission_value", e.target.value)} />
+                            </div>
+                          </Field>
+                          <Field label="Commission commercial">
+                            <div className="grid grid-cols-[1fr_120px] gap-2">
+                              <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draft.sales_agent_commission_type ?? "fixed_amount"} onChange={(e) => updateDraft(request.id, "sales_agent_commission_type", e.target.value)}>
+                                <option value="fixed_amount">Montant fixe</option>
+                                <option value="percentage">Pourcentage</option>
+                              </select>
+                              <Input type="number" value={draft.sales_agent_commission_value ?? ""} onChange={(e) => updateDraft(request.id, "sales_agent_commission_value", e.target.value)} />
+                            </div>
+                          </Field>
+                          <div className="rounded-md bg-white/70 p-3 text-sm sm:col-span-2">
+                            <p>Brute agence: <strong>{fmtMAD(commission.gross)}</strong></p>
+                            <p>Commercial: <strong>{fmtMAD(commission.agent)}</strong></p>
+                            <p>Nette agence: <strong>{fmtMAD(commission.net)}</strong></p>
+                          </div>
+                        </div>
                       </div>
                       {request.final_client_price && <p className="text-sm text-muted-foreground">Prix client final agence: <strong>{fmtMAD(request.final_client_price)}</strong></p>}
                       <Field label="Message visible agence">

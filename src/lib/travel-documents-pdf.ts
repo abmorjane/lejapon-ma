@@ -3,6 +3,7 @@ import logoUrl from "@/assets/logo-moroccan-express.png";
 import logoJaponUrl from "@/assets/logo-lejapon.png";
 import { sanitizePdfText } from "@/lib/booking-pdfs";
 import { agencyAddressLine, agencyIceLine, normalizeAgencySettings, type AgencySettings } from "@/lib/agency-settings";
+import { visaTripDatesFromTrip } from "@/lib/visa-trip-dates";
 
 type TravelContext = {
   trip?: any | null;
@@ -289,8 +290,9 @@ export async function generateTravelProgrammePdf(app: any, ctx: TravelContext = 
   const fullName = [app.surname, app.given_names].filter(Boolean).join(" ") || "Client";
   const tripTitle = ctx.trip?.title || ctx.programme?.title || "Voyage Japon";
   const programmeTitle = ctx.programme?.title || tripTitle;
-  const arrival = app.date_of_arrival || ctx.trip?.visa_japan_arrival_date || ctx.trip?.start_date;
-  const departure = ctx.trip?.end_date || ctx.trip?.visa_japan_departure_date;
+  const visaTripDates = visaTripDatesFromTrip(ctx.trip);
+  const arrival = app.date_of_arrival || visaTripDates.japanArrivalDate;
+  const departure = visaTripDates.japanDepartureDate;
   const sourceDays = (ctx.days ?? []).filter((d) => d.is_active !== false);
   const durationDays = resolveProgrammeDuration(app, ctx, sourceDays);
   const days = buildProgrammeDays(ctx, durationDays);
@@ -341,8 +343,9 @@ export async function generateTravelConfirmationPdf(app: any, settings: any = {}
   const stamp = await embedImage(pdf, agency.stamp_signature_url);
   const fullName = [app.surname, app.given_names].filter(Boolean).join(" ") || "Client";
   const tripTitle = ctx.trip?.title || ctx.programme?.title || "Voyage Japon";
-  const arrival = ctx.trip?.visa_japan_arrival_date || app.date_of_arrival || ctx.trip?.start_date;
-  const departure = ctx.trip?.visa_japan_departure_date || ctx.trip?.end_date;
+  const visaTripDates = visaTripDatesFromTrip(ctx.trip);
+  const arrival = app.date_of_arrival || visaTripDates.japanArrivalDate;
+  const departure = visaTripDates.japanDepartureDate;
   const port = app.port_of_entry || ctx.trip?.visa_arrival_port || "-";
   const flight = app.airline_or_ship || ctx.trip?.visa_arrival_flight_number || "-";
   const outboundFlightText = String(ctx.trip?.outbound_flight_text ?? "");

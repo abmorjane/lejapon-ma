@@ -15,12 +15,13 @@ import { fmtDate, fmtMAD, slugify } from "@/lib/format";
 import { toast } from "sonner";
 import { motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
+import { addDays, daysBetween, duplicateTripHotels } from "@/admin/lib/accommodation-templates";
 
 type Trip = any;
 
 const empty: Trip = {
   title: "", slug: "", season: "", destination: "", start_date: "", end_date: "",
-  duration_days: 14, base_price_mad: 0, total_slots: 12, slots_left: 12,
+  duration_days: 14, total_trip_days: 14, japan_stay_days: 14, base_price_mad: 0, total_slots: 12, slots_left: 12,
   short_description: "", long_description: "", status: "draft", is_featured: false,
   label: "", badge_type: "", badge_text: "", destinations: [] as string[],
   program_link: "", promo_percent: null, sort_order: 0, cover_url: "",
@@ -28,6 +29,24 @@ const empty: Trip = {
   visa_arrival_flight_number: "", visa_hotel_name: "", visa_hotel_address: "",
   visa_hotel_phone: "", programme_id: null, outbound_flight_text: "", return_flight_text: "",
 };
+
+const inclusiveDaysBetween = (start?: string | null, end?: string | null) => {
+  if (!start || !end) return null;
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return null;
+  return Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
+};
+
+const positiveInt = (value: unknown) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+};
+
+const tripTotalDays = (trip: Trip) =>
+  positiveInt(trip.total_trip_days) ?? positiveInt(trip.duration_days) ?? inclusiveDaysBetween(trip.start_date, trip.end_date);
+
+const tripJapanDays = (trip: Trip) => positiveInt(trip.japan_stay_days);
 
 export default function TripsCatalog() {
   const { roles } = useAuth();
@@ -72,7 +91,15 @@ export default function TripsCatalog() {
   };
 
   const openTrip = async (trip: Trip) => {
-    setEdit({ ...empty, ...trip, destinations: trip.destinations ?? [] });
+    const totalDays = tripTotalDays(trip) ?? empty.total_trip_days;
+    setEdit({
+      ...empty,
+      ...trip,
+      duration_days: totalDays,
+      total_trip_days: totalDays,
+      japan_stay_days: tripJapanDays(trip) ?? totalDays,
+      destinations: trip.destinations ?? [],
+    });
     setOpen(true);
     const { data, error } = await supabase
       .from("trip_hotels")
@@ -145,7 +172,16 @@ export default function TripsCatalog() {
   const save = async () => {
     setBusy(true);
     try {
+      const calculatedTotalDays = inclusiveDaysBetween(edit.start_date, edit.end_date);
+      const totalDays = positiveInt(edit.total_trip_days) ?? positiveInt(edit.duration_days) ?? calculatedTotalDays;
+      const japanDays = positiveInt(edit.japan_stay_days);
+      if (!totalDays) throw new Error("Le nombre total de jours du voyage doit être supérieur à 0.");
+      if (!japanDays) throw new Error("Le nombre de jours au Japon doit être supérieur à 0.");
+      if (japanDays > totalDays) throw new Error("Le nombre de jours au Japon ne peut pas dépasser la durée totale du voyage.");
       const visaDefaultsPayload = {
+        total_trip_days: totalDays,
+        japan_stay_days: japanDays,
+        duration_days: totalDays,
         programme_id: edit.programme_id || null,
         visa_japan_arrival_date: edit.visa_japan_arrival_date || null,
         visa_japan_departure_date: edit.visa_japan_departure_date || null,
@@ -193,6 +229,19 @@ export default function TripsCatalog() {
   };
 
   const duplicateTrip = async (trip: Trip) => {
+    const requestedStart = window.prompt(
+      "Nouvelle date de départ du voyage copié (YYYY-MM-DD). Laissez la date actuelle pour une copie identique.",
+      trip.start_date ?? ""
+    );
+    if (requestedStart === null) return;
+
+    const nextStartDate = requestedStart.trim() || trip.start_date || null;
+    const tripLengthOffset = daysBetween(trip.start_date, trip.end_date);
+    const shiftDate = (value?: string | null) => {
+      const offset = daysBetween(trip.start_date, value);
+      return nextStartDate && offset != null ? addDays(nextStartDate, offset) : value ?? null;
+    };
+
     const copyTitle = `${trip.title} (copie)`;
     const copyPayload = {
       ...trip,
@@ -206,11 +255,36 @@ export default function TripsCatalog() {
       is_featured: false,
       sort_order: rows.length,
       destinations: [...(trip.destinations ?? [])],
+      start_date: nextStartDate,
+      end_date: nextStartDate && tripLengthOffset != null ? addDays(nextStartDate, tripLengthOffset) : trip.end_date ?? null,
+      visa_japan_arrival_date: shiftDate(trip.visa_japan_arrival_date),
+      visa_japan_departure_date: shiftDate(trip.visa_japan_departure_date),
     };
 
-    const { error } = await supabase.from("trips").insert(copyPayload);
+    const summary = [
+      "Dupliquer ce voyage avec :",
+      "✓ Données principales",
+      "✓ Hôtels et dates recalculées",
+      "✓ Structure de chambres sans affectations participants",
+      "",
+      `Nouveau départ : ${copyPayload.start_date || "date non définie"}`,
+      `Nouveau retour : ${copyPayload.end_date || "date non définie"}`,
+    ].join("\n");
+    if (!window.confirm(summary)) return;
+
+    const { data, error } = await supabase.from("trips").insert(copyPayload).select("id,start_date").maybeSingle();
     if (error) return toast.error(error.message);
-    toast.success("Voyage dupliqué");
+    if (!data?.id) return toast.error("Voyage copié sans identifiant retourné.");
+
+    try {
+      const result = await duplicateTripHotels(
+        { id: trip.id, start_date: trip.start_date },
+        { id: data.id, start_date: data.start_date ?? copyPayload.start_date }
+      );
+      toast.success(`Voyage dupliqué · ${result.hotelCount} hôtel(s) copié(s)`);
+    } catch (error: any) {
+      toast.warning(`Voyage copié, mais les hôtels n'ont pas été copiés : ${error?.message ?? "erreur inconnue"}`);
+    }
     load();
   };
 
@@ -260,6 +334,24 @@ export default function TripsCatalog() {
     setEdit({ ...edit, destinations: arr });
   };
 
+  const suggestedTotalDays = inclusiveDaysBetween(edit.start_date, edit.end_date);
+  const setTotalTripDays = (value: unknown) => {
+    const totalDays = positiveInt(value);
+    setEdit({ ...edit, total_trip_days: totalDays ?? "", duration_days: totalDays ?? "" });
+  };
+  const updateTripDate = (field: "start_date" | "end_date", value: string) => {
+    const next = { ...edit, [field]: value };
+    const nextSuggested = inclusiveDaysBetween(next.start_date, next.end_date);
+    const previousSuggested = suggestedTotalDays;
+    const shouldAutoFill =
+      nextSuggested &&
+      (!positiveInt(edit.total_trip_days) || positiveInt(edit.total_trip_days) === previousSuggested);
+    setEdit({
+      ...next,
+      ...(shouldAutoFill ? { total_trip_days: nextSuggested, duration_days: nextSuggested } : {}),
+    });
+  };
+
   return (
     <motion.div
       initial={reduceMotion ? false : { opacity: 0, y: 8 }}
@@ -302,9 +394,33 @@ export default function TripsCatalog() {
                   </Select>
                 </div>
                 <div><Label>Texte du badge / offre (optionnel)</Label><Input disabled={publicFieldDisabled} value={edit.badge_text ?? ""} onChange={(e) => setEdit({ ...edit, badge_text: e.target.value })} placeholder="Offre spéciale, Sakura 2026…" /></div>
-                <div><Label>Date début</Label><Input disabled={publicFieldDisabled} type="date" value={edit.start_date ?? ""} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} /></div>
-                <div><Label>Date fin</Label><Input disabled={publicFieldDisabled} type="date" value={edit.end_date ?? ""} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} /></div>
-                <div><Label>Durée (jours)</Label><Input disabled={publicFieldDisabled} type="number" value={edit.duration_days ?? 14} onChange={(e) => setEdit({ ...edit, duration_days: +e.target.value })} /></div>
+                <div><Label>Date début</Label><Input disabled={publicFieldDisabled} type="date" value={edit.start_date ?? ""} onChange={(e) => updateTripDate("start_date", e.target.value)} /></div>
+                <div><Label>Date fin</Label><Input disabled={publicFieldDisabled} type="date" value={edit.end_date ?? ""} onChange={(e) => updateTripDate("end_date", e.target.value)} /></div>
+                <div>
+                  <Label>Nombre total de jours du voyage</Label>
+                  <Input
+                    disabled={publicFieldDisabled}
+                    type="number"
+                    min={1}
+                    value={edit.total_trip_days ?? edit.duration_days ?? ""}
+                    onChange={(e) => setTotalTripDays(e.target.value)}
+                  />
+                  {suggestedTotalDays && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Calcul depuis les dates : {suggestedTotalDays} jours. Modifiable si besoin.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label>Nombre de jours au Japon</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={edit.japan_stay_days ?? ""}
+                    onChange={(e) => setEdit({ ...edit, japan_stay_days: positiveInt(e.target.value) ?? "" })}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">Utilisé pour la durée de séjour dans le formulaire visa Japon.</p>
+                </div>
                 <div><Label>Prix actuel / promotionnel (MAD)</Label><Input disabled={publicFieldDisabled} type="number" value={edit.base_price_mad} onChange={(e) => setEdit({ ...edit, base_price_mad: +e.target.value })} /></div>
                 <div><Label>Places totales</Label><Input disabled={publicFieldDisabled} type="number" value={edit.total_slots} onChange={(e) => setEdit({ ...edit, total_slots: +e.target.value })} /></div>
                 <div><Label>Places restantes</Label><Input disabled={publicFieldDisabled} type="number" value={edit.slots_left} onChange={(e) => setEdit({ ...edit, slots_left: +e.target.value })} /></div>
@@ -486,7 +602,10 @@ export default function TripsCatalog() {
                 <div className="rounded-xl bg-muted/50 p-3"><p className="text-muted-foreground">Dates</p><p className="font-medium">{fmtDate(t.start_date)}</p></div>
                 <div className="rounded-xl bg-muted/50 p-3"><p className="text-muted-foreground">Places</p><p className="font-medium">{t.slots_left} / {t.total_slots}</p></div>
                 <div className="rounded-xl bg-muted/50 p-3"><p className="text-muted-foreground">Prix</p><p className="font-medium">{fmtMAD(t.base_price_mad)}</p></div>
-                <div className="rounded-xl bg-muted/50 p-3"><p className="text-muted-foreground">Saison</p><p className="truncate font-medium">{t.season ?? "—"}</p></div>
+                <div className="rounded-xl bg-muted/50 p-3">
+                  <p className="text-muted-foreground">Durée</p>
+                  <p className="font-medium">{tripTotalDays(t) ?? "—"} j · Japon {tripJapanDays(t) ?? "—"} j</p>
+                </div>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <Button size="sm" variant="outline" className="min-h-11" disabled={!canReorderTrips || idx === 0} onClick={() => moveRow(t.id, -1)}><ArrowUp className="w-4 h-4" /></Button>
@@ -545,7 +664,12 @@ export default function TripsCatalog() {
                     <span className="text-xs text-muted-foreground">{t.season ?? "—"}</span>
                   </div>
                 </td>
-                <td className="p-4">{fmtDate(t.start_date)} → {fmtDate(t.end_date)}</td>
+                <td className="p-4">
+                  <p>{fmtDate(t.start_date)} → {fmtDate(t.end_date)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Durée : {tripTotalDays(t) ?? "—"} j · Japon : {tripJapanDays(t) ?? "—"} j
+                  </p>
+                </td>
                 <td className="p-4">{fmtMAD(t.base_price_mad)}</td>
                 <td className="p-4">{t.slots_left} / {t.total_slots}</td>
                 <td className="p-4">

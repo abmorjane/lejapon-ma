@@ -53,6 +53,10 @@ const isSafeParticipant = (participant: any, lastName: string, email: string) =>
   nameMatches(passportOcr(participant).last_name, lastName) ||
   emailMatches(participant?.email, email);
 
+const isSafeVisaApplication = (application: any, lastName: string, email: string) =>
+  nameMatches(application?.surname, lastName) ||
+  emailMatches(application?.residential_email, email);
+
 const normalizeSex = (value: unknown) => {
   const normalized = normalizeText(value);
   if (["m", "male", "homme", "masculin"].includes(normalized)) return "male";
@@ -117,14 +121,84 @@ const participantPrefill = (participant: any, linkedClient: any, passportNo: str
   };
 };
 
+const visaApplicationPrefill = (application: any, linkedClient: any, passportNo: string) => ({
+  ...(linkedClient ? clientPrefill(linkedClient, passportNo) : {}),
+  first_name: application?.given_names || null,
+  last_name: application?.surname || null,
+  birthdate: application?.date_of_birth || linkedClient?.birthdate || null,
+  nationality: application?.nationality || linkedClient?.nationality || null,
+  sex: normalizeSex(application?.sex || linkedClient?.sex),
+  place_of_birth: application?.place_of_birth_city || null,
+  birth_country: application?.place_of_birth_country || null,
+  national_id_number: application?.national_id_no || null,
+  cin: application?.national_id_no || null,
+  passport_no: application?.passport_no || linkedClient?.passport_number || passportNo,
+  passport_number: application?.passport_no || linkedClient?.passport_number || passportNo,
+  passport_type: application?.passport_type || "ordinary",
+  passport_issue_date: application?.passport_date_of_issue || linkedClient?.passport_issue_date || null,
+  passport_expiry: application?.passport_date_of_expiry || linkedClient?.passport_expiry || null,
+  passport_expiry_date: application?.passport_date_of_expiry || linkedClient?.passport_expiry || null,
+  passport_issue_place: application?.passport_place_of_issue || application?.passport_issuing_authority || null,
+  passport_authority: application?.passport_issuing_authority || null,
+  residence_address: application?.residential_address || linkedClient?.address || null,
+  phone: application?.residential_mobile || application?.residential_tel || linkedClient?.phone || null,
+  email: application?.residential_email || linkedClient?.email || null,
+  professional_situation: application?.category || null,
+  profession: application?.profession || linkedClient?.profession || null,
+});
+
+const isoDateOnly = (value?: string | null) => {
+  const match = String(value ?? "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+};
+
+const addCalendarDays = (value: string | null | undefined, offset: number) => {
+  const iso = isoDateOnly(value);
+  if (!iso) return null;
+  const [year, month, day] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + offset);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+};
+
+const inclusiveDaysBetween = (start?: string | null, end?: string | null) => {
+  const startIso = isoDateOnly(start);
+  const endIso = isoDateOnly(end);
+  if (!startIso || !endIso) return null;
+  const [startYear, startMonth, startDay] = startIso.split("-").map(Number);
+  const [endYear, endMonth, endDay] = endIso.split("-").map(Number);
+  const startTime = Date.UTC(startYear, startMonth - 1, startDay);
+  const endTime = Date.UTC(endYear, endMonth - 1, endDay);
+  if (endTime < startTime) return null;
+  return Math.floor((endTime - startTime) / 86400000) + 1;
+};
+
+const visaTripDatesFromTrip = (trip: any) => {
+  const arrivalDate = addCalendarDays(trip?.start_date, 1) || isoDateOnly(trip?.visa_japan_arrival_date);
+  const departureDate = addCalendarDays(trip?.end_date, -1) || isoDateOnly(trip?.visa_japan_departure_date);
+  const configured = Number(trip?.japan_stay_days || 0);
+  return {
+    arrivalDate,
+    departureDate,
+    japanStayDays: configured > 0 ? configured : inclusiveDaysBetween(arrivalDate, departureDate),
+  };
+};
+
+const japanStayDaysFromTrip = (trip: any) => {
+  return visaTripDatesFromTrip(trip).japanStayDays;
+};
+
 const tripPrefill = (trip: any) => {
   if (!trip) return {};
+  const tripDates = visaTripDatesFromTrip(trip);
   return {
     trip_id: trip.id,
     trip_title: trip.title || null,
-    arrival_date: trip.visa_japan_arrival_date || trip.start_date || null,
-    departure_date: trip.visa_japan_departure_date || trip.end_date || null,
-    duration_days: trip.duration_days || null,
+    arrival_date: tripDates.arrivalDate,
+    departure_date: tripDates.departureDate,
+    duration_days: tripDates.japanStayDays,
+    japan_stay_days: trip.japan_stay_days || null,
+    total_trip_days: trip.total_trip_days || trip.duration_days || null,
     flight_text: trip.visa_arrival_flight_number || null,
     hotel_name: trip.visa_hotel_name || null,
     hotel_phone: trip.visa_hotel_phone || null,
@@ -165,8 +239,8 @@ Deno.serve(async (req) => {
 
     const { data: clientRows, error: clientsError } = await admin
       .from("clients")
-      .select("id,full_name,email,phone,birthdate,nationality,sex,passport_number,passport_issue_date,passport_expiry,address,city,country,profession,metadata")
-      .or(`passport_number.ilike.%${searchFragment}%,metadata->passport_ocr->>passport_number.ilike.%${searchFragment}%,metadata->passport_ocr->>passport_no.ilike.%${searchFragment}%`)
+      .select("id,full_name,email,phone,birthdate,nationality,sex,passport_number,passport_no,passport_issue_date,passport_expiry,address,city,country,profession,metadata")
+      .or(`passport_number.ilike.%${searchFragment}%,passport_no.ilike.%${searchFragment}%,metadata->passport_ocr->>passport_number.ilike.%${searchFragment}%,metadata->passport_ocr->>passport_no.ilike.%${searchFragment}%`)
       .limit(20);
 
     if (clientsError) console.warn("[lookup-visa-prefill] clients query failed", { function_version, error: clientsError.message });
@@ -186,12 +260,32 @@ Deno.serve(async (req) => {
       participantRows = participantResult.data ?? [];
     }
 
+    let visaApplicationRows: any[] = [];
+    let visaApplicationsErrorMessage: string | null = null;
+    const visaApplicationResult = await admin
+      .from("visa_applications")
+      .select("id,client_id,user_id,category,surname,given_names,date_of_birth,place_of_birth_city,place_of_birth_country,sex,marital_status,nationality,national_id_no,passport_type,passport_no,passport_place_of_issue,passport_date_of_issue,passport_issuing_authority,passport_date_of_expiry,residential_address,residential_tel,residential_mobile,residential_email,profession,document_trip_id,created_at")
+      .ilike("passport_no", `%${searchFragment}%`)
+      .limit(20);
+    if (visaApplicationResult.error) {
+      visaApplicationsErrorMessage = visaApplicationResult.error.message;
+      console.warn("[lookup-visa-prefill] visa applications query failed", { function_version, error: visaApplicationsErrorMessage });
+    } else {
+      visaApplicationRows = visaApplicationResult.data ?? [];
+    }
+
     const matchingClients = (clientRows ?? []).filter((client: any) => passportMatches(client, passportNo));
     const matchingParticipants = participantRows.filter((participant: any) => passportMatches(participant, passportNo));
+    const matchingVisaApplications = visaApplicationRows.filter((application: any) => normalizePassport(application?.passport_no) === passportNo);
     const safeClients = matchingClients.filter((client: any) => isSafeClient(client, lastName, email));
     const safeParticipants = matchingParticipants.filter((participant: any) => isSafeParticipant(participant, lastName, email));
+    const safeVisaApplications = matchingVisaApplications.filter((application: any) => isSafeVisaApplication(application, lastName, email));
 
-    if ((matchingClients.length > 1 && safeClients.length !== 1) || (matchingParticipants.length > 1 && safeParticipants.length !== 1)) {
+    if (
+      (matchingClients.length > 1 && safeClients.length !== 1) ||
+      (matchingParticipants.length > 1 && safeParticipants.length !== 1) ||
+      (matchingVisaApplications.length > 1 && safeVisaApplications.length !== 1)
+    ) {
       return new Response(JSON.stringify({ status: "multiple_matches", function_version }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -203,14 +297,14 @@ Deno.serve(async (req) => {
         participant.client_id
           ? admin
             .from("clients")
-            .select("id,full_name,email,phone,birthdate,nationality,sex,passport_number,passport_issue_date,passport_expiry,address,city,country,profession,metadata")
+            .select("id,full_name,email,phone,birthdate,nationality,sex,passport_number,passport_no,passport_issue_date,passport_expiry,address,city,country,profession,metadata")
             .eq("id", participant.client_id)
             .maybeSingle()
           : Promise.resolve({ data: null }),
         participant.trip_id
           ? admin
             .from("trips")
-            .select("id,title,start_date,end_date,duration_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
+            .select("id,title,start_date,end_date,duration_days,total_trip_days,japan_stay_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
             .eq("id", participant.trip_id)
             .maybeSingle()
           : Promise.resolve({ data: null }),
@@ -224,6 +318,40 @@ Deno.serve(async (req) => {
         booking_id: participant.booking_id ?? null,
         prefill: {
           ...participantPrefill(participant, linkedClient, passportNo),
+          ...tripPrefill(trip),
+        },
+        function_version,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const visaApplication = safeVisaApplications[0] ?? (matchingVisaApplications.length === 1 && (lastName || email) ? matchingVisaApplications[0] : null);
+    if (visaApplication) {
+      const [{ data: linkedClient }, { data: trip }] = await Promise.all([
+        visaApplication.client_id
+          ? admin
+            .from("clients")
+            .select("id,full_name,email,phone,birthdate,nationality,sex,passport_number,passport_no,passport_issue_date,passport_expiry,address,city,country,profession,metadata")
+            .eq("id", visaApplication.client_id)
+            .maybeSingle()
+          : Promise.resolve({ data: null }),
+        visaApplication.document_trip_id
+          ? admin
+            .from("trips")
+            .select("id,title,start_date,end_date,duration_days,total_trip_days,japan_stay_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
+            .eq("id", visaApplication.document_trip_id)
+            .maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+      return new Response(JSON.stringify({
+        status: "found",
+        source: "visa_application",
+        client_id: linkedClient?.id ?? visaApplication.client_id ?? null,
+        participant_id: null,
+        visa_application_id: visaApplication.id,
+        trip_id: trip?.id ?? visaApplication.document_trip_id ?? null,
+        booking_id: null,
+        prefill: {
+          ...visaApplicationPrefill(visaApplication, linkedClient, passportNo),
           ...tripPrefill(trip),
         },
         function_version,

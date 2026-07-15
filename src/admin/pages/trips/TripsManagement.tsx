@@ -8,6 +8,13 @@ import { fmtDate, fmtMAD } from "@/lib/format";
 import TripOperations from "./TripOperations";
 import { motion, useReducedMotion } from "framer-motion";
 
+const displayTripDays = (trip: any) => {
+  const total = Number(trip.total_trip_days || trip.duration_days || 0);
+  const japan = Number(trip.japan_stay_days || 0);
+  if (!total && !japan) return null;
+  return `Durée ${total || "—"} j · Japon ${japan || "—"} j`;
+};
+
 export default function TripsManagement() {
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState("");
@@ -18,7 +25,7 @@ export default function TripsManagement() {
     (async () => {
       const { data } = await supabase
         .from("trips")
-        .select("id, title, season, label, start_date, end_date, total_slots, slots_left, base_price_mad, status, cover_url")
+        .select("id, title, season, label, start_date, end_date, duration_days, total_trip_days, japan_stay_days, total_slots, slots_left, base_price_mad, status, cover_url")
         .order("start_date", { ascending: true });
       setRows(data ?? []);
     })();
@@ -84,6 +91,7 @@ export default function TripsManagement() {
                 <span className="inline-flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{fmtDate(t.start_date)}</span>
                 <span className="inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" />{t.slots_left}/{t.total_slots}</span>
               </div>
+              {displayTripDays(t) && <p className="mt-2 text-xs text-muted-foreground">{displayTripDays(t)}</p>}
               <div className="mt-2 text-sm font-semibold">{fmtMAD(t.base_price_mad)}</div>
             </div>
           </button>

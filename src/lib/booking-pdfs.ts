@@ -13,6 +13,8 @@ import {
 import {
   calculateCommercialDocumentTotals,
   invoiceTypeLabel,
+  normalizeCommercialParticipants,
+  type CommercialParticipantInput,
   type InvoiceType,
 } from "@/lib/commercial-documents";
 
@@ -265,19 +267,16 @@ async function footer(pdf: PDFDocument, page: PDFPage, font: PDFFont, agency: Ag
 
 export type QuoteData = {
   booking: any;
-  trip?: { title?: string; season?: string | null; destination?: string | null; start_date?: string | null; end_date?: string | null; duration_days?: number | null; highlights?: string[] | null } | null;
+  trip?: { title?: string; season?: string | null; destination?: string | null; start_date?: string | null; end_date?: string | null; duration_days?: number | null; total_trip_days?: number | null; japan_stay_days?: number | null; highlights?: string[] | null } | null;
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
   discount?: { label?: string | null; amount?: number | null; type?: "fixed_amount" | "percentage" | string | null; reason?: string | null } | null;
   quote_adjustments?: QuoteAdjustment[] | null;
   payments?: { amount_mad?: number | string | null; status?: string | null }[];
-  participants?: { full_name?: string | null; first_name?: string | null; last_name?: string | null; traveler_type?: string | null; room_type?: string | null }[];
+  participants?: CommercialParticipantInput[];
   number: string;
   validUntil?: Date;
   agency?: Partial<AgencySettings> | null;
 };
-
-const participantName = (participant: any) =>
-  participant?.full_name || [participant?.first_name, participant?.last_name].filter(Boolean).join(" ") || participant?.name || "";
 
 function drawSectionList(page: PDFPage, font: PDFFont, fontB: PDFFont, title: string, lines: string[], x: number, y: number, maxWidth: number) {
   if (lines.length === 0) return y;
@@ -291,6 +290,15 @@ function drawSectionList(page: PDFPage, font: PDFFont, fontB: PDFFont, title: st
   });
   return y - 8;
 }
+
+const tripDurationDetailLines = (trip: QuoteData["trip"]) => {
+  const totalDays = Number(trip?.total_trip_days || trip?.duration_days || 0);
+  const japanDays = Number(trip?.japan_stay_days || 0);
+  return [
+    totalDays > 0 ? `Durée du voyage : ${totalDays} jours` : "",
+    japanDays > 0 ? `Séjour au Japon : ${japanDays} jours` : "",
+  ].filter(Boolean);
+};
 
 export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
@@ -364,13 +372,13 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
     { label: "Reste à payer", value: fmtMad(totals.remainingAmount), bold: true },
   ]);
 
-  const participants = (d.participants ?? []).map(participantName).filter(Boolean);
-  y = drawSectionList(page, font, fontB, "Participants", participants.map((name, index) => `${index + 1}. ${name}`), 40, y - 4, 515);
+  const participants = normalizeCommercialParticipants(d.participants);
+  y = drawSectionList(page, font, fontB, "Participants", participants.map((participant, index) => `${index + 1}. ${participant.label}`), 40, y - 4, 515);
 
   const tripDetails = [
     trip?.title ? `Voyage : ${trip.title}` : "",
     trip?.start_date || trip?.end_date ? `Dates : du ${fmtDate(trip?.start_date)} au ${fmtDate(trip?.end_date)}` : "",
-    trip?.duration_days ? `Durée : ${trip.duration_days} jours` : "",
+    ...tripDurationDetailLines(trip),
     trip?.destination ? `Destination : ${trip.destination}` : "",
     ...(Array.isArray(trip?.highlights) ? trip!.highlights!.slice(0, 5).map((item) => `- ${item}`) : []),
   ].filter(Boolean);
@@ -391,13 +399,13 @@ export async function generateQuotePdf(d: QuoteData): Promise<Uint8Array> {
 
 export type ReceiptData = {
   booking: any;
-  trip?: { title?: string; season?: string | null; destination?: string | null; start_date?: string | null; end_date?: string | null; duration_days?: number | null; highlights?: string[] | null } | null;
+  trip?: QuoteData["trip"];
   payment: { amount_mad: number; method?: string | null; reference?: string | null; paid_at?: string | null };
   number: string;
   extras?: { name_snapshot: string; qty: number; unit_price_mad: number }[];
   quote_adjustments?: QuoteAdjustment[] | null;
   payments?: { amount_mad?: number | string | null; status?: string | null }[];
-  participants?: { full_name?: string | null; first_name?: string | null; last_name?: string | null; traveler_type?: string | null; room_type?: string | null }[];
+  participants?: CommercialParticipantInput[];
   agency?: Partial<AgencySettings> | null;
 };
 
@@ -475,8 +483,16 @@ export async function generateReceiptPdf(d: ReceiptData): Promise<Uint8Array> {
     { label: "Reste à payer", value: fmtMad(totals.remainingAmount), bold: true },
   ]);
 
-  const participants = (d.participants ?? []).map(participantName).filter(Boolean);
-  y = drawSectionList(page, font, fontB, "Participants", participants.map((name, index) => `${index + 1}. ${name}`), 40, y - 4, 515);
+  const participants = normalizeCommercialParticipants(d.participants);
+  y = drawSectionList(page, font, fontB, "Participants", participants.map((participant, index) => `${index + 1}. ${participant.label}`), 40, y - 4, 515);
+
+  const tripDetails = [
+    d.trip?.title ? `Voyage : ${d.trip.title}` : "",
+    d.trip?.start_date || d.trip?.end_date ? `Dates : du ${fmtDate(d.trip?.start_date)} au ${fmtDate(d.trip?.end_date)}` : "",
+    ...tripDurationDetailLines(d.trip),
+    d.trip?.destination ? `Destination : ${d.trip.destination}` : "",
+  ].filter(Boolean);
+  y = drawSectionList(page, font, fontB, "Détails du voyage", tripDetails, 40, y, 515);
 
   y -= 14;
   drawText(page, "Merci pour votre confiance.", 40, y, fontB, 11, RED);
@@ -551,12 +567,12 @@ export async function generateInvoicePdf(d: InvoiceData): Promise<Uint8Array> {
     { label: "Reste à payer", value: fmtMad(totals.remainingAmount), bold: true },
   ]);
 
-  const participants = (d.participants ?? []).map(participantName).filter(Boolean);
-  y = drawSectionList(page, font, fontB, "Participants", participants.map((name, index) => `${index + 1}. ${name}`), 40, y - 4, 515);
+  const participants = normalizeCommercialParticipants(d.participants);
+  y = drawSectionList(page, font, fontB, "Participants", participants.map((participant, index) => `${index + 1}. ${participant.label}`), 40, y - 4, 515);
   const tripDetails = [
     d.trip?.title ? `Voyage : ${d.trip.title}` : "",
     d.trip?.start_date || d.trip?.end_date ? `Dates : du ${fmtDate(d.trip?.start_date)} au ${fmtDate(d.trip?.end_date)}` : "",
-    d.trip?.duration_days ? `Durée : ${d.trip.duration_days} jours` : "",
+    ...tripDurationDetailLines(d.trip),
     d.trip?.destination ? `Destination : ${d.trip.destination}` : "",
   ].filter(Boolean);
   y = drawSectionList(page, font, fontB, "Détails du voyage", tripDetails, 40, y, 515);

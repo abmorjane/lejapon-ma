@@ -19,7 +19,13 @@ import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
 import { initAnalytics, trackPageView } from "@/lib/analytics";
 import { installWebViewGuards } from "@/lib/webview-guards";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 const Index = lazy(() => import("./pages/Index.tsx"));
 const Trips = lazy(() => import("./pages/Trips.tsx"));
@@ -54,13 +60,25 @@ const AgencyExtras = lazy(() => import("@/agency/pages/AgencyExtras"));
 const AgencyCommission = lazy(() => import("@/agency/pages/AgencyCommission"));
 const AgencyProfilePage = lazy(() => import("@/agency/pages/AgencyProfilePage"));
 const AgencyOnboarding = lazy(() => import("@/agency/pages/AgencyOnboarding"));
+const ClientLogin = lazy(() => import("@/client/pages/ClientLogin"));
+const ClientPasswordRecovery = lazy(() => import("@/client/pages/ClientPasswordRecovery"));
+const ClientPortalLayout = lazy(() => import("@/client/components/ClientPortalLayout"));
+const ClientDashboard = lazy(() => import("@/client/pages/ClientDashboard"));
+const ClientReservations = lazy(() => import("@/client/pages/ClientReservations"));
+const ClientReservationDetail = lazy(() => import("@/client/pages/ClientReservationDetail"));
+const ClientDocuments = lazy(() => import("@/client/pages/ClientDocuments"));
+const ClientVisa = lazy(() => import("@/client/pages/ClientVisa"));
+const ClientAgreements = lazy(() => import("@/client/pages/ClientAgreements"));
+const ClientExperiences = lazy(() => import("@/client/pages/ClientExperiences"));
 
 const AdminLogin = lazy(() => import("@/admin/pages/Login"));
+const AdminPasswordRecovery = lazy(() => import("@/admin/pages/PasswordRecovery"));
 const AdminDashboard = lazy(() => import("@/admin/pages/Dashboard"));
 const AdminTrips = lazy(() => import("@/admin/pages/Trips"));
 const AdminBookings = lazy(() => import("@/admin/pages/Bookings"));
 const AdminBookingDetail = lazy(() => import("@/admin/pages/BookingDetail"));
 const AdminAccounting = lazy(() => import("@/admin/pages/Accounting"));
+const AdminOperationsCenter = lazy(() => import("@/admin/pages/OperationsCenter"));
 const AdminTravelAgreements = lazy(() => import("@/admin/pages/TravelAgreements"));
 const AdminClients = lazy(() => import("@/admin/pages/Clients"));
 const AdminExtras = lazy(() => import("@/admin/pages/Extras"));
@@ -83,6 +101,7 @@ const AdminEmailSettings = lazy(() => import("@/admin/pages/EmailSettings"));
 const AdminEmailTemplates = lazy(() => import("@/admin/pages/EmailTemplates"));
 const AdminEmailLogs = lazy(() => import("@/admin/pages/EmailLogs"));
 const AdminBackups = lazy(() => import("@/admin/pages/Backups"));
+const AdminUserGuide = lazy(() => import("@/admin/pages/AdminUserGuide"));
 const AdminVisaApplications = lazy(() => import("@/admin/pages/VisaApplications"));
 const AdminVisaApplicationDetail = lazy(() => import("@/admin/pages/VisaApplicationDetail"));
 const AdminVisaSettings = lazy(() => import("@/admin/pages/VisaSettings"));
@@ -164,6 +183,28 @@ const AppRoutes = () => {
     <Suspense fallback={<RouteFallback />}>
     <Routes>
       <Route path="/agency/login" element={<AgencyLogin />} />
+      <Route path="/espace-voyage/login" element={<ClientLogin />} />
+      <Route path="/espace-voyage/nouveau-mot-de-passe" element={<ClientPasswordRecovery />} />
+      <Route path="/espace-voyage" element={<ClientPortalLayout />}>
+        <Route index element={<ClientDashboard />} />
+        <Route path="reservations" element={<ClientReservations />} />
+        <Route path="reservations/:bookingId" element={<ClientReservationDetail />} />
+        <Route path="documents" element={<ClientDocuments />} />
+        <Route path="visa" element={<ClientVisa />} />
+        <Route path="accords" element={<ClientAgreements />} />
+        <Route path="experiences" element={<ClientExperiences />} />
+      </Route>
+      <Route path="/client/login" element={<ClientLogin />} />
+      <Route path="/client/nouveau-mot-de-passe" element={<ClientPasswordRecovery />} />
+      <Route path="/client" element={<ClientPortalLayout />}>
+        <Route index element={<ClientDashboard />} />
+        <Route path="reservations" element={<ClientReservations />} />
+        <Route path="reservations/:bookingId" element={<ClientReservationDetail />} />
+        <Route path="documents" element={<ClientDocuments />} />
+        <Route path="visa" element={<ClientVisa />} />
+        <Route path="accords" element={<ClientAgreements />} />
+        <Route path="experiences" element={<ClientExperiences />} />
+      </Route>
       <Route path="/agency" element={
         <AgencyProvider>
           <RequireAgencyMember>
@@ -286,6 +327,8 @@ const AppRoutes = () => {
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="/admin/login" element={<AdminLogin />} />
+      <Route path="/admin/mot-de-passe-oublie" element={<AdminPasswordRecovery />} />
+      <Route path="/admin/nouveau-mot-de-passe" element={<AdminPasswordRecovery />} />
       <Route path="/unsubscribe/:token" element={<Unsubscribe />} />
       <Route path="/supplier/login" element={<AdminLogin />} />
       <Route path="/supplier" element={<SupplierLayout />}>
@@ -303,6 +346,7 @@ const AppRoutes = () => {
         <Route path="bookings" element={<RequireRole module="bookings"><AdminBookings /></RequireRole>} />
         <Route path="bookings/:id" element={<RequireRole module="bookings"><AdminBookingDetail /></RequireRole>} />
         <Route path="accounting" element={<RequireRole module="accounting"><AdminAccounting /></RequireRole>} />
+        <Route path="operations-center" element={<RequireRole module="operations_center"><AdminOperationsCenter /></RequireRole>} />
         <Route path="travel-agreements" element={<RequireRole module="travel_agreements"><AdminTravelAgreements /></RequireRole>} />
         <Route path="clients" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
         <Route path="clients/:id" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
@@ -326,6 +370,7 @@ const AppRoutes = () => {
         <Route path="email-templates" element={<RequireRole module="email_templates"><AdminEmailTemplates /></RequireRole>} />
         <Route path="email-logs" element={<RequireRole module="email_logs"><AdminEmailLogs /></RequireRole>} />
         <Route path="backups" element={<RequireRole module="backups"><AdminBackups /></RequireRole>} />
+        <Route path="user-guide" element={<RequireRole module="faqs"><AdminUserGuide /></RequireRole>} />
         <Route path="visa" element={<RequireRole module="visa"><AdminVisaApplications /></RequireRole>} />
         <Route path="visa/:id" element={<RequireRole module="visa"><AdminVisaApplicationDetail /></RequireRole>} />
         <Route path="visa-settings" element={<RequireRole module="visa_settings"><AdminVisaSettings /></RequireRole>} />

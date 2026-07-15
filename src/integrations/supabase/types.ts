@@ -346,6 +346,11 @@ export type Database = {
           contact_name: string
           contact_phone: string | null
           created_at: string
+          deposit_amount: number | null
+          deposit_amount_mad: number | null
+          deposit_is_per_person: boolean
+          deposit_type: string
+          deposit_value: number
           formula: string | null
           id: string
           message: string | null
@@ -370,6 +375,11 @@ export type Database = {
           contact_name: string
           contact_phone?: string | null
           created_at?: string
+          deposit_amount?: number | null
+          deposit_amount_mad?: number | null
+          deposit_is_per_person?: boolean
+          deposit_type?: string
+          deposit_value?: number
           formula?: string | null
           id?: string
           message?: string | null
@@ -394,6 +404,11 @@ export type Database = {
           contact_name?: string
           contact_phone?: string | null
           created_at?: string
+          deposit_amount?: number | null
+          deposit_amount_mad?: number | null
+          deposit_is_per_person?: boolean
+          deposit_type?: string
+          deposit_value?: number
           formula?: string | null
           id?: string
           message?: string | null
@@ -1992,6 +2007,7 @@ export type Database = {
           highlights: string[] | null
           id: string
           is_featured: boolean
+          japan_stay_days: number | null
           label: string | null
           long_description: string | null
           outbound_flight_text: string | null
@@ -2007,6 +2023,7 @@ export type Database = {
           start_date: string | null
           status: Database["public"]["Enums"]["trip_status"]
           title: string
+          total_trip_days: number | null
           total_slots: number
           updated_at: string
           visa_arrival_flight_number: string | null
@@ -2033,6 +2050,7 @@ export type Database = {
           highlights?: string[] | null
           id?: string
           is_featured?: boolean
+          japan_stay_days?: number | null
           label?: string | null
           long_description?: string | null
           outbound_flight_text?: string | null
@@ -2048,6 +2066,7 @@ export type Database = {
           start_date?: string | null
           status?: Database["public"]["Enums"]["trip_status"]
           title: string
+          total_trip_days?: number | null
           total_slots?: number
           updated_at?: string
           visa_arrival_flight_number?: string | null
@@ -2074,6 +2093,7 @@ export type Database = {
           highlights?: string[] | null
           id?: string
           is_featured?: boolean
+          japan_stay_days?: number | null
           label?: string | null
           long_description?: string | null
           outbound_flight_text?: string | null
@@ -2089,6 +2109,7 @@ export type Database = {
           start_date?: string | null
           status?: Database["public"]["Enums"]["trip_status"]
           title?: string
+          total_trip_days?: number | null
           total_slots?: number
           updated_at?: string
           visa_arrival_flight_number?: string | null

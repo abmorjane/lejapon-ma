@@ -196,6 +196,61 @@ type ExternalUserResult = {
   raw: unknown;
 };
 
+type PartnerAgencyCreationForm = {
+  agency: {
+    display_name: string;
+    legal_name: string;
+    email: string;
+    phone: string;
+    website: string;
+    address: string;
+    city: string;
+    country: string;
+    ice: string;
+    rc: string;
+    if_number: string;
+    patente: string;
+    internal_notes: string;
+  };
+  contact: {
+    full_name: string;
+    login_email: string;
+    phone: string;
+    secondary_phone: string;
+    position_title: string;
+    point_of_sale: string;
+    preferred_language: string;
+    organization_role: OrganizationRole;
+  };
+  commercial: {
+    default_commission: string;
+    commission_type: CommissionType;
+    status: Extract<OrganizationStatus, "active" | "pending" | "suspended">;
+    margin_allowed: boolean;
+    booking_access: boolean;
+    fit_request_access: boolean;
+  };
+  onboarding: {
+    status: "approved" | "missing_documents";
+    review_notes: string;
+  };
+};
+
+type PartnerAgencyCreationResult = {
+  ok?: boolean;
+  organization_id?: string;
+  user_id?: string;
+  member_id?: string;
+  onboarding_case_id?: string;
+  temporary_password?: string | null;
+  email_sent?: boolean | null;
+  app_role?: string | null;
+  organization_role?: string | null;
+  duplicate_suspected?: boolean;
+  duplicate_suspects?: Array<Pick<OrganizationRow, "id" | "display_name" | "legal_name" | "email" | "status"> & { reasons?: string[] }>;
+  message?: string;
+};
+
 type AgencyProfileRow = {
   organization_id: string;
   agency_code: string | null;
@@ -408,6 +463,36 @@ const ORGANIZATION_ROLES: OrganizationRole[] = [
   "viewer",
 ];
 
+async function extractFunctionErrorMessage(error: any, payload?: any) {
+  let body: any = payload ?? null;
+  const response = error?.context;
+
+  if (!body && response && typeof response.clone === "function") {
+    try {
+      body = await response.clone().json();
+    } catch {
+      try {
+        const text = await response.clone().text();
+        body = text ? { detail: text } : null;
+      } catch {
+        body = null;
+      }
+    }
+  }
+
+  const code = body?.code || body?.error || error?.code || error?.name;
+  const step = body?.step;
+  const detail = body?.detail || body?.details || body?.message || error?.message;
+  const httpStatus = body?.status || response?.status || error?.status;
+  return [
+    body?.message || "Création agence partenaire impossible.",
+    code ? `Code: ${code}` : null,
+    step ? `Étape: ${step}` : null,
+    httpStatus ? `HTTP: ${httpStatus}` : null,
+    detail && detail !== body?.message ? `Détail: ${detail}` : null,
+  ].filter(Boolean).join(" · ");
+}
+
 const COMMISSION_STATUS_LABELS: Record<CommissionStatus, string> = {
   active: "Active",
   inactive: "Inactive",
@@ -536,6 +621,46 @@ const defaultExternalUserForm = (): ExternalUserForm => ({
   email: "",
   phone: "",
   role: "agent",
+});
+
+const defaultPartnerAgencyForm = (): PartnerAgencyCreationForm => ({
+  agency: {
+    display_name: "",
+    legal_name: "",
+    email: "",
+    phone: "",
+    website: "",
+    address: "",
+    city: "",
+    country: "Maroc",
+    ice: "",
+    rc: "",
+    if_number: "",
+    patente: "",
+    internal_notes: "",
+  },
+  contact: {
+    full_name: "",
+    login_email: "",
+    phone: "",
+    secondary_phone: "",
+    position_title: "Responsable agence",
+    point_of_sale: "",
+    preferred_language: "fr",
+    organization_role: "owner",
+  },
+  commercial: {
+    default_commission: "",
+    commission_type: "percentage",
+    status: "active",
+    margin_allowed: true,
+    booking_access: true,
+    fit_request_access: true,
+  },
+  onboarding: {
+    status: "approved",
+    review_notes: "Agence créée manuellement par l'administration.",
+  },
 });
 
 const toForm = (organization: OrganizationRow): OrganizationForm => ({
@@ -701,6 +826,11 @@ export default function OrganizationsAdmin() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<OrganizationRow | null>(null);
   const [form, setForm] = useState<OrganizationForm>(defaultForm);
+  const [partnerAgencyOpen, setPartnerAgencyOpen] = useState(false);
+  const [partnerAgencyForm, setPartnerAgencyForm] = useState<PartnerAgencyCreationForm>(defaultPartnerAgencyForm);
+  const [partnerAgencySaving, setPartnerAgencySaving] = useState(false);
+  const [partnerAgencyResult, setPartnerAgencyResult] = useState<PartnerAgencyCreationResult | null>(null);
+  const [partnerAgencyDuplicateWarning, setPartnerAgencyDuplicateWarning] = useState<PartnerAgencyCreationResult | null>(null);
   const [statusAction, setStatusAction] = useState<{
     organization: OrganizationRow;
     status: OrganizationStatus;
@@ -847,6 +977,89 @@ export default function OrganizationsAdmin() {
     setEditing(null);
     setForm(defaultForm());
     setDialogOpen(true);
+  };
+
+  const openPartnerAgencyCreate = () => {
+    setPartnerAgencyForm(defaultPartnerAgencyForm());
+    setPartnerAgencyResult(null);
+    setPartnerAgencyDuplicateWarning(null);
+    setPartnerAgencyOpen(true);
+  };
+
+  const updatePartnerAgencySection = <
+    Section extends keyof PartnerAgencyCreationForm,
+    Key extends keyof PartnerAgencyCreationForm[Section],
+  >(
+    section: Section,
+    key: Key,
+    value: PartnerAgencyCreationForm[Section][Key]
+  ) => {
+    setPartnerAgencyForm((current) => {
+      const next = {
+        ...current,
+        [section]: {
+          ...current[section],
+          [key]: value,
+        },
+      };
+      if (section === "agency" && key === "email" && !current.contact.login_email) {
+        next.contact = { ...next.contact, login_email: String(value ?? "") };
+      }
+      if (section === "agency" && key === "phone" && !current.contact.phone) {
+        next.contact = { ...next.contact, phone: String(value ?? "") };
+      }
+      return next;
+    });
+  };
+
+  const createPartnerAgency = async (allowDuplicate = false) => {
+    if (!partnerAgencyForm.agency.display_name.trim()) {
+      toast.error("Nom affiché agence obligatoire.");
+      return;
+    }
+    if (!partnerAgencyForm.contact.login_email.trim()) {
+      toast.error("Email de connexion obligatoire.");
+      return;
+    }
+
+    setPartnerAgencySaving(true);
+    setPartnerAgencyResult(null);
+    if (!allowDuplicate) setPartnerAgencyDuplicateWarning(null);
+
+    let data: any = null;
+    let error: any = null;
+    try {
+      const result = await supabase.functions.invoke("admin-users", {
+        body: {
+          action: "create_partner_agency",
+          allow_duplicate: allowDuplicate,
+          ...partnerAgencyForm,
+        },
+      });
+      data = result.data;
+      error = result.error;
+    } catch (caught) {
+      error = caught;
+    }
+
+    setPartnerAgencySaving(false);
+    const payload = (data ?? {}) as PartnerAgencyCreationResult & { error?: string; detail?: string; code?: string; step?: string };
+
+    if (payload.duplicate_suspected) {
+      setPartnerAgencyDuplicateWarning(payload);
+      toast.warning(payload.message ?? "Une agence similaire existe déjà.");
+      return;
+    }
+
+    if (error || payload.error || payload.ok === false) {
+      toast.error(await extractFunctionErrorMessage(error, payload));
+      return;
+    }
+
+    setPartnerAgencyResult(payload);
+    setPartnerAgencyDuplicateWarning(null);
+    toast.success("Agence partenaire créée.");
+    await loadOrganizations();
   };
 
   const openEdit = (organization: OrganizationRow) => {
@@ -1901,6 +2114,10 @@ export default function OrganizationsAdmin() {
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Actualiser
             </Button>
+            <Button onClick={openPartnerAgencyCreate} className="min-h-11">
+              <UserPlus className="h-4 w-4" />
+              Ajouter une agence partenaire
+            </Button>
             <Button onClick={openCreate} className="min-h-11">
               <Plus className="h-4 w-4" />
               Créer
@@ -2515,6 +2732,262 @@ export default function OrganizationsAdmin() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setMembersOpen(false)} disabled={memberBusy}>Fermer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={partnerAgencyOpen} onOpenChange={setPartnerAgencyOpen}>
+        <DialogContent className="flex max-h-[92vh] flex-col overflow-hidden sm:max-w-5xl">
+          <DialogHeader className="shrink-0">
+            <DialogTitle>Ajouter une agence partenaire</DialogTitle>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+            {partnerAgencyDuplicateWarning?.duplicate_suspects?.length ? (
+              <Card className="border-amber-200 bg-amber-50 p-4 text-amber-950">
+                <h3 className="font-semibold">Doublon possible détecté</h3>
+                <p className="mt-1 text-sm">Vérifiez l'agence existante avant de créer une nouvelle fiche.</p>
+                <div className="mt-3 space-y-2">
+                  {partnerAgencyDuplicateWarning.duplicate_suspects.map((duplicate) => (
+                    <div key={duplicate.id} className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="text-sm">
+                        <p className="font-medium">{duplicate.display_name}</p>
+                        <p className="text-amber-800/80">{duplicate.email || duplicate.legal_name || duplicate.status}</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setQuery(duplicate.display_name);
+                          setTypeFilter("agency");
+                          setPartnerAgencyOpen(false);
+                        }}
+                      >
+                        Voir dans la liste
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={() => setPartnerAgencyDuplicateWarning(null)} disabled={partnerAgencySaving}>
+                    Modifier les informations
+                  </Button>
+                  <Button onClick={() => createPartnerAgency(true)} disabled={partnerAgencySaving}>
+                    {partnerAgencySaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Créer quand même
+                  </Button>
+                </div>
+              </Card>
+            ) : null}
+
+            {partnerAgencyResult && (
+              <Card className="border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
+                <h3 className="font-semibold">Agence créée</h3>
+                <p className="mt-1 text-sm">
+                  Rôle portail : {partnerAgencyResult.app_role || "—"} · Rôle organisation : {partnerAgencyResult.organization_role || "—"}
+                </p>
+                {partnerAgencyResult.temporary_password ? (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">
+                    <p className="font-semibold">Email non envoyé automatiquement.</p>
+                    <p className="text-sm">Mot de passe provisoire à communiquer au contact :</p>
+                    <p className="mt-2 font-mono text-base">{partnerAgencyResult.temporary_password}</p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm">Utilisateur existant réutilisé. Aucun mot de passe n'a été modifié.</p>
+                )}
+              </Card>
+            )}
+
+            <Card className="p-4">
+              <h3 className="mb-4 font-semibold">A. Informations agence</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {[
+                  ["display_name", "Nom affiché *"],
+                  ["legal_name", "Raison sociale"],
+                  ["email", "Email agence"],
+                  ["phone", "Téléphone agence"],
+                  ["website", "Site web"],
+                  ["address", "Adresse"],
+                  ["city", "Ville"],
+                  ["country", "Pays"],
+                  ["ice", "ICE"],
+                  ["rc", "RC"],
+                  ["if_number", "IF"],
+                  ["patente", "Patente"],
+                ].map(([key, label]) => (
+                  <div key={key} className="space-y-2">
+                    <Label>{label}</Label>
+                    <Input
+                      value={partnerAgencyForm.agency[key as keyof PartnerAgencyCreationForm["agency"]]}
+                      onChange={(event) => updatePartnerAgencySection("agency", key as keyof PartnerAgencyCreationForm["agency"], event.target.value)}
+                      className="min-h-11"
+                    />
+                  </div>
+                ))}
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Notes internes</Label>
+                  <Textarea
+                    value={partnerAgencyForm.agency.internal_notes}
+                    onChange={(event) => updatePartnerAgencySection("agency", "internal_notes", event.target.value)}
+                    rows={3}
+                  />
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-4">
+              <h3 className="mb-4 font-semibold">B. Contact principal</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {[
+                  ["full_name", "Nom complet"],
+                  ["login_email", "Email de connexion *"],
+                  ["phone", "Téléphone"],
+                  ["secondary_phone", "Téléphone secondaire"],
+                  ["position_title", "Fonction / titre"],
+                  ["point_of_sale", "Point de vente"],
+                ].map(([key, label]) => (
+                  <div key={key} className="space-y-2">
+                    <Label>{label}</Label>
+                    <Input
+                      value={partnerAgencyForm.contact[key as keyof PartnerAgencyCreationForm["contact"]] as string}
+                      onChange={(event) => updatePartnerAgencySection("contact", key as keyof PartnerAgencyCreationForm["contact"], event.target.value)}
+                      className="min-h-11"
+                    />
+                  </div>
+                ))}
+                <div className="space-y-2">
+                  <Label>Langue préférée</Label>
+                  <Select
+                    value={partnerAgencyForm.contact.preferred_language}
+                    onValueChange={(value) => updatePartnerAgencySection("contact", "preferred_language", value)}
+                  >
+                    <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fr">Français</SelectItem>
+                      <SelectItem value="en">English</SelectItem>
+                      <SelectItem value="ar">العربية</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Rôle organisation</Label>
+                  <Select
+                    value={partnerAgencyForm.contact.organization_role}
+                    onValueChange={(value) => updatePartnerAgencySection("contact", "organization_role", value as OrganizationRole)}
+                  >
+                    <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="owner">Owner / responsable principal</SelectItem>
+                      <SelectItem value="admin">Admin agence</SelectItem>
+                      <SelectItem value="agent">Agent</SelectItem>
+                      <SelectItem value="finance">Finance</SelectItem>
+                      <SelectItem value="operations">Operations</SelectItem>
+                      <SelectItem value="viewer">Viewer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-4">
+              <h3 className="mb-4 font-semibold">C. Paramètres commerciaux</h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Commission par défaut</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={partnerAgencyForm.commercial.default_commission}
+                    onChange={(event) => updatePartnerAgencySection("commercial", "default_commission", event.target.value)}
+                    className="min-h-11"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Type de commission</Label>
+                  <Select
+                    value={partnerAgencyForm.commercial.commission_type}
+                    onValueChange={(value) => updatePartnerAgencySection("commercial", "commission_type", value as CommissionType)}
+                  >
+                    <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="percentage">Pourcentage</SelectItem>
+                      <SelectItem value="fixed_amount">Montant fixe</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Statut</Label>
+                  <Select
+                    value={partnerAgencyForm.commercial.status}
+                    onValueChange={(value) => updatePartnerAgencySection("commercial", "status", value as PartnerAgencyCreationForm["commercial"]["status"])}
+                  >
+                    <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Actif</SelectItem>
+                      <SelectItem value="pending">En attente</SelectItem>
+                      <SelectItem value="suspended">Suspendu</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                {[
+                  ["margin_allowed", "Marge autorisée"],
+                  ["booking_access", "Accès réservation"],
+                  ["fit_request_access", "Accès demande FIT"],
+                ].map(([key, label]) => (
+                  <label key={key} className="flex min-h-11 items-center gap-2 rounded-md border border-border px-3 text-sm">
+                    <Checkbox
+                      checked={Boolean(partnerAgencyForm.commercial[key as keyof PartnerAgencyCreationForm["commercial"]])}
+                      onCheckedChange={(checked) => updatePartnerAgencySection("commercial", key as keyof PartnerAgencyCreationForm["commercial"], Boolean(checked) as never)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </Card>
+
+            <Card className="p-4">
+              <h3 className="mb-4 font-semibold">D. Onboarding documents</h3>
+              <div className="grid gap-4 sm:grid-cols-[260px_minmax(0,1fr)]">
+                <div className="space-y-2">
+                  <Label>Validation onboarding</Label>
+                  <Select
+                    value={partnerAgencyForm.onboarding.status}
+                    onValueChange={(value) => updatePartnerAgencySection("onboarding", "status", value as PartnerAgencyCreationForm["onboarding"]["status"])}
+                  >
+                    <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="approved">Validé directement</SelectItem>
+                      <SelectItem value="missing_documents">Documents à compléter</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/30 p-3 text-sm text-muted-foreground">
+                  Documents requis : RC agence de voyage, Autorisation d’exercice agence de voyage, Attestation fiscale ou ICE,
+                  Attestation bancaire, CIN du gérant.
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Note onboarding</Label>
+                  <Textarea
+                    value={partnerAgencyForm.onboarding.review_notes}
+                    onChange={(event) => updatePartnerAgencySection("onboarding", "review_notes", event.target.value)}
+                    rows={3}
+                  />
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t bg-background pt-4">
+            <Button variant="outline" onClick={() => setPartnerAgencyOpen(false)} disabled={partnerAgencySaving}>
+              Fermer
+            </Button>
+            <Button onClick={() => createPartnerAgency(false)} disabled={partnerAgencySaving || !partnerAgencyForm.agency.display_name.trim() || !partnerAgencyForm.contact.login_email.trim()}>
+              {partnerAgencySaving && <Loader2 className="h-4 w-4 animate-spin" />}
+              Créer l'agence partenaire
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3285,6 +3758,7 @@ export default function OrganizationsAdmin() {
                   ].map(({ key, label }) => {
                     const doc = onboardingDocumentsByType.get(key) ?? onboardingDisplayData.documents?.[key];
                     const fileName = doc?.file_name ?? doc?.filename ?? doc?.name ?? null;
+                    const hasDownloadableFile = Boolean(doc?.file_path || doc?.storage_path);
                     return (
                       <div key={key} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
                         <div className="min-w-0">
@@ -3306,7 +3780,7 @@ export default function OrganizationsAdmin() {
                               <option value="rejected">refusé / à remplacer</option>
                             </select>
                           )}
-                          {doc && (
+                          {doc && hasDownloadableFile && (
                             <Button
                               type="button"
                               variant="outline"

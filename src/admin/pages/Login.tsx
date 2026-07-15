@@ -108,6 +108,13 @@ export default function AdminLogin() {
             {busy ? "…" : mode === "login" ? "Se connecter" : "Créer le compte"}
           </Button>
         </form>
+        {mode === "login" && (
+          <p className="mt-3 text-center text-sm">
+            <Link to="/admin/mot-de-passe-oublie" className="font-medium text-accent underline underline-offset-4">
+              Mot de passe oublié ?
+            </Link>
+          </p>
+        )}
         {recaptchaEnabled && (
           <p className="text-[11px] text-muted-foreground text-center mt-4 leading-relaxed">
             Protégé par reCAPTCHA — la{" "}

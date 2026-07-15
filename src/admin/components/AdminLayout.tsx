@@ -3,7 +3,7 @@ import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Plane, CalendarCheck, Sparkles, Users, FileText, Wallet, Banknote,
   Image as ImageIcon, Building2, BookOpen, LogOut, ShieldCheck, Mail, Stamp, ListChecks, Menu, Map, Type, Send, HelpCircle, Languages, Settings, Archive, Palette, Hotel,
-  Bell, FileSignature,
+  Bell, FileSignature, ChevronDown, BriefcaseBusiness, CircleDollarSign, FolderKanban, UserCog,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -18,47 +18,112 @@ import { registerAdminPushSubscription } from "@/admin/lib/push-notifications";
 import { toast } from "sonner";
 import { SUPPLIER_PORTAL_PATH } from "../lib/portal-access";
 
-type NavSection = "Core" | "Sales" | "Content" | "Partners" | "System";
-type AdminNavItem = { to: string; icon: any; label: string; end?: boolean; module: ModuleKey; section: NavSection };
+type NavGroupId = "dashboard" | "sales" | "visa" | "operations" | "partners" | "finance" | "marketing" | "administration";
+type AdminNavItem = { to: string; icon: any; label: string; end?: boolean; module: ModuleKey };
+type AdminNavGroup = { id: NavGroupId; label: string; icon: any; items: AdminNavItem[] };
 
-const nav: AdminNavItem[] = [
-  { to: "/admin", icon: LayoutDashboard, label: "Vue d'ensemble", end: true, module: "dashboard", section: "Core" },
-  { to: "/admin/trips", icon: Plane, label: "Voyages", module: "trips", section: "Sales" },
-  { to: "/admin/bookings", icon: CalendarCheck, label: "Réservations", module: "bookings", section: "Sales" },
-  { to: "/admin/accounting", icon: Banknote, label: "Comptabilité", module: "accounting", section: "Sales" },
-  { to: "/admin/travel-agreements", icon: FileSignature, label: "Accords de voyage", module: "travel_agreements", section: "Sales" },
-  { to: "/admin/clients", icon: Users, label: "Clients (CRM)", module: "clients", section: "Sales" },
-  { to: "/admin/extras", icon: Sparkles, label: "Extras", module: "extras", section: "Sales" },
-  { to: "/admin/suppliers", icon: Building2, label: "Fournisseurs", module: "suppliers", section: "Sales" },
-  { to: "/admin/supplier-costs", icon: Wallet, label: "Coûts fournisseurs", module: "supplier_costs", section: "Sales" },
-  { to: "/admin/fit-quotes", icon: FileText, label: "Devis FIT", module: "fit_quotes", section: "Sales" },
-  { to: "/sales/fit-quotes", icon: FileText, label: "Devis FIT", module: "partner_fit_quotes", section: "Sales" },
-  { to: "/admin/international-payments", icon: Banknote, label: "Paiements internationaux", module: "international_payments", section: "Sales" },
-  { to: "/admin/visa", icon: Stamp, label: "Demandes de visa", module: "visa", section: "Sales" },
-  { to: "/admin/visa-checklists", icon: ListChecks, label: "Documents requis", module: "visa_checklists", section: "Sales" },
-  { to: "/admin/visa-settings", icon: ShieldCheck, label: "Bureau Japon", module: "visa_settings", section: "Sales" },
-  { to: "/admin/articles", icon: BookOpen, label: "Articles", module: "articles", section: "Content" },
-  { to: "/admin/pages", icon: FileText, label: "Pages", module: "pages", section: "Content" },
-  { to: "/admin/faqs", icon: HelpCircle, label: "FAQ", module: "faqs", section: "Content" },
-  { to: "/admin/frontend", icon: Type, label: "Frontend (textes)", module: "frontend", section: "Content" },
-  { to: "/admin/translations", icon: Languages, label: "Traductions", module: "translations", section: "Content" },
-  { to: "/admin/programmes", icon: Map, label: "Programmes", module: "programmes", section: "Content" },
-  { to: "/admin/hotels", icon: Hotel, label: "Hôtels", module: "hotels", section: "Content" },
-  { to: "/admin/media", icon: ImageIcon, label: "Médias", module: "media", section: "Content" },
-  { to: "/admin/partner-requests", icon: Building2, label: "Demandes partenaires", module: "partner_requests", section: "Partners" },
-  { to: "/admin/agency-fit-requests", icon: FileText, label: "Agences · Demandes FIT", module: "agency_fit_requests", section: "Partners" },
-  { to: "/admin/organizations", icon: Building2, label: "Organizations", module: "organizations", section: "Partners" },
-  { to: "/admin/agency-settings", icon: Settings, label: "Informations agence", module: "agency_settings", section: "Partners" },
-  { to: "/admin/marketing", icon: Send, label: "Emailing marketing", module: "marketing", section: "Partners" },
-  { to: "/admin/users", icon: ShieldCheck, label: "Utilisateurs & Rôles", module: "users", section: "System" },
-  { to: "/admin/email-settings", icon: Mail, label: "Paramètres email", module: "email_settings", section: "System" },
-  { to: "/admin/email-templates", icon: FileText, label: "Templates email", module: "email_templates", section: "System" },
-  { to: "/admin/email-logs", icon: Mail, label: "Email Logs", module: "email_logs", section: "System" },
-  { to: "/admin/backups", icon: Archive, label: "System · Backups", module: "backups", section: "System" },
-  { to: "/admin/theme", icon: Palette, label: "Thème", module: "theme", section: "System" },
+const ADMIN_NAV_STATE_KEY = "lejapon.admin.nav.openGroups";
+const ADMIN_LAST_PAGE_KEY = "lejapon.admin.lastPage";
+
+const navGroups: AdminNavGroup[] = [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    items: [
+      { to: "/admin", icon: LayoutDashboard, label: "Vue d'ensemble", end: true, module: "dashboard" },
+    ],
+  },
+  {
+    id: "sales",
+    label: "Sales",
+    icon: BriefcaseBusiness,
+    items: [
+      { to: "/admin/bookings", icon: CalendarCheck, label: "Réservations", module: "bookings" },
+      { to: "/admin/fit-quotes", icon: FileText, label: "Devis FIT", module: "fit_quotes" },
+      { to: "/sales/fit-quotes", icon: FileText, label: "Devis FIT sales", module: "partner_fit_quotes" },
+      { to: "/admin/travel-agreements", icon: FileSignature, label: "Accords de voyage", module: "travel_agreements" },
+      { to: "/admin/clients", icon: Users, label: "Clients CRM", module: "clients" },
+    ],
+  },
+  {
+    id: "visa",
+    label: "Visa Center",
+    icon: Stamp,
+    items: [
+      { to: "/admin/visa", icon: Stamp, label: "Demandes de visa", module: "visa" },
+      { to: "/admin/visa-checklists", icon: ListChecks, label: "Documents visa", module: "visa_checklists" },
+      { to: "/admin/visa-settings", icon: ShieldCheck, label: "Suivi & Bureau Japon", module: "visa_settings" },
+      { to: "/admin/email-logs", icon: Mail, label: "Historique emails visa", module: "email_logs" },
+    ],
+  },
+  {
+    id: "operations",
+    label: "Operations",
+    icon: Plane,
+    items: [
+      { to: "/admin/trips", icon: Plane, label: "Voyages", module: "trips" },
+      { to: "/admin/operations-center", icon: ListChecks, label: "Operations Center", module: "operations_center" },
+      { to: "/admin/programmes", icon: Map, label: "Programmes opérationnels", module: "programmes" },
+      { to: "/admin/hotels", icon: Hotel, label: "Hôtels", module: "hotels" },
+      { to: "/admin/extras", icon: Sparkles, label: "Activités & extras", module: "extras" },
+      { to: "/admin/suppliers", icon: Building2, label: "Fournisseurs Japon", module: "suppliers" },
+      { to: "/admin/supplier-costs", icon: Wallet, label: "Coûts fournisseurs", module: "supplier_costs" },
+      { to: "/admin/international-payments", icon: Banknote, label: "Paiements Japon", module: "international_payments" },
+    ],
+  },
+  {
+    id: "partners",
+    label: "Partner Agencies",
+    icon: Building2,
+    items: [
+      { to: "/admin/organizations", icon: Building2, label: "Organisations", module: "organizations" },
+      { to: "/admin/partner-requests", icon: Users, label: "Demandes partenaires", module: "partner_requests" },
+      { to: "/admin/agency-fit-requests", icon: FolderKanban, label: "Agency FIT", module: "agency_fit_requests" },
+      { to: "/admin/agency-settings", icon: Settings, label: "Paramètres agence", module: "agency_settings" },
+    ],
+  },
+  {
+    id: "finance",
+    label: "Finance",
+    icon: CircleDollarSign,
+    items: [
+      { to: "/admin/accounting", icon: Banknote, label: "Comptabilité", module: "accounting" },
+      { to: "/admin/international-payments", icon: Wallet, label: "Paiements", module: "international_payments" },
+      { to: "/admin/supplier-costs", icon: CircleDollarSign, label: "Commissions & coûts", module: "supplier_costs" },
+    ],
+  },
+  {
+    id: "marketing",
+    label: "Marketing",
+    icon: Send,
+    items: [
+      { to: "/admin/marketing", icon: Send, label: "Marketing dashboard", module: "marketing" },
+      { to: "/admin/articles", icon: BookOpen, label: "Blog & articles", module: "articles" },
+      { to: "/admin/pages", icon: FileText, label: "Pages éditoriales", module: "pages" },
+      { to: "/admin/media", icon: ImageIcon, label: "Media library", module: "media" },
+      { to: "/admin/email-templates", icon: FileText, label: "Email templates", module: "email_templates" },
+    ],
+  },
+  {
+    id: "administration",
+    label: "Administration",
+    icon: UserCog,
+    items: [
+      { to: "/admin/users", icon: ShieldCheck, label: "Users, rôles & permissions", module: "users" },
+      { to: "/admin/user-guide", icon: HelpCircle, label: "FAQ & User Guide", module: "faqs" },
+      { to: "/admin/faqs", icon: HelpCircle, label: "FAQ publique", module: "faqs" },
+      { to: "/admin/email-settings", icon: Mail, label: "Paramètres email", module: "email_settings" },
+      { to: "/admin/email-logs", icon: Mail, label: "Logs emails", module: "email_logs" },
+      { to: "/admin/translations", icon: Languages, label: "Traductions", module: "translations" },
+      { to: "/admin/frontend", icon: Type, label: "Textes interface", module: "frontend" },
+      { to: "/admin/backups", icon: Archive, label: "Backups", module: "backups" },
+      { to: "/admin/theme", icon: Palette, label: "Design system", module: "theme" },
+    ],
+  },
 ];
 
-const sectionOrder: NavSection[] = ["Core", "Sales", "Content", "Partners", "System"];
+const flatNav = navGroups.flatMap((group) => group.items);
 
 const PlatformVersionBadge = ({ compact = false }: { compact?: boolean }) => (
   <div
@@ -78,6 +143,18 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<AdminThemeId>(() => readAdminTheme());
   const [pushBusy, setPushBusy] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") {
+      return { dashboard: true, sales: true, visa: true, operations: true };
+    }
+    try {
+      const stored = window.localStorage.getItem(ADMIN_NAV_STATE_KEY);
+      if (stored) return JSON.parse(stored);
+    } catch {
+      // Keep default groups open when localStorage is unavailable or corrupted.
+    }
+    return { dashboard: true, sales: true, visa: true, operations: true };
+  });
 
   useEffect(() => {
     const syncTheme = (event?: Event) => {
@@ -92,7 +169,27 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
     };
   }, []);
 
-  const visibleNav = useMemo(() => nav.filter((n) => can(n.module)), [can]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ADMIN_LAST_PAGE_KEY, loc.pathname);
+    } catch {
+      // Non-critical convenience only.
+    }
+  }, [loc.pathname]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ADMIN_NAV_STATE_KEY, JSON.stringify(openGroups));
+    } catch {
+      // Non-critical navigation preference only.
+    }
+  }, [openGroups]);
+
+  const visibleGroups = useMemo(() => navGroups
+    .map((group) => ({ ...group, items: group.items.filter((item) => can(item.module)) }))
+    .filter((group) => group.items.length > 0),
+  [can]);
+  const visibleNav = useMemo(() => visibleGroups.flatMap((group) => group.items), [visibleGroups]);
   const isPremium = theme === "premium-dashboard";
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Chargement…</div>;
@@ -106,6 +203,9 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
     </div>
   );
 
+  const isItemActive = (item: AdminNavItem) =>
+    item.end ? loc.pathname === item.to : loc.pathname === item.to || loc.pathname.startsWith(`${item.to}/`);
+
   const NavLinkItem = ({ item, onNavigate }: { item: AdminNavItem; onNavigate?: () => void }) => {
     const Icon = item.icon;
     return (
@@ -116,15 +216,21 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
         onClick={onNavigate}
         className={({ isActive }) =>
           cn(
-            "admin-sidebar-link flex items-center gap-3 rounded-lg text-sm font-medium transition-colors",
-            isActive ? "admin-sidebar-link-active" : "admin-sidebar-link-idle"
+            "admin-sidebar-link group relative flex items-center gap-3 rounded-md border-l-2 px-3 py-2.5 text-[14px] font-medium transition-all duration-200 ease-out",
+            isActive
+              ? "admin-sidebar-link-active border-l-orange-500 bg-sky-50 text-slate-950 font-semibold"
+              : "admin-sidebar-link-idle border-l-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-950"
           )
         }
       >
-        <Icon className="w-4 h-4 shrink-0" />
+        <Icon className="h-5 w-5 shrink-0 stroke-[2]" />
         <span className="truncate">{item.label}</span>
       </NavLink>
     );
+  };
+
+  const toggleGroup = (id: NavGroupId) => {
+    setOpenGroups((current) => ({ ...current, [id]: !current[id] }));
   };
 
   const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => (
@@ -136,26 +242,37 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
         </NavLink>
       </div>
       <nav className="flex-1 overflow-y-auto p-3">
-        {isPremium ? (
-          <div className="space-y-5">
-            {sectionOrder.map((section) => {
-              const items = visibleNav.filter((item) => item.section === section);
-              if (!items.length) return null;
-              return (
-                <div key={section} className="space-y-1">
-                  <p className="admin-sidebar-section px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em]">
-                    {section}
-                  </p>
-                  {items.map((item) => <NavLinkItem key={item.to} item={item} onNavigate={onNavigate} />)}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {visibleNav.map((item) => <NavLinkItem key={item.to} item={item} onNavigate={onNavigate} />)}
-          </div>
-        )}
+        <div className="space-y-3">
+          {visibleGroups.map((group) => {
+            const GroupIcon = group.icon;
+            const active = group.items.some(isItemActive);
+            const isOpen = openGroups[group.id] ?? active;
+            return (
+              <div key={group.id} className="space-y-1">
+                <button
+                  type="button"
+                  className={cn(
+                    "admin-sidebar-section flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-[15px] font-bold tracking-normal transition-colors duration-200 ease-out",
+                    isOpen || active
+                      ? "bg-slate-100 text-slate-950"
+                      : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"
+                  )}
+                  aria-expanded={isOpen}
+                  onClick={() => toggleGroup(group.id)}
+                >
+                  <GroupIcon className="h-5 w-5 shrink-0 stroke-[2] text-slate-900" />
+                  <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                  <ChevronDown className={cn("h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 ease-out", isOpen ? "rotate-180" : "")} />
+                </button>
+                {isOpen && (
+                  <div className="ml-5 space-y-1 rounded-l border-l-2 border-[#D1D5DB] pl-3">
+                    {group.items.map((item) => <NavLinkItem key={`${group.id}-${item.to}`} item={item} onNavigate={onNavigate} />)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </nav>
       <div className="admin-sidebar-footer p-3 border-t">
         <PlatformVersionBadge />
@@ -184,7 +301,7 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
     "/admin/programmes": "Prog.",
     "/admin/visa": "Visa",
   };
-  const current = nav.find((n) => (n.end ? loc.pathname === n.to : loc.pathname === n.to || loc.pathname.startsWith(`${n.to}/`)));
+  const current = flatNav.find((n) => (n.end ? loc.pathname === n.to : loc.pathname === n.to || loc.pathname.startsWith(`${n.to}/`)));
   const enablePushNotifications = async () => {
     setPushBusy(true);
     try {

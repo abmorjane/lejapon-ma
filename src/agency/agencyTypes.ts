@@ -1,6 +1,6 @@
 export type AgencyOrganizationStatus = "active" | "suspended" | "archived";
 export type AgencyMemberStatus = "active" | "suspended";
-export type AgencyMemberRole = "owner" | "admin" | "agent" | "finance" | "operations" | "viewer";
+export type AgencyMemberRole = "owner" | "admin" | "manager" | "agent" | "sales_agent" | "finance" | "accountant" | "operations" | "viewer";
 
 export type AgencyOrganization = {
   id: string;
@@ -72,7 +72,7 @@ export type AgencyBooking = {
 export type CommissionRule = {
   id: string;
   organization_id: string;
-  scope: "agency_default" | "destination" | "product" | "trip_override";
+  scope: "agency_default" | "global" | "destination" | "product" | "trip_override";
   rule_type: "percentage" | "fixed_amount";
   value: number;
   currency: string;

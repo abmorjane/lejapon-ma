@@ -16,6 +16,7 @@ import { optimizeImage } from "@/lib/image-upload";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { blogMarkdownToHtml } from "@/lib/blog-markdown";
+import { useDraftAutosave, useUnsavedChangesGuard } from "@/hooks/useDraftAutosave";
 
 type Category = { id: string; name: string; slug: string };
 
@@ -43,6 +44,31 @@ const empty: any = {
   published_at: null,
 };
 
+const draftFields = [
+  "id",
+  "title",
+  "slug",
+  "excerpt",
+  "body",
+  "cover_url",
+  "cover_alt",
+  "category",
+  "status",
+  "tags",
+  "meta_title",
+  "meta_description",
+  "gallery_images",
+  "published_at",
+] as const;
+
+const articleDraftValue = (article: any) =>
+  draftFields.reduce((acc, field) => {
+    acc[field] = article?.[field] ?? (Array.isArray(empty[field]) ? [] : empty[field] ?? null);
+    return acc;
+  }, {} as Record<string, unknown>);
+
+const draftSignature = (article: any) => JSON.stringify(articleDraftValue(article));
+
 const uploadImage = async (file: File): Promise<string> => {
   const optimized = await optimizeImage(file);
   const ext = optimized.name.split(".").pop() || "webp";
@@ -67,6 +93,26 @@ export default function Articles() {
   const [busy, setBusy] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
+  const [baselineSignature, setBaselineSignature] = useState(draftSignature(empty));
+
+  const currentDraft = useMemo(() => articleDraftValue(edit), [edit]);
+  const currentSignature = useMemo(() => JSON.stringify(currentDraft), [currentDraft]);
+  const draftKey = open
+    ? `lejapon:admin:articles:draft:${user?.id ?? "anonymous"}:${edit.id ?? "new"}`
+    : null;
+  const isDirty = open && currentSignature !== baselineSignature;
+  const { restoredAt, clearDraft } = useDraftAutosave({
+    key: draftKey,
+    value: currentDraft,
+    enabled: open,
+    dirty: isDirty,
+    delayMs: 1500,
+    onRestore: (draft) => {
+      setEdit((current: any) => ({ ...current, ...draft }));
+      toast.info("Brouillon local restauré.");
+    },
+  });
+  useUnsavedChangesGuard(isDirty || busy || uploadingCover || uploadingGallery);
 
   const load = async () => {
     const [{ data: arts }, { data: cats }] = await Promise.all([
@@ -77,6 +123,39 @@ export default function Articles() {
     setCategories(cats ?? []);
   };
   useEffect(() => { load(); }, []);
+
+  const resetEditor = () => {
+    setEdit(empty);
+    setTagInput("");
+    setNewCategory("");
+    setBaselineSignature(draftSignature(empty));
+  };
+
+  const openNewArticle = () => {
+    setEdit(empty);
+    setTagInput("");
+    setNewCategory("");
+    setBaselineSignature(draftSignature(empty));
+    setOpen(true);
+  };
+
+  const openExistingArticle = (article: any) => {
+    setEdit(article);
+    setTagInput("");
+    setNewCategory("");
+    setBaselineSignature(draftSignature(article));
+    setOpen(true);
+  };
+
+  const handleEditorOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) {
+      setOpen(true);
+      return;
+    }
+    if (isDirty && !window.confirm("Vous avez des modifications non enregistrées. Fermer l’éditeur ?")) return;
+    setOpen(false);
+    resetEditor();
+  };
 
   const handleTitleChange = (title: string) => {
     setEdit((prev: any) => ({
@@ -256,8 +335,9 @@ export default function Articles() {
         : await supabase.from("articles").insert(payload);
       if (error) throw error;
       toast.success("Article enregistré");
+      clearDraft();
       setOpen(false);
-      setEdit(empty);
+      resetEditor();
       load();
     } catch (e: any) {
       toast.error(e.message ?? "Erreur d'enregistrement");
@@ -282,9 +362,9 @@ export default function Articles() {
         title="Articles (Blog)"
         description="Articles publiés sur /blog. Catégories, galerie et SEO."
         action={
-          <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setEdit(empty); setTagInput(""); setNewCategory(""); } }}>
+          <Dialog open={open} onOpenChange={handleEditorOpenChange}>
             <DialogTrigger asChild>
-              <Button><Plus className="w-4 h-4" /> Nouvel article</Button>
+              <Button onClick={openNewArticle}><Plus className="w-4 h-4" /> Nouvel article</Button>
             </DialogTrigger>
             <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto">
               <DialogHeader>
@@ -292,6 +372,23 @@ export default function Articles() {
               </DialogHeader>
 
               <div className="space-y-6">
+                {restoredAt && (
+                  <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+                    <span>Brouillon local restauré. Dernière sauvegarde locale : {new Date(restoredAt).toLocaleString("fr-FR")}.</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        clearDraft();
+                        toast.success("Brouillon local effacé.");
+                      }}
+                    >
+                      Effacer le brouillon local
+                    </Button>
+                  </div>
+                )}
+
                 {/* CONTENU */}
                 <section className="space-y-3">
                   <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Contenu</h3>
@@ -620,7 +717,7 @@ export default function Articles() {
                 <td className="p-4"><StatusBadge value={a.status} /></td>
                 <td className="p-4 text-xs text-muted-foreground">{a.published_at ? fmtDate(a.published_at) : "—"}</td>
                 <td className="p-4 text-right">
-                  <Button size="sm" variant="ghost" onClick={() => { setEdit(a); setOpen(true); }}><Pencil className="w-4 h-4" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => openExistingArticle(a)}><Pencil className="w-4 h-4" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => remove(a.id)}><Trash2 className="w-4 h-4" /></Button>
                 </td>
               </tr>

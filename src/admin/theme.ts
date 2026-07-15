@@ -24,7 +24,7 @@ export const ADMIN_THEMES: Record<AdminThemeId, AdminThemeConfig> = {
   },
 };
 
-export const DEFAULT_ADMIN_THEME: AdminThemeId = "classic";
+export const DEFAULT_ADMIN_THEME: AdminThemeId = "premium-dashboard";
 
 export function isAdminThemeId(value: unknown): value is AdminThemeId {
   return typeof value === "string" && value in ADMIN_THEMES;

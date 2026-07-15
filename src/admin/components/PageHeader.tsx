@@ -1,11 +1,75 @@
 import { ReactNode } from "react";
+import { Link, useLocation } from "react-router-dom";
 
-export const PageHeader = ({ title, description, action }: { title: string; description?: string; action?: ReactNode }) => (
-  <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
-    <div className="min-w-0">
-      <h1 className="font-display text-2xl md:text-3xl">{title}</h1>
-      {description && <p className="text-muted-foreground mt-1 text-sm">{description}</p>}
-    </div>
-    {action && <div className="flex w-full sm:w-auto sm:justify-end">{action}</div>}
-  </header>
-);
+const segmentLabels: Record<string, string> = {
+  admin: "Admin",
+  sales: "Sales",
+  bookings: "Réservations",
+  clients: "Clients",
+  trips: "Voyages",
+  programmes: "Programmes",
+  hotels: "Hôtels",
+  visa: "Visa",
+  accounting: "Comptabilité",
+  organizations: "Organisations",
+  marketing: "Marketing",
+  articles: "Articles",
+  pages: "Pages",
+  media: "Médias",
+  users: "Utilisateurs",
+  suppliers: "Fournisseurs",
+  "supplier-costs": "Coûts fournisseurs",
+  "fit-quotes": "Devis FIT",
+  "agency-fit-requests": "Demandes FIT",
+  "travel-agreements": "Accords de voyage",
+  "email-templates": "Templates email",
+  "email-logs": "Logs email",
+  "email-settings": "Paramètres email",
+  "visa-checklists": "Documents visa",
+  "visa-settings": "Bureau Japon",
+  "user-guide": "FAQ & User Guide",
+};
+
+const humanizeSegment = (segment: string) =>
+  segmentLabels[segment] ?? segment.replace(/-/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const buildCrumbs = (pathname: string) => {
+  const segments = pathname.split("/").filter(Boolean);
+  return segments.map((segment, index) => ({
+    raw: segment,
+    label: humanizeSegment(segment),
+    href: `/${segments.slice(0, index + 1).join("/")}`,
+    current: index === segments.length - 1,
+  }));
+};
+
+export const PageHeader = ({ title, description, action }: { title: string; description?: string; action?: ReactNode }) => {
+  const location = useLocation();
+  const crumbs = buildCrumbs(location.pathname).filter((crumb) => !/^[0-9a-f-]{16,}$/i.test(crumb.raw));
+
+  return (
+    <header className="mb-6 rounded-lg border bg-card px-4 py-4 shadow-sm sm:px-5">
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        {crumbs.map((crumb, index) => (
+          <span key={crumb.href} className="inline-flex items-center gap-1.5">
+            {index > 0 && <span className="text-border">/</span>}
+            {crumb.current ? (
+              <span className="text-foreground">{crumb.label}</span>
+            ) : (
+              <Link to={crumb.href} className="transition-colors hover:text-foreground">
+                {crumb.label}
+              </Link>
+            )}
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="font-display text-2xl leading-tight tracking-normal md:text-3xl">{title}</h1>
+          {description && <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>}
+        </div>
+        {action && <div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">{action}</div>}
+      </div>
+    </header>
+  );
+};

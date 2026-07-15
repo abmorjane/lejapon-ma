@@ -21,6 +21,7 @@ const SUPPORTED_ACTIONS = [
   "update_profile",
   "reset_password",
   "create_external_user",
+  "create_partner_agency",
   "delete_user_safely",
   "remove_organization_member",
   "delete_external_user_safely",
@@ -96,6 +97,34 @@ function authUserAvatar(user: any) {
   return cleanString(metadata?.avatar_url) ?? cleanString(metadata?.picture);
 }
 
+function normalizeEmail(value: unknown) {
+  const email = cleanString(value)?.toLowerCase() ?? null;
+  return email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+function normalizeLoose(value: unknown) {
+  return cleanString(value)?.toLowerCase().replace(/\s+/g, " ") ?? null;
+}
+
+function agencyDocumentStatusMap(status: "approved" | "missing") {
+  const documentKeys = [
+    "travel_agency_rc",
+    "travel_agency_authorization",
+    "tax_or_ice_certificate",
+    "bank_certificate",
+    "manager_cin",
+  ];
+  return Object.fromEntries(
+    documentKeys.map((key) => [
+      key,
+      {
+        status: status === "approved" ? "validated" : "missing",
+        source: "admin_manual_creation",
+      },
+    ])
+  );
+}
+
 function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error) return String((error as { message?: unknown }).message);
@@ -104,6 +133,73 @@ function errorMessage(error: unknown) {
 
 function errorStack(error: unknown) {
   return error instanceof Error ? error.stack ?? null : null;
+}
+
+function safeErrorDetails(error: unknown) {
+  if (!error) return null;
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    return [
+      record.code ? `code=${String(record.code)}` : null,
+      record.message ? `message=${String(record.message)}` : null,
+      record.details ? `details=${String(record.details)}` : null,
+      record.hint ? `hint=${String(record.hint)}` : null,
+    ].filter(Boolean).join(" · ") || JSON.stringify(record);
+  }
+  return String(error);
+}
+
+function jsonError(message: string, code: string, status = 400, step: string | null = null, detail: unknown = null) {
+  return json({
+    ok: false,
+    code,
+    step,
+    message,
+    detail: safeErrorDetails(detail),
+    status,
+  }, status);
+}
+
+function logPartnerAgencyStep(requestId: string, step: string, data: Record<string, unknown> = {}) {
+  console.log("[admin-users] create_partner_agency", {
+    function_version: FUNCTION_VERSION,
+    request_id: requestId,
+    step,
+    ...data,
+  });
+}
+
+async function cleanupPartnerAgencyCreation(
+  admin: any,
+  requestId: string,
+  created: { organizationId?: string | null; authUserId?: string | null; createdAuthUser?: boolean },
+) {
+  if (!created.organizationId && !(created.authUserId && created.createdAuthUser)) return;
+  logPartnerAgencyStep(requestId, "rollback_start", {
+    organization_id: created.organizationId ?? null,
+    created_auth_user: Boolean(created.createdAuthUser),
+  });
+  try {
+    if (created.organizationId) {
+      await admin.from("partner_onboarding_cases").delete().eq("organization_id", created.organizationId);
+      await admin.from("organization_member_profiles").delete().eq("organization_id", created.organizationId);
+      await admin.from("organization_members").delete().eq("organization_id", created.organizationId);
+      await admin.from("agency_profiles").delete().eq("organization_id", created.organizationId);
+      await admin.from("organizations").delete().eq("id", created.organizationId);
+    }
+    if (created.authUserId && created.createdAuthUser) {
+      await admin.auth.admin.deleteUser(created.authUserId);
+    }
+    logPartnerAgencyStep(requestId, "rollback_done");
+  } catch (cleanupError) {
+    console.error("[admin-users] create_partner_agency rollback_failed", {
+      function_version: FUNCTION_VERSION,
+      request_id: requestId,
+      detail: safeErrorDetails(cleanupError),
+    });
+  }
 }
 
 async function countRows(admin: any, table: string, column: string, value: string) {
@@ -170,7 +266,11 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE);
 
-    // Caller must be super_admin. Support both legacy and newer helper names.
+    const body = await req.json();
+    const action = (body.action || body.type || body.operation || body.name || body.actionName) as string | undefined;
+
+    // Most user-management actions remain super_admin only. Manual partner agency
+    // creation can be done by admin/manager users from the organizations module.
     let isSuper = false;
     const { data: isSuperViaIsSuperAdmin, error: isSuperAdminError } = await admin.rpc("is_super_admin", { _user_id: callerId });
     if (!isSuperAdminError) isSuper = Boolean(isSuperViaIsSuperAdmin);
@@ -178,10 +278,19 @@ Deno.serve(async (req) => {
       const { data: isSuperViaHasRole, error: hasRoleError } = await admin.rpc("has_role", { _user_id: callerId, _role: "super_admin" });
       if (!hasRoleError) isSuper = Boolean(isSuperViaHasRole);
     }
-    if (!isSuper) return json({ error: "Forbidden — super_admin only" }, 403);
-
-    const body = await req.json();
-    const action = (body.action || body.type || body.operation || body.name || body.actionName) as string | undefined;
+    const callerRoles = await getUserRoles(admin, callerId).catch(() => []);
+    const canCreatePartnerAgency = isSuper || callerRoles.some((role) => ["admin", "manager"].includes(role));
+    if (!isSuper && !(action === "create_partner_agency" && canCreatePartnerAgency)) {
+      return jsonError(
+        action === "create_partner_agency"
+          ? "Vous n'avez pas les droits nécessaires pour créer une agence partenaire."
+          : "Action réservée au super administrateur.",
+        action === "create_partner_agency" ? "not_authorized_for_partner_agency_creation" : "super_admin_required",
+        403,
+        "authorization",
+        { caller_id: callerId, roles: callerRoles },
+      );
+    }
 
     if (action === "list") {
       const usersList = await listAllAuthUsers(admin);
@@ -462,14 +571,14 @@ Deno.serve(async (req) => {
 
       if (!authUser) {
         temporaryPassword = makeTemporaryPassword();
-        const { data: created, error } = await admin.auth.admin.createUser({
+        const { data: createdAuth, error } = await admin.auth.admin.createUser({
           email: normalizedEmail,
           password: temporaryPassword,
           email_confirm: true,
           user_metadata: { full_name: full_name ?? "" },
         });
         if (error) return json({ error: "auth user creation failed", detail: error.message }, 500);
-        authUser = created.user;
+        authUser = createdAuth.user;
         createdAuthUser = true;
       }
 
@@ -536,6 +645,332 @@ Deno.serve(async (req) => {
         message: temporaryPassword
           ? "External user created. Communicate the temporary password manually."
           : "Existing auth user added/reused. No password was changed.",
+      });
+    }
+
+    if (action === "create_partner_agency") {
+      const requestId = crypto.randomUUID();
+      const payload = body as Record<string, any>;
+      const agency = payload.agency ?? {};
+      const contact = payload.contact ?? {};
+      const commercial = payload.commercial ?? {};
+      const onboarding = payload.onboarding ?? {};
+      const allowDuplicate = Boolean(payload.allow_duplicate);
+      const created: { organizationId?: string | null; authUserId?: string | null; createdAuthUser?: boolean } = {};
+      const failAfterPartial = async (message: string, code: string, status: number, step: string, detail: unknown) => {
+        console.error("[admin-users] create_partner_agency failed", {
+          function_version: FUNCTION_VERSION,
+          request_id: requestId,
+          step,
+          code,
+          detail: safeErrorDetails(detail),
+        });
+        await cleanupPartnerAgencyCreation(admin, requestId, created);
+        return jsonError(message, code, status, step, detail);
+      };
+
+      const displayName = cleanString(agency.display_name);
+      const loginEmail = normalizeEmail(contact.login_email ?? contact.email);
+      logPartnerAgencyStep(requestId, "payload_received", {
+        caller_id: callerId,
+        caller_roles: callerRoles,
+        admin_check: canCreatePartnerAgency,
+        organization_name: displayName ?? null,
+        has_login_email: Boolean(loginEmail),
+        allow_duplicate: allowDuplicate,
+      });
+      if (!displayName) return jsonError("Nom affiché agence obligatoire.", "display_name_required", 400, "payload_validation");
+      if (!loginEmail) return jsonError("Email de connexion invalide ou manquant.", "login_email_required", 400, "payload_validation");
+
+      const agencyEmail = normalizeEmail(agency.email) ?? loginEmail;
+      const ice = cleanString(agency.ice);
+      const rc = cleanString(agency.rc);
+      const ifNumber = cleanString(agency.if_number);
+      const normalizedName = normalizeLoose(displayName);
+      const duplicateSuspects: any[] = [];
+
+      logPartnerAgencyStep(requestId, "duplicate_check_start", { organization_name: displayName });
+      const { data: organizationsForDuplicate, error: duplicateError } = await admin
+        .from("organizations")
+        .select("id, display_name, legal_name, email, tax_identifier, status")
+        .eq("type", "agency");
+      if (duplicateError) return jsonError("Erreur pendant la vérification des doublons.", "duplicate_check_failed", 500, "duplicate_check", duplicateError);
+
+      for (const organization of organizationsForDuplicate ?? []) {
+        const orgEmail = normalizeEmail(organization.email);
+        const orgTax = cleanString(organization.tax_identifier);
+        const orgName = normalizeLoose(organization.display_name);
+        const orgLegal = normalizeLoose(organization.legal_name);
+        const reasons: string[] = [];
+        if (agencyEmail && orgEmail && agencyEmail === orgEmail) reasons.push("email");
+        if (ice && orgTax && ice === orgTax) reasons.push("ice");
+        if (normalizedName && (normalizedName === orgName || normalizedName === orgLegal)) reasons.push("name");
+        if (reasons.length > 0) {
+          duplicateSuspects.push({
+            id: organization.id,
+            display_name: organization.display_name,
+            legal_name: organization.legal_name,
+            email: organization.email,
+            tax_identifier: organization.tax_identifier,
+            status: organization.status,
+            reasons,
+          });
+        }
+      }
+
+      if (duplicateSuspects.length > 0 && !allowDuplicate) {
+        logPartnerAgencyStep(requestId, "duplicate_check_blocked", { duplicate_count: duplicateSuspects.length });
+        return json({
+          ok: false,
+          code: "duplicate_agency_suspected",
+          step: "duplicate_check",
+          duplicate_suspected: true,
+          message: "Une agence similaire existe déjà.",
+          duplicate_suspects: duplicateSuspects,
+        }, 409);
+      }
+      logPartnerAgencyStep(requestId, "duplicate_check_done", { duplicate_count: duplicateSuspects.length });
+
+      const organizationStatus = ["active", "pending", "suspended"].includes(commercial.status)
+        ? commercial.status
+        : onboarding.status === "approved"
+          ? "active"
+          : "pending";
+      const onboardingStatus = onboarding.status === "approved" ? "approved" : "draft";
+      const metadata = {
+        ...(typeof agency.metadata === "object" && agency.metadata ? agency.metadata : {}),
+        source: "admin_manual_creation",
+        manual_creation: true,
+        created_from_admin_at: new Date().toISOString(),
+        ice,
+        rc,
+        if_number: ifNumber,
+        patente: cleanString(agency.patente),
+        access: {
+          booking: Boolean(commercial.booking_access),
+          fit_requests: Boolean(commercial.fit_request_access),
+          margin_allowed: Boolean(commercial.margin_allowed),
+        },
+      };
+
+      logPartnerAgencyStep(requestId, "organization_insert_start", { organization_name: displayName, status: organizationStatus });
+      const { data: organization, error: organizationError } = await admin
+        .from("organizations")
+        .insert({
+          type: "agency",
+          status: organizationStatus,
+          display_name: displayName,
+          legal_name: cleanString(agency.legal_name),
+          email: agencyEmail,
+          phone: cleanString(agency.phone),
+          website: cleanString(agency.website),
+          address_line_1: cleanString(agency.address),
+          city: cleanString(agency.city),
+          country: cleanString(agency.country) ?? "Maroc",
+          tax_identifier: ice,
+          notes: cleanString(agency.internal_notes),
+          metadata,
+        })
+        .select("id, display_name, status")
+        .single();
+      if (organizationError) return jsonError("Création de l'organisation impossible.", "organization_insert_failed", 500, "organization_insert", organizationError);
+
+      const organizationId = organization.id;
+      created.organizationId = organizationId;
+      logPartnerAgencyStep(requestId, "organization_insert_done", { organization_id: organizationId });
+      const commissionType = commercial.commission_type === "fixed_amount" ? "fixed_amount" : "percentage";
+      const commissionValue = Number(commercial.default_commission ?? 0);
+      logPartnerAgencyStep(requestId, "agency_profile_upsert_start", { organization_id: organizationId });
+      const { error: agencyProfileError } = await admin.from("agency_profiles").upsert({
+        organization_id: organizationId,
+        agency_code: rc,
+        commercial_name: displayName,
+        contact_name: cleanString(contact.full_name),
+        contact_email: loginEmail,
+        contact_phone: cleanString(contact.phone),
+        website: cleanString(agency.website),
+        market_country: cleanString(agency.country) ?? "Maroc",
+        preferred_language: cleanString(contact.preferred_language),
+        billing_legal_name: cleanString(agency.legal_name),
+        billing_email: agencyEmail,
+        billing_phone: cleanString(agency.phone),
+        billing_address_line_1: cleanString(agency.address),
+        billing_city: cleanString(agency.city),
+        billing_country: cleanString(agency.country) ?? "Maroc",
+        tax_identifier: ice,
+        default_commission_type: commissionType,
+        default_commission_value: Number.isFinite(commissionValue) ? commissionValue : null,
+        commission_currency: "MAD",
+        commission_notes: cleanString(commercial.notes),
+        commercial_notes: cleanString(agency.internal_notes),
+        notes: "Created manually from admin",
+      }, { onConflict: "organization_id" });
+      if (agencyProfileError) return await failAfterPartial("Création du profil agence impossible.", "agency_profile_upsert_failed", 500, "agency_profile_upsert", agencyProfileError);
+      logPartnerAgencyStep(requestId, "agency_profile_upsert_done", { organization_id: organizationId });
+
+      logPartnerAgencyStep(requestId, "auth_user_lookup_start", { organization_id: organizationId });
+      let usersList: any[] = [];
+      try {
+        usersList = await listAllAuthUsers(admin);
+      } catch (error) {
+        return await failAfterPartial("Recherche des utilisateurs Auth impossible.", "auth_user_lookup_failed", 500, "auth_user_lookup", error);
+      }
+      let authUser = usersList.find((user) => String(user.email ?? "").toLowerCase() === loginEmail);
+      let temporaryPassword: string | null = null;
+      let createdAuthUser = false;
+      if (!authUser) {
+        logPartnerAgencyStep(requestId, "auth_user_create_start", { organization_id: organizationId });
+        temporaryPassword = makeTemporaryPassword();
+        const { data: createdAuthData, error } = await admin.auth.admin.createUser({
+          email: loginEmail,
+          password: temporaryPassword,
+          email_confirm: true,
+          user_metadata: {
+            full_name: cleanString(contact.full_name) ?? displayName,
+            name: cleanString(contact.full_name) ?? displayName,
+            phone: cleanString(contact.phone) ?? "",
+            organization_id: organizationId,
+            organization_type: "agency",
+          },
+        });
+        if (error) return await failAfterPartial("Création de l'utilisateur Auth impossible.", "auth_user_creation_failed", 500, "auth_user_create", error);
+        authUser = createdAuthData.user;
+        createdAuthUser = true;
+        created.authUserId = authUser?.id ?? null;
+        created.createdAuthUser = true;
+        logPartnerAgencyStep(requestId, "auth_user_create_done", { organization_id: organizationId, user_id: authUser?.id ?? null });
+      } else {
+        logPartnerAgencyStep(requestId, "auth_user_reused", { organization_id: organizationId, user_id: authUser.id });
+      }
+
+      const userId = authUser?.id;
+      if (!userId) return await failAfterPartial("Utilisateur Auth introuvable après création/réutilisation.", "auth_user_id_missing", 500, "auth_user_lookup", null);
+
+      logPartnerAgencyStep(requestId, "profile_upsert_start", { organization_id: organizationId, user_id: userId });
+      const { error: profileError } = await admin.from("profiles").upsert({
+        id: userId,
+        full_name: cleanString(contact.full_name) ?? displayName,
+        phone: cleanString(contact.phone),
+      });
+      if (profileError) return await failAfterPartial("Mise à jour du profil utilisateur impossible.", "profile_upsert_failed", 500, "profile_upsert", profileError);
+      logPartnerAgencyStep(requestId, "profile_upsert_done", { organization_id: organizationId, user_id: userId });
+
+      const organizationRole = ["owner", "admin", "agent", "finance", "operations", "viewer"].includes(contact.organization_role)
+        ? contact.organization_role
+        : "owner";
+      logPartnerAgencyStep(requestId, "organization_member_upsert_start", { organization_id: organizationId, user_id: userId, role: organizationRole });
+      const { data: member, error: memberError } = await admin
+        .from("organization_members")
+        .upsert({
+          organization_id: organizationId,
+          user_id: userId,
+          role: organizationRole,
+          status: "active",
+          created_by: callerId,
+        }, { onConflict: "organization_id,user_id" })
+        .select("id, organization_id, user_id, role, status")
+        .single();
+      if (memberError) return await failAfterPartial("Association utilisateur/agence impossible.", "organization_member_upsert_failed", 500, "organization_member_upsert", memberError);
+      logPartnerAgencyStep(requestId, "organization_member_upsert_done", { organization_id: organizationId, member_id: member.id });
+
+      logPartnerAgencyStep(requestId, "organization_member_profile_upsert_start", { organization_id: organizationId, member_id: member.id });
+      const { error: memberProfileError } = await admin.from("organization_member_profiles").upsert({
+        organization_member_id: member.id,
+        user_id: userId,
+        organization_id: organizationId,
+        full_name: cleanString(contact.full_name),
+        email: loginEmail,
+        phone: cleanString(contact.phone),
+        secondary_phone: cleanString(contact.secondary_phone),
+        position_title: cleanString(contact.position_title),
+        point_of_sale: cleanString(contact.point_of_sale),
+        notes: cleanString(contact.notes),
+      }, { onConflict: "organization_member_id" });
+      if (memberProfileError) return await failAfterPartial("Création du profil de contact agence impossible.", "organization_member_profile_upsert_failed", 500, "organization_member_profile_upsert", memberProfileError);
+      logPartnerAgencyStep(requestId, "organization_member_profile_upsert_done", { organization_id: organizationId, member_id: member.id });
+
+      const appRole = organizationRole === "owner" || organizationRole === "admin" ? "partner_agency_admin" : "partner_agent";
+      logPartnerAgencyStep(requestId, "partner_role_cleanup_start", { organization_id: organizationId, user_id: userId, app_role: appRole });
+      const { error: roleDeleteError } = await admin.from("user_roles").delete().eq("user_id", userId).in("role", ["partner_agency_admin", "partner_agent"]);
+      if (roleDeleteError) return await failAfterPartial("Nettoyage des anciens rôles agence impossible.", "partner_role_cleanup_failed", 500, "partner_role_cleanup", roleDeleteError);
+      const { error: roleInsertError } = await admin.from("user_roles").insert({ user_id: userId, role: appRole });
+      if (roleInsertError) return await failAfterPartial("Attribution du rôle portail agence impossible.", "partner_role_insert_failed", 500, "partner_role_insert", roleInsertError);
+      logPartnerAgencyStep(requestId, "partner_role_insert_done", { organization_id: organizationId, user_id: userId, app_role: appRole });
+
+      const formData = {
+        agency_information: {
+          legal_name: cleanString(agency.legal_name),
+          commercial_name: displayName,
+          registration_number: rc,
+          tax_number: ice ?? ifNumber,
+          ice,
+          rc,
+          if_number: ifNumber,
+          patente: cleanString(agency.patente),
+          website: cleanString(agency.website),
+          address: cleanString(agency.address),
+          city: cleanString(agency.city),
+          country: cleanString(agency.country) ?? "Maroc",
+        },
+        contact_person: {
+          full_name: cleanString(contact.full_name),
+          position: cleanString(contact.position_title),
+          email: loginEmail,
+          phone: cleanString(contact.phone),
+          secondary_phone: cleanString(contact.secondary_phone),
+          point_of_sale: cleanString(contact.point_of_sale),
+          preferred_language: cleanString(contact.preferred_language),
+        },
+        documents: agencyDocumentStatusMap(onboardingStatus === "approved" ? "approved" : "missing"),
+      };
+      logPartnerAgencyStep(requestId, "onboarding_case_insert_start", { organization_id: organizationId, status: onboardingStatus });
+      const { data: onboardingCase, error: onboardingError } = await admin
+        .from("partner_onboarding_cases")
+        .insert({
+          organization_id: organizationId,
+          status: onboardingStatus,
+          form_data: formData,
+          metadata: {
+            source: "admin_manual_creation",
+            direct_validation: onboardingStatus === "approved",
+            documents_required: onboardingStatus !== "approved",
+          },
+          review_notes: cleanString(onboarding.review_notes),
+          submitted_at: new Date().toISOString(),
+          reviewed_at: onboardingStatus === "approved" ? new Date().toISOString() : null,
+          reviewed_by: onboardingStatus === "approved" ? callerId : null,
+          created_by: callerId,
+          updated_by: callerId,
+        })
+        .select("id, status")
+        .single();
+      if (onboardingError) return await failAfterPartial("Création du dossier onboarding impossible.", "onboarding_case_insert_failed", 500, "onboarding_case_insert", onboardingError);
+      logPartnerAgencyStep(requestId, "onboarding_case_insert_done", { organization_id: organizationId, onboarding_case_id: onboardingCase.id });
+      logPartnerAgencyStep(requestId, "success", {
+        organization_id: organizationId,
+        user_id: userId,
+        created_auth_user: createdAuthUser,
+        app_role: appRole,
+      });
+
+      return json({
+        ok: true,
+        success: true,
+        organization_id: organizationId,
+        organization_status: organization.status,
+        user_id: userId,
+        member_id: member.id,
+        onboarding_case_id: onboardingCase.id,
+        onboarding_status: onboardingCase.status,
+        app_role: appRole,
+        organization_role: member.role,
+        created_auth_user: createdAuthUser,
+        reused_user: !createdAuthUser,
+        email_sent: false,
+        temporary_password: temporaryPassword,
+        message: temporaryPassword
+          ? "Agence créée. Communiquez le mot de passe provisoire manuellement."
+          : "Agence créée avec un utilisateur existant.",
       });
     }
 
@@ -843,7 +1278,11 @@ Deno.serve(async (req) => {
       supported_actions: SUPPORTED_ACTIONS,
     }, 400);
   } catch (e) {
-    return json({ error: (e as Error).message }, 500);
+    console.error("[admin-users] unhandled_error", {
+      function_version: FUNCTION_VERSION,
+      detail: safeErrorDetails(e),
+    });
+    return jsonError("Erreur interne inattendue dans la fonction admin-users.", "admin_users_unhandled_error", 500, "unhandled", e);
   }
 });
 

@@ -12,12 +12,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { fmtDate, fmtMAD } from "@/lib/format";
+import { calculateDualCommissionSnapshot } from "../commissionEngine";
 import { useAgencyContext } from "../useAgencyContext";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
 
 const statusLabels: Record<string, string> = {
+  draft: "Brouillon",
+  submitted: "Soumise",
+  under_review: "En analyse",
+  information_required: "Infos manquantes",
+  quote_in_progress: "Devis en préparation",
+  quoted: "Devis reçu",
+  revision_requested: "Révision demandée",
+  converted_to_booking: "Convertie en réservation",
+  cancelled: "Annulée",
   new: "Nouveau",
   in_progress: "En cours",
   missing_info: "Infos manquantes",
@@ -77,9 +87,49 @@ const finalPrice = (row: any) => {
   return row.agency_margin_type === "percentage" ? Math.round(base * (1 + margin / 100)) : base + margin;
 };
 
+const isSchemaMissingError = (message = "") =>
+  /agency_fit_requests|agency_fit_request_messages|agency_fit_request_files|schema cache|could not find the table|relation .* does not exist/i.test(message);
+
+const getAgencyFitErrorMessage = (error: any) => {
+  const message = String(error?.message ?? error ?? "");
+  if (isSchemaMissingError(message)) {
+    return "Le module demandes FIT n'est pas encore activé pour votre espace. Merci de contacter l'équipe LeJapon.ma.";
+  }
+  return message || "Impossible de charger les demandes FIT.";
+};
+
+const agencyWideCommissionRoles = new Set(["owner", "admin", "manager", "accountant", "finance"]);
+
+const getCommissionFromRequest = (request: any) => {
+  if (request.gross_agency_commission_amount_mad != null) {
+    return {
+      gross: Number(request.gross_agency_commission_amount_mad || 0),
+      agent: Number(request.sales_agent_commission_amount_mad || 0),
+      net: Number(request.agency_net_commission_amount_mad || 0),
+    };
+  }
+
+  const saleAmount = Number(request.final_client_price || request.base_total_price || 0);
+  if (!saleAmount || request.gross_agency_commission_value == null) return null;
+  const snapshot = calculateDualCommissionSnapshot({
+    eligibleSaleAmountMad: saleAmount,
+    grossType: request.gross_agency_commission_type,
+    grossValue: request.gross_agency_commission_value,
+    salesAgentId: request.sales_agent_id || request.assigned_sales_agent_id || request.assigned_to,
+    salesAgentType: request.sales_agent_commission_type,
+    salesAgentValue: request.sales_agent_commission_value,
+    ruleSource: request.commission_rule_source,
+  });
+  return {
+    gross: snapshot.gross_agency_commission_amount_mad,
+    agent: snapshot.sales_agent_commission_amount_mad,
+    net: snapshot.agency_net_commission_amount_mad,
+  };
+};
+
 export default function AgencyFitRequests() {
   const { user } = useAuth();
-  const { organization } = useAgencyContext();
+  const { organization, currentMembership } = useAgencyContext();
   const fileRef = useRef<HTMLInputElement>(null);
   const [rows, setRows] = useState<any[]>([]);
   const [messages, setMessages] = useState<Record<string, any[]>>({});
@@ -99,7 +149,7 @@ export default function AgencyFitRequests() {
       .eq("organization_id", organization.id)
       .order("created_at", { ascending: false });
     if (error) {
-      toast.error(error.message);
+      toast.error(getAgencyFitErrorMessage(error));
       setRows([]);
     } else {
       const nextRows = data ?? [];
@@ -157,23 +207,54 @@ export default function AgencyFitRequests() {
     }
   };
 
-  const submit = async () => {
+  const submit = async (status: "draft" | "submitted" = "submitted") => {
     if (!organization || !user) return;
     if (!form.client_full_name.trim()) return toast.error("Le nom du client est obligatoire.");
+    const travelerCount = Number(form.adults || 0) + Number(form.children || 0);
+    const budgetPerPerson = form.budget_per_person ? Number(form.budget_per_person) : null;
     setSaving(true);
     const payload = {
       ...form,
       organization_id: organization.id,
       requested_by: user.id,
+      created_by: user.id,
+      assigned_sales_agent_id: user.id,
+      sales_agent_id: user.id,
+      status,
+      client_name: form.client_full_name,
+      destination: form.destination_country,
+      travel_start_date: form.desired_departure_date || null,
+      travel_end_date: form.desired_return_date || null,
+      adult_count: Number(form.adults || 0),
+      child_count: Number(form.children || 0),
+      infant_count: Number(form.babies || 0),
       adults: Number(form.adults || 0),
       children: Number(form.children || 0),
       babies: Number(form.babies || 0),
       duration_days: Number(form.duration_days || 0) || null,
-      budget_per_person: form.budget_per_person ? Number(form.budget_per_person) : null,
+      budget_per_person: budgetPerPerson,
+      budget_mad: budgetPerPerson ? budgetPerPerson * Math.max(travelerCount, 1) : null,
+      departure_city: form.departure_airport || null,
+      room_preferences: {
+        hotel_category: form.hotel_category,
+        room_needs: form.room_needs,
+        hotel_location_preference: form.hotel_location_preference,
+      },
+      requested_services: {
+        cities: form.cities,
+        travel_styles: form.travel_styles,
+        optional_extras: form.optional_extras,
+        guide_language: form.guide_language,
+        guide_coverage: form.guide_coverage,
+        transport_preference: form.transport_preference,
+        include_international_flights: form.include_international_flights,
+      },
+      request_details: form.special_requests || null,
+      internal_notes: form.internal_agency_note || null,
     };
     const { data, error } = await db.from("agency_fit_requests").insert(payload).select("id").single();
     if (error || !data) {
-      toast.error(error?.message ?? "Impossible de créer la demande.");
+      toast.error(getAgencyFitErrorMessage(error));
       setSaving(false);
       return;
     }
@@ -181,7 +262,7 @@ export default function AgencyFitRequests() {
     await supabase.functions.invoke("send-admin-notification", {
       body: { type: "agency_fit_request", payload: { request_id: data.id } },
     }).catch(() => undefined);
-    toast.success("Demande FIT envoyée à l’équipe LeJapon.ma.");
+    toast.success(status === "draft" ? "Brouillon FIT enregistré." : "Demande FIT envoyée à l’équipe LeJapon.ma.");
     setForm(emptyForm);
     setFiles([]);
     setShowForm(false);
@@ -326,7 +407,8 @@ export default function AgencyFitRequests() {
           </div>
           <div className="mt-5 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setShowForm(false)}>Annuler</Button>
-            <Button onClick={submit} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Envoyer la demande</Button>
+            <Button variant="outline" onClick={() => submit("draft")} disabled={saving}>Enregistrer brouillon</Button>
+            <Button onClick={() => submit("submitted")} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Envoyer la demande</Button>
           </div>
         </Card>
       )}
@@ -337,7 +419,11 @@ export default function AgencyFitRequests() {
         <Card className="p-10 text-center text-sm text-muted-foreground">Aucune demande FIT pour le moment.</Card>
       ) : (
         <div className="grid gap-4">
-          {rows.map((request) => (
+          {rows.map((request) => {
+            const commission = getCommissionFromRequest(request);
+            const canSeeAgencyCommission = agencyWideCommissionRoles.has(currentMembership?.role ?? "");
+            const isOwnSalesRequest = user?.id && [request.sales_agent_id, request.assigned_sales_agent_id, request.assigned_to, request.created_by, request.requested_by].includes(user.id);
+            return (
             <Card key={request.id} className="p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -383,6 +469,33 @@ export default function AgencyFitRequests() {
                 </div>
               )}
 
+              {commission && (canSeeAgencyCommission || isOwnSalesRequest) && (
+                <div className="mt-4 grid gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 md:grid-cols-3">
+                  {canSeeAgencyCommission ? (
+                    <>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-amber-700">Commission agence brute</p>
+                        <p className="mt-1 text-lg font-semibold">{fmtMAD(commission.gross)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-amber-700">Commission commercial</p>
+                        <p className="mt-1 text-lg font-semibold">{fmtMAD(commission.agent)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-amber-700">Commission nette agence</p>
+                        <p className="mt-1 text-lg font-semibold">{fmtMAD(commission.net)}</p>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="md:col-span-3">
+                      <p className="text-xs uppercase tracking-wide text-amber-700">Votre commission estimée</p>
+                      <p className="mt-1 text-lg font-semibold">{fmtMAD(commission.agent)}</p>
+                      <p className="mt-1 text-xs text-amber-800">Si cette vente est confirmée, vous gagnerez {fmtMAD(commission.agent)}.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="mt-4 grid gap-3">
                 {(messages[request.id] ?? []).map((message) => (
                   <div key={message.id} className="rounded-md border border-border bg-background p-3 text-sm">
@@ -396,7 +509,8 @@ export default function AgencyFitRequests() {
                 </div>
               </div>
             </Card>
-          ))}
+          );
+          })}
         </div>
       )}
     </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,9 +6,18 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Copy, Plus, Trash2, Download, Building2 } from "lucide-react";
+import { Copy, Plus, Trash2, Download, Building2, Wand2 } from "lucide-react";
 import { exportCsv } from "@/admin/lib/export-csv";
 import { toast } from "sonner";
+import {
+  applyAccommodationTemplateToTrip,
+  dateFromTripDay,
+  loadAccommodationTemplateRows,
+  loadAccommodationTemplates,
+  nightsBetween,
+  type AccommodationTemplate,
+  type AccommodationTemplateRow,
+} from "@/admin/lib/accommodation-templates";
 
 const DEFAULT_HOTELS = [
   "Tokyo 1er séjour", "Kamakura", "Hakone", "Kyoto", "Osaka", "Tokyo 2ème séjour",
@@ -47,6 +56,11 @@ export default function OpsRooms({ trip }: { trip: any }) {
     includeAssignments: true,
     replaceExisting: false,
   });
+  const [templateDialog, setTemplateDialog] = useState(false);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [templates, setTemplates] = useState<AccommodationTemplate[]>([]);
+  const [templateRows, setTemplateRows] = useState<AccommodationTemplateRow[]>([]);
+  const [templateForm, setTemplateForm] = useState({ templateId: "", mode: "replace" as "replace" | "append" });
 
   const load = async () => {
     const [{ data: h }, { data: bks }] = await Promise.all([
@@ -62,7 +76,9 @@ export default function OpsRooms({ trip }: { trip: any }) {
     }
     setHotels(hotelList);
     setBookings(bks ?? []);
-    if (!activeHotel && hotelList[0]) setActiveHotel(hotelList[0].id);
+    if (!activeHotel || !hotelList.some((hotel) => hotel.id === activeHotel)) {
+      setActiveHotel(hotelList[0]?.id ?? "");
+    }
 
     const hotelIds = hotelList.map((x) => x.id);
     if (hotelIds.length) {
@@ -73,6 +89,9 @@ export default function OpsRooms({ trip }: { trip: any }) {
         const { data: ass } = await supabase.from("room_assignments").select("*").in("room_id", roomIds);
         setAssignments(ass ?? []);
       } else { setAssignments([]); }
+    } else {
+      setRooms([]);
+      setAssignments([]);
     }
 
     const bookingIds = (bks ?? []).map((b) => b.id);
@@ -83,6 +102,19 @@ export default function OpsRooms({ trip }: { trip: any }) {
   };
 
   useEffect(() => { load(); }, [trip.id]);
+
+  useEffect(() => {
+    if (!templateDialog || !templateForm.templateId) {
+      setTemplateRows([]);
+      return;
+    }
+    loadAccommodationTemplateRows(templateForm.templateId)
+      .then(setTemplateRows)
+      .catch((error) => {
+        toast.error(error?.message ?? "Impossible de charger le modèle d'hébergement.");
+        setTemplateRows([]);
+      });
+  }, [templateDialog, templateForm.templateId]);
 
   const addHotel = async () => {
     if (!newHotel.name) return;
@@ -130,6 +162,21 @@ export default function OpsRooms({ trip }: { trip: any }) {
       replaceExisting: false,
     });
     setCopyDialog(true);
+  };
+
+  const openTemplateDialog = async () => {
+    setTemplateBusy(true);
+    try {
+      const list = await loadAccommodationTemplates();
+      setTemplates(list);
+      setTemplateForm({ templateId: list[0]?.id ?? "", mode: "replace" });
+      setTemplateDialog(true);
+      if (list.length === 0) toast.info("Aucun modèle d'hébergement actif. Créez-en un dans Voyages > Modèles d'hébergement.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Impossible de charger les modèles d'hébergement.");
+    } finally {
+      setTemplateBusy(false);
+    }
   };
 
   const partInfo = (id: string) => {
@@ -264,6 +311,48 @@ export default function OpsRooms({ trip }: { trip: any }) {
     }
   };
 
+  const templatePreview = useMemo(() => {
+    return templateRows.map((row) => {
+      const checkIn = dateFromTripDay(trip.start_date, row.arrival_day);
+      const checkOut = dateFromTripDay(trip.start_date, row.departure_day);
+      return {
+        ...row,
+        checkIn,
+        checkOut,
+        nights: nightsBetween(checkIn, checkOut),
+      };
+    });
+  }, [templateRows, trip.start_date]);
+
+  const applyTemplate = async () => {
+    if (!templateForm.templateId) return toast.error("Sélectionnez un modèle d'hébergement.");
+    if (templateRows.length === 0) return toast.error("Ce modèle ne contient aucun hôtel.");
+    if (templateForm.mode === "replace" && hotels.length > 0) {
+      const ok = window.confirm(
+        `Remplacer les ${hotels.length} hôtel(s) actuels de ce voyage par le modèle sélectionné ? Cette action supprimera aussi les chambres liées à ces hôtels.`
+      );
+      if (!ok) return;
+    }
+
+    setTemplateBusy(true);
+    try {
+      const result = await applyAccommodationTemplateToTrip({
+        tripId: trip.id,
+        tripStartDate: trip.start_date,
+        templateId: templateForm.templateId,
+        mode: templateForm.mode,
+      });
+      toast.success(`${result.hotelCount} hôtel(s) généré(s) depuis le modèle.`);
+      setTemplateDialog(false);
+      setActiveHotel("");
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Impossible d'appliquer le modèle d'hébergement.");
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
   const activeHotelRoomIds = getHotelRooms(activeHotel).map((r) => r.id);
   const unassignedParticipants = participants.filter((p) => !assignments.some((a) => a.participant_id === p.id && activeHotelRoomIds.includes(a.room_id)));
 
@@ -281,9 +370,80 @@ export default function OpsRooms({ trip }: { trip: any }) {
             <DialogFooter><Button onClick={addHotel}>Ajouter</Button></DialogFooter>
           </DialogContent>
         </Dialog>
+        <Button variant="outline" size="sm" onClick={openTemplateDialog} disabled={templateBusy}>
+          <Wand2 className="w-4 h-4" /> Appliquer un modèle
+        </Button>
         <Button variant="outline" size="sm" onClick={doExportHotel}><Download className="w-4 h-4" /> Export hôtel</Button>
         <Button variant="outline" size="sm" onClick={doExportAll}><Download className="w-4 h-4" /> Export global</Button>
       </div>
+
+      <Dialog open={templateDialog} onOpenChange={setTemplateDialog}>
+        <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-2xl flex flex-col">
+          <DialogHeader><DialogTitle>Appliquer un modèle d'hébergement</DialogTitle></DialogHeader>
+          <div className="flex-1 space-y-4 overflow-y-auto pr-1">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Modèle</Label>
+                <Select value={templateForm.templateId} onValueChange={(value) => setTemplateForm({ ...templateForm, templateId: value })}>
+                  <SelectTrigger><SelectValue placeholder="Sélectionner un modèle" /></SelectTrigger>
+                  <SelectContent>
+                    {templates.map((template) => (
+                      <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Action</Label>
+                <Select value={templateForm.mode} onValueChange={(value) => setTemplateForm({ ...templateForm, mode: value as "replace" | "append" })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="replace">Remplacer les hôtels actuels</SelectItem>
+                    <SelectItem value="append">Ajouter au séjour actuel</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {!trip.start_date && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                Le voyage n'a pas de date de départ. Les hôtels seront créés sans dates réelles.
+              </div>
+            )}
+
+            {templateForm.mode === "replace" && hotels.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                Remplacement sélectionné : les {hotels.length} hôtel(s) actuels seront retirés après confirmation.
+              </div>
+            )}
+
+            <div className="rounded-xl border border-border">
+              <div className="border-b border-border bg-secondary/40 px-4 py-3 text-sm font-semibold">Aperçu calculé</div>
+              <div className="divide-y divide-border">
+                {templatePreview.length === 0 && <p className="p-4 text-sm text-muted-foreground">Aucune ligne dans ce modèle.</p>}
+                {templatePreview.map((row) => (
+                  <div key={row.id} className="grid gap-2 p-4 text-sm sm:grid-cols-[1fr_auto]">
+                    <div>
+                      <p className="font-medium">{row.hotel_name}</p>
+                      <p className="text-xs text-muted-foreground">{row.city || "Ville non renseignée"} · J{row.arrival_day} → J{row.departure_day}</p>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <p>{row.checkIn || "—"} → {row.checkOut || "—"}</p>
+                      <p className="text-xs text-muted-foreground">{row.nights ?? row.departure_day - row.arrival_day} nuit(s)</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="shrink-0 border-t bg-background pt-4">
+            <Button variant="outline" onClick={() => setTemplateDialog(false)} disabled={templateBusy}>Annuler</Button>
+            <Button onClick={applyTemplate} disabled={templateBusy || !templateForm.templateId || templateRows.length === 0}>
+              {templateBusy ? "Application…" : "Appliquer le modèle"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={copyDialog} onOpenChange={setCopyDialog}>
         <DialogContent>

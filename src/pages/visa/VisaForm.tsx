@@ -37,6 +37,7 @@ import {
 } from "@/lib/visa-format";
 import { syncVisaApplicationToClient } from "@/lib/visa-crm-sync";
 import { trackEvent } from "@/lib/analytics";
+import { visaTripDatesFromTrip } from "@/lib/visa-trip-dates";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Brouillon",
@@ -61,6 +62,8 @@ type VisaTripOption = {
   start_date: string | null;
   end_date: string | null;
   duration_days: number | null;
+  total_trip_days?: number | null;
+  japan_stay_days?: number | null;
   visa_japan_arrival_date?: string | null;
   visa_japan_departure_date?: string | null;
 };
@@ -73,18 +76,12 @@ const requiredLabel = (label: string) => (
   </span>
 );
 
-const durationFromTrip = (trip: VisaTripOption | null) => {
-  if (!trip) return null;
-  if (Number(trip.duration_days) > 0) return Number(trip.duration_days);
-  if (trip.start_date && trip.end_date) {
-    const start = new Date(trip.start_date);
-    const end = new Date(trip.end_date);
-    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
-      return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
-    }
-  }
-  return null;
+const japanStayDaysFromTrip = (trip: VisaTripOption | null) => {
+  return visaTripDatesFromTrip(trip).japanStayDays;
 };
+
+const isJapanStayFallback = (trip: VisaTripOption | null) =>
+  visaTripDatesFromTrip(trip).usesStayFallback;
 
 const firstString = (...values: unknown[]) =>
   values.find((value) => typeof value === "string" && value.trim()) as string | undefined;
@@ -202,7 +199,7 @@ export default function VisaForm() {
   useEffect(() => {
     supabase
       .from("trips")
-      .select("id,title,season,start_date,end_date,duration_days,visa_japan_arrival_date,visa_japan_departure_date")
+      .select("id,title,season,start_date,end_date,duration_days,total_trip_days,japan_stay_days,visa_japan_arrival_date,visa_japan_departure_date")
       .in("status", ["open", "completed"])
       .order("start_date", { ascending: true, nullsFirst: false })
       .then(({ data }) => setTripOptions((data ?? []) as VisaTripOption[]));
@@ -275,11 +272,11 @@ export default function VisaForm() {
       return;
     }
     const trip = tripOptions.find((item) => item.id === value) ?? null;
-    const days = durationFromTrip(trip);
+    const tripDates = visaTripDatesFromTrip(trip);
     upd({
       document_trip_id: value,
-      intended_length_of_stay: days ? `${days} jours` : "",
-      date_of_arrival: trip?.visa_japan_arrival_date || trip?.start_date || app?.date_of_arrival || null,
+      intended_length_of_stay: tripDates.japanStayDays ? `${tripDates.japanStayDays} jours` : "",
+      date_of_arrival: tripDates.japanArrivalDate || app?.date_of_arrival || null,
     });
   };
 
@@ -523,7 +520,9 @@ export default function VisaForm() {
   );
 
   const selectedDurationTrip = durationSource === "other" ? null : tripOptions.find((trip) => trip.id === durationSource) ?? null;
-  const selectedDurationDays = durationFromTrip(selectedDurationTrip);
+  const selectedVisaTripDates = visaTripDatesFromTrip(selectedDurationTrip);
+  const selectedDurationDays = selectedVisaTripDates.japanStayDays;
+  const selectedDurationUsesFallback = isJapanStayFallback(selectedDurationTrip);
   const selectedChecklist = findChecklistForSituation(checklists, app.category);
   const selectedChecklistItems = selectedChecklist?.items ?? [];
   const previousJapanStay = parsePreviousJapanStay(app.previous_stays);
@@ -720,7 +719,7 @@ export default function VisaForm() {
               <SelectContent>
                 {tripOptions.map((trip) => (
                   <SelectItem key={trip.id} value={trip.id}>
-                    {[trip.title, formatVisaDate(trip.start_date), durationFromTrip(trip) ? `${durationFromTrip(trip)} jours` : null].filter(Boolean).join(" · ")}
+                    {[trip.title, formatVisaDate(trip.start_date), japanStayDaysFromTrip(trip) ? `Japon ${japanStayDaysFromTrip(trip)} jours` : null].filter(Boolean).join(" · ")}
                   </SelectItem>
                 ))}
                 <SelectItem value="other">Autre</SelectItem>
@@ -728,7 +727,12 @@ export default function VisaForm() {
             </Select>
             {selectedDurationTrip && (
               <p className="mt-1 text-xs text-muted-foreground">
-                Durée reprise du voyage: {selectedDurationDays ? `${selectedDurationDays} jours` : "à compléter"}.
+                Prérempli selon les dates de votre voyage LeJapon.ma : arrivée Japon {formatVisaDate(selectedVisaTripDates.japanArrivalDate)}, départ Japon {formatVisaDate(selectedVisaTripDates.japanDepartureDate)}, séjour {selectedDurationDays ? `${selectedDurationDays} jours` : "à compléter"}.
+              </p>
+            )}
+            {selectedDurationTrip && selectedDurationUsesFallback && (
+              <p className="mt-1 text-xs text-amber-700">
+                Le nombre de jours au Japon n'est pas encore renseigné sur ce voyage. La durée est estimée depuis les dates ou l'ancienne durée.
               </p>
             )}
           </F>
@@ -742,6 +746,21 @@ export default function VisaForm() {
                 onChange={(e) => updateManualDuration(e.target.value)}
               />
             </F>
+          )}
+          {selectedDurationTrip && (
+            <>
+              <F label={requiredLabel("Date d'arrivée au Japon")}>
+                <Input
+                  type="date"
+                  disabled={isReadOnly}
+                  value={app.date_of_arrival ?? ""}
+                  onChange={(e) => upd({ date_of_arrival: e.target.value })}
+                />
+              </F>
+              <F label="Date de départ du Japon">
+                <Input type="date" disabled value={selectedVisaTripDates.japanDepartureDate ?? ""} />
+              </F>
+            </>
           )}
           <F label={requiredLabel("Avez-vous déjà séjourné au Japon ?")}>
             <RadioGroup

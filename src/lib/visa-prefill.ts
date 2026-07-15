@@ -3,6 +3,7 @@ import {
   crmSituationToVisaSituation,
   mapProfessionTextToCrmSituation,
 } from "@/lib/visa-document-checklists";
+import { visaTripDatesFromTrip } from "@/lib/visa-trip-dates";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
@@ -90,6 +91,10 @@ const splitFullName = (value: unknown) => {
   if (!parts.length) return { givenNames: null, surname: null };
   if (parts.length === 1) return { givenNames: parts[0], surname: null };
   return { givenNames: parts.slice(0, -1).join(" "), surname: parts[parts.length - 1] };
+};
+
+const tripJapanStayDays = (trip: any) => {
+  return visaTripDatesFromTrip(trip).japanStayDays;
 };
 
 const fieldScore = (patch: Record<string, unknown>) =>
@@ -201,7 +206,7 @@ const rpcPrefillPatch = (prefill: Record<string, any>, fallbackPassportNo: strin
   profession: prefill.profession || null,
   document_trip_id: prefill.trip_id || null,
   date_of_arrival: prefill.arrival_date || null,
-  intended_length_of_stay: prefill.duration_days ? `${prefill.duration_days} jours` : null,
+  intended_length_of_stay: prefill.japan_stay_days || prefill.duration_days ? `${prefill.japan_stay_days || prefill.duration_days} jours` : null,
   hotel_name: prefill.hotel_name || prefill.hotel?.name || null,
   hotel_tel: prefill.hotel_phone || prefill.hotel?.phone || null,
   hotel_address: prefill.hotel_address || prefill.hotel?.address || null,
@@ -287,11 +292,12 @@ const participantIdentityPatch = (participant: any, linkedClient: any, fallbackL
 
 const tripPatch = (trip: any | null) => {
   if (!trip) return {};
-  const duration = Number(trip.duration_days || 0);
+  const tripDates = visaTripDatesFromTrip(trip);
+  const durationDays = Number(tripDates.japanStayDays || 0);
   return {
     document_trip_id: trip.id,
-    intended_length_of_stay: duration > 0 ? `${duration} jours` : null,
-    date_of_arrival: trip.visa_japan_arrival_date || trip.start_date || null,
+    intended_length_of_stay: durationDays > 0 ? `${durationDays} jours` : null,
+    date_of_arrival: tripDates.japanArrivalDate || null,
     port_of_entry: trip.visa_arrival_port || null,
     airline_or_ship: trip.visa_arrival_flight_number || null,
     hotel_name: trip.visa_hotel_name || null,
@@ -386,7 +392,7 @@ export async function lookupVisaPrefillByPassport(params: {
         tripId
           ? db
             .from("trips")
-            .select("id,title,start_date,end_date,duration_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
+            .select("id,title,start_date,end_date,duration_days,total_trip_days,japan_stay_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
             .eq("id", tripId)
             .maybeSingle()
           : Promise.resolve({ data: null }),
@@ -425,7 +431,7 @@ export async function lookupVisaPrefillByPassport(params: {
         visaApplication.document_trip_id
           ? db
             .from("trips")
-            .select("id,title,start_date,end_date,duration_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
+            .select("id,title,start_date,end_date,duration_days,total_trip_days,japan_stay_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
             .eq("id", visaApplication.document_trip_id)
             .maybeSingle()
           : Promise.resolve({ data: null }),
@@ -459,7 +465,7 @@ export async function lookupVisaPrefillByPassport(params: {
       const { data: trip } = tripId
         ? await db
             .from("trips")
-            .select("id,title,start_date,end_date,duration_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
+            .select("id,title,start_date,end_date,duration_days,total_trip_days,japan_stay_days,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_phone,visa_hotel_address")
             .eq("id", tripId)
             .maybeSingle()
         : { data: null };

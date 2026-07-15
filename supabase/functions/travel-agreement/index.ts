@@ -8,6 +8,12 @@ const corsHeaders = {
 
 type LogStatus = "pending" | "sent" | "failed";
 
+type DebugIssue = {
+  step: string;
+  code: string;
+  message: string;
+};
+
 const escapeHtml = (value: unknown) =>
   String(value ?? "—")
     .replace(/&/g, "&amp;")
@@ -29,6 +35,20 @@ function adminBaseUrl() {
 
 function publicSiteUrl() {
   return (Deno.env.get("PUBLIC_SITE_URL") || Deno.env.get("SITE_URL") || "https://www.lejapon.ma").replace(/\/$/, "");
+}
+
+function strictPublicSiteUrl() {
+  const raw = Deno.env.get("PUBLIC_SITE_URL") || Deno.env.get("SITE_URL");
+  if (!raw) return null;
+  return raw.replace(/\/$/, "");
+}
+
+function initSupabaseAdminClient() {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl) throw httpError(500, "missing_supabase_url", "Configuration Supabase manquante: SUPABASE_URL.");
+  if (!serviceRoleKey) throw httpError(500, "missing_service_role_key", "Configuration Supabase manquante: SUPABASE_SERVICE_ROLE_KEY.");
+  return createClient(supabaseUrl, serviceRoleKey);
 }
 
 const ACCEPTANCE_STATEMENT =
@@ -57,7 +77,14 @@ async function smtpConfig(admin: any) {
     .limit(1)
     .maybeSingle();
 
-  if (error) throw new Error(`SMTP settings read failed: ${error.message}`);
+  if (error) {
+    throw httpError(
+      500,
+      "email_settings_query_failed",
+      "Erreur lecture configuration email.",
+      error,
+    );
+  }
 
   const config = settings
     ? {
@@ -87,7 +114,14 @@ async function smtpConfig(admin: any) {
     ["SMTP_PASS", config.password],
     ["SMTP_FROM", config.from],
   ].filter(([, value]) => !value).map(([key]) => key);
-  if (missing.length) throw new Error(`Missing SMTP settings: ${missing.join(", ")}`);
+  if (missing.length) {
+    throw httpError(
+      500,
+      "email_configuration_missing",
+      "Configuration email absente ou incomplète.",
+      `Champs manquants: ${missing.join(", ")}`,
+    );
+  }
 
   return {
     transport: {
@@ -192,9 +226,13 @@ async function sendTemplatedEmail(admin: any, input: {
     await updateLog(admin, logId, "sent");
     return { ok: true, log_id: logId };
   } catch (error) {
+    if (error instanceof HttpError) {
+      await updateLog(admin, logId, "failed", `${error.code}: ${error.message}`);
+      return { ok: false, log_id: logId, code: error.code, error: error.message, details: error.detail };
+    }
     const message = error instanceof Error ? error.message : String(error);
     await updateLog(admin, logId, "failed", message);
-    return { ok: false, log_id: logId, error: message };
+    return { ok: false, log_id: logId, code: "email_provider_failed", error: message };
   }
 }
 
@@ -261,14 +299,404 @@ function safeFilename(value: unknown, fallback: string) {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-").slice(0, 120);
 }
 
+const stringifyDetail = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+class HttpError extends Error {
+  status: number;
+  code: string;
+  detail?: unknown;
+
+  constructor(status: number, code: string, message: string, detail?: unknown) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+class StepFailure extends Error {
+  step: string;
+  originalError: unknown;
+
+  constructor(step: string, originalError: unknown) {
+    super(`step_failed:${step}`);
+    this.step = step;
+    this.originalError = originalError;
+  }
+}
+
+const httpError = (status: number, code: string, message: string, detail?: unknown) =>
+  new HttpError(status, code, message, detail);
+
+async function runStep<T>(stepName: string, fn: () => Promise<T> | T): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    console.error("[travel-agreement] step failed", {
+      step: stepName,
+      message: safeErrorDetails(error),
+    });
+    if (error instanceof HttpError) throw error;
+    throw new StepFailure(stepName, error);
+  }
+}
+
+const jsonResponse = (payload: Record<string, unknown>, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
+const jsonError = (message: string, code: string, status = 400, details: unknown = null) =>
+  jsonResponse({
+    ok: false,
+    message,
+    code,
+    details: safeErrorDetail(details) ?? null,
+  }, status);
+
+const safeErrorDetail = (value: unknown) => {
+  const message = String(stringifyDetail(value) ?? "").trim();
+  if (!message) return undefined;
+  return message
+    .replace(/(apikey|api_key|authorization|bearer|token|password|secret|service_role)[^,\s]*/gi, "$1:[hidden]")
+    .slice(0, 500);
+};
+
+function safeErrorDetails(error: unknown) {
+  if (error instanceof HttpError) {
+    return safeErrorDetail({
+      code: error.code,
+      message: error.message,
+      details: error.detail,
+    }) ?? error.message;
+  }
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : null;
+  const details = record
+    ? {
+      message: record.message,
+      code: record.code,
+      details: record.details,
+      hint: record.hint,
+      error: record.error,
+    }
+    : error;
+  return safeErrorDetail(details) ?? String(error ?? "unknown_error");
+}
+
+const errorPayload = (error: unknown) => {
+  if (error instanceof HttpError) {
+    return {
+      status: error.status,
+      body: {
+        ok: false,
+        message: error.message,
+        code: error.code,
+        details: safeErrorDetail(error.detail) ?? null,
+      },
+    };
+  }
+  if (error instanceof StepFailure) {
+    const original = error.originalError;
+    const originalCode = original && typeof original === "object" ? String((original as any).code ?? "") : "";
+    const status = originalCode === "PGRST116" ? 404 : 500;
+    return {
+      status,
+      body: {
+        ok: false,
+        message: `Erreur interne pendant ${error.step}.`,
+        code: `${error.step}_failed`,
+        details: safeErrorDetails(original),
+      },
+    };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const code = message === "unauthorized"
+    ? "unauthorized"
+    : message === "forbidden"
+      ? "forbidden"
+      : "internal_unhandled_error";
+  const status = code === "unauthorized" ? 401 : code === "forbidden" ? 403 : 500;
+  return {
+    status,
+    body: {
+      ok: false,
+      message: code === "internal_unhandled_error" ? "Erreur interne inattendue pendant le traitement de l'accord de voyage." : message,
+      code,
+      details: safeErrorDetails(error),
+    },
+  };
+};
+
+const logStep = (step: string, details: Record<string, unknown> = {}) => {
+  console.info("[travel-agreement]", step, details);
+};
+
+const validEmail = (value: unknown) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value));
+const emailDomain = (value: unknown) => normalizeEmail(value).split("@")[1] || null;
+
+const schemaMismatch = (error: unknown) => {
+  const text = safeErrorDetails(error).toLowerCase();
+  return /column|relation|schema cache|does not exist|pgrst204|pgrst205|42703|42p01/.test(text);
+};
+
+async function loadAgreementForSend(admin: any, agreementId: string, options: { strict?: boolean } = {}) {
+  const strict = options.strict !== false;
+  const { data: agreement, error } = await runStep("agreement_query", () =>
+    admin
+      .from("travel_agreements")
+      .select("*")
+      .eq("id", agreementId)
+      .maybeSingle()
+  );
+  if (error) {
+    throw httpError(
+      schemaMismatch(error) ? 500 : 500,
+      schemaMismatch(error) ? "schema_mismatch" : "agreement_query_failed",
+      schemaMismatch(error) ? "La fonction cherche une colonne qui n’existe pas en production." : "Erreur lecture accord.",
+      error,
+    );
+  }
+  if (!agreement) throw httpError(404, "agreement_not_found", "Accord de voyage introuvable.");
+
+  let booking: any = null;
+  let client: any = null;
+  let leadParticipant: any = null;
+
+  if (agreement.booking_id) {
+    const { data: bookingRow, error: bookingError } = await runStep("booking_query", () =>
+      admin
+        .from("bookings")
+        .select("id,client_id,contact_email,contact_name,reference")
+        .eq("id", agreement.booking_id)
+        .maybeSingle()
+    );
+    if (bookingError && strict) {
+      throw httpError(
+        schemaMismatch(bookingError) ? 500 : 500,
+        schemaMismatch(bookingError) ? "schema_mismatch" : "booking_query_failed",
+        schemaMismatch(bookingError) ? "La fonction cherche une colonne qui n’existe pas en production." : "Erreur lecture réservation.",
+        bookingError,
+      );
+    }
+    if (bookingError) console.warn("[travel-agreement] booking lookup failed", safeErrorDetails(bookingError));
+    booking = bookingRow ?? null;
+
+    if (booking?.client_id) {
+      const { data: clientRow, error: clientError } = await runStep("client_email_lookup", () =>
+        admin
+          .from("clients")
+          .select("id,email,full_name")
+          .eq("id", booking.client_id)
+          .maybeSingle()
+      );
+      if (clientError && strict) {
+        throw httpError(
+          schemaMismatch(clientError) ? 500 : 500,
+          schemaMismatch(clientError) ? "schema_mismatch" : "client_email_lookup_failed",
+          schemaMismatch(clientError) ? "La fonction cherche une colonne qui n’existe pas en production." : "Erreur recherche email client.",
+          clientError,
+        );
+      }
+      if (clientError) console.warn("[travel-agreement] client lookup failed", safeErrorDetails(clientError));
+      client = clientRow ?? null;
+    }
+
+    const { data: participantRow, error: participantError } = await runStep("participant_email_lookup", () =>
+      admin
+        .from("booking_participants")
+        .select("id,email,is_lead")
+        .eq("booking_id", agreement.booking_id)
+        .order("is_lead", { ascending: false })
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle()
+    );
+    if (participantError && strict && schemaMismatch(participantError)) {
+      throw httpError(
+        500,
+        "schema_mismatch",
+        "La fonction cherche une colonne qui n’existe pas en production.",
+        participantError,
+      );
+    }
+    if (participantError) console.warn("[travel-agreement] participant lookup failed", safeErrorDetails(participantError));
+    leadParticipant = participantRow ?? null;
+  }
+
+  const recipient = normalizeEmail(
+    agreement.client_email ||
+    client?.email ||
+    booking?.contact_email ||
+    leadParticipant?.email ||
+    "",
+  );
+
+  return { agreement, booking, client, leadParticipant, recipient };
+}
+
+async function emailConfigDiagnostics(admin: any) {
+  const errors: DebugIssue[] = [];
+  const warnings: DebugIssue[] = [];
+  const { data: settings, error } = await admin
+    .from("email_settings")
+    .select("id,smtp_host,smtp_port,smtp_username,smtp_password,from_email,is_active")
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  if (!error && settings) {
+    const complete = Boolean(settings.smtp_host && settings.smtp_username && settings.smtp_password && settings.from_email);
+    if (!complete) {
+      warnings.push({
+        step: "email_configuration",
+        code: "email_configuration_missing",
+        message: "Une configuration email active existe mais elle est incomplète.",
+      });
+    }
+    return { hasEmailConfig: complete, emailTransport: "smtp", warnings, errors };
+  }
+  if (error) {
+    errors.push({
+      step: "email_settings_query",
+      code: schemaMismatch(error) ? "schema_mismatch" : "email_settings_query_failed",
+      message: safeErrorDetails(error),
+    });
+  }
+  const envComplete = Boolean(
+    Deno.env.get("SMTP_HOST") &&
+    Deno.env.get("SMTP_USER") &&
+    Deno.env.get("SMTP_PASS") &&
+    (Deno.env.get("EMAIL_FROM") || Deno.env.get("SMTP_FROM"))
+  );
+  return {
+    hasEmailConfig: envComplete,
+    emailTransport: envComplete ? "smtp" : "none",
+    warnings,
+    errors,
+  };
+}
+
+function debugIssueFromError(step: string, error: unknown): DebugIssue {
+  const payload = errorPayload(error);
+  return {
+    step,
+    code: String(payload.body.code ?? `${step}_failed`),
+    message: String(payload.body.details || payload.body.message || safeErrorDetails(error)),
+  };
+}
+
+const hasAgreementContent = (agreement: any) =>
+  Boolean(agreement?.content && Array.isArray(agreement.content.sections) && agreement.content.sections.length > 0);
+
+async function collectSendRequirements(admin: any, agreementId: string) {
+  const checks = {
+    agreementFound: false,
+    hasBookingId: false,
+    bookingFound: false,
+    hasClientEmail: false,
+    clientEmailValid: false,
+    hasSecureToken: false,
+    hasContent: false,
+    hasPublicSiteUrl: false,
+    hasEmailConfig: false,
+    emailTransport: "none",
+    canBuildEmail: false,
+  };
+  const missing: string[] = [];
+  const warnings: DebugIssue[] = [];
+  const errors: DebugIssue[] = [];
+
+  try {
+    const { agreement, booking, recipient } = await loadAgreementForSend(admin, agreementId, { strict: false });
+    checks.agreementFound = true;
+    checks.hasBookingId = Boolean(agreement.booking_id);
+    checks.bookingFound = !agreement.booking_id || Boolean(booking);
+    checks.hasClientEmail = Boolean(recipient);
+    checks.clientEmailValid = validEmail(recipient);
+    checks.hasSecureToken = Boolean(agreement.secure_token);
+    checks.hasContent = hasAgreementContent(agreement);
+  } catch (error) {
+    errors.push(debugIssueFromError("agreement_lookup", error));
+  }
+
+  try {
+    const emailDiagnostics = await emailConfigDiagnostics(admin);
+    checks.hasEmailConfig = emailDiagnostics.hasEmailConfig;
+    checks.emailTransport = emailDiagnostics.emailTransport;
+    warnings.push(...emailDiagnostics.warnings);
+    errors.push(...emailDiagnostics.errors);
+  } catch (error) {
+    errors.push(debugIssueFromError("email_settings_query", error));
+  }
+
+  checks.hasPublicSiteUrl = Boolean(strictPublicSiteUrl());
+  checks.canBuildEmail = Boolean(
+    checks.agreementFound &&
+    checks.hasBookingId &&
+    checks.bookingFound &&
+    checks.clientEmailValid &&
+    checks.hasSecureToken &&
+    checks.hasContent &&
+    checks.hasPublicSiteUrl &&
+    checks.hasEmailConfig
+  );
+
+  if (!checks.agreementFound) missing.push("agreement");
+  if (!checks.hasBookingId) missing.push("booking_id");
+  if (!checks.bookingFound) missing.push("booking");
+  if (!checks.hasClientEmail) missing.push("client_email");
+  if (checks.hasClientEmail && !checks.clientEmailValid) missing.push("client_email_invalid");
+  if (!checks.hasSecureToken) missing.push("secure_token");
+  if (!checks.hasContent) missing.push("content");
+  if (!checks.hasPublicSiteUrl) missing.push("public_site_url");
+  if (!checks.hasEmailConfig) missing.push("email_config");
+
+  return {
+    ok: errors.length === 0,
+    checks,
+    missing: Array.from(new Set(missing)),
+    warnings,
+    errors,
+  };
+}
+
+async function sendRequirementChecks(admin: any, agreementId: string) {
+  const diagnostics = await collectSendRequirements(admin, agreementId);
+  return {
+    ok: diagnostics.ok,
+    checks: diagnostics.checks,
+    missing: diagnostics.missing,
+    warnings: diagnostics.warnings,
+    errors: diagnostics.errors,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-
+  let requestAction = "";
+  let requestAgreementId = "";
   try {
-    const body = await req.json().catch(() => ({}));
+    const admin = await runStep("supabase_client_init", () => initSupabaseAdminClient());
+    const body = await runStep("payload_parse", async () => req.json());
     const action = String(body.action ?? "");
+    requestAction = action;
+    requestAgreementId = String(body.agreement_id ?? "").trim();
+    logStep("payload_received", {
+      action,
+      agreement_id: requestAgreementId || null,
+      has_token: Boolean(body.token),
+      has_pdf: Boolean(body.pdf_base64),
+    });
 
     if (action === "get") {
       const token = String(body.token ?? "").trim();
@@ -412,9 +840,9 @@ Deno.serve(async (req) => {
 
     if (action === "store_final_pdf") {
       const token = String(body.token ?? "").trim();
-      if (!token) throw new Error("missing_token");
+      if (!token) throw httpError(400, "missing_token", "Token public de l'accord manquant.");
       const agreement = await agreementByToken(admin, token);
-      if (agreement.status !== "accepted") throw new Error("agreement_not_accepted");
+      if (agreement.status !== "accepted") throw httpError(400, "agreement_not_accepted", "L'accord doit être accepté avant de stocker le PDF final.");
       const pdfBytes = decodeBase64Pdf(body.pdf_base64);
       const filename = safeFilename(body.filename, `accord-voyage-${agreement.booking_reference || agreement.id}.pdf`);
       const storagePath = `travel-agreements/${agreement.id}/${filename}`;
@@ -489,58 +917,103 @@ Deno.serve(async (req) => {
     }
 
     if (action === "send") {
-      await requireStaff(req, admin);
-      const agreementId = String(body.agreement_id ?? "").trim();
-      if (!agreementId) throw new Error("missing_agreement_id");
-      const { data: agreement, error } = await admin
-        .from("travel_agreements")
-        .select("*")
-        .eq("id", agreementId)
-        .single();
-      if (error || !agreement) throw new Error(error?.message || "agreement_not_found");
-      if (!agreement.client_email) throw new Error("missing_client_email");
+      logStep("send:start", { agreement_id: requestAgreementId || null });
+      await runStep("staff_authorization", () => requireStaff(req, admin));
+      if (!requestAgreementId) throw httpError(400, "missing_agreement_id", "Identifiant de l'accord manquant.");
+      const { agreement, booking, client, recipient } = await runStep("load_agreement_context", () =>
+        loadAgreementForSend(admin, requestAgreementId, { strict: true })
+      );
+      const hasContent = Boolean(agreement.content && Array.isArray(agreement.content.sections) && agreement.content.sections.length > 0);
+      logStep("send:agreement_loaded", {
+        agreement_id: agreement.id,
+        hasBookingId: Boolean(agreement.booking_id),
+        hasClientEmail: Boolean(recipient),
+        hasSecureToken: Boolean(agreement.secure_token),
+        hasContent,
+      });
+      if (!agreement.booking_id) throw httpError(400, "missing_booking_id", "Cet accord n’est lié à aucune réservation.");
+      if (!recipient) throw httpError(400, "missing_client_email", "Email client absent sur cet accord ou cette réservation.");
+      if (!validEmail(recipient)) throw httpError(400, "invalid_client_email", "Email client invalide.");
+      if (!agreement.secure_token) throw httpError(400, "missing_secure_token", "Lien sécurisé de l'accord manquant.");
+      if (!hasContent) throw httpError(400, "missing_agreement_content", "Contenu de l'accord de voyage vide ou incomplet.");
+      const siteUrl = strictPublicSiteUrl();
+      if (!siteUrl) throw httpError(500, "public_site_url_missing", "URL publique du site absente. Impossible de générer le lien de l'accord.");
 
-      const link = `${publicSiteUrl()}/accord-voyage/${agreement.secure_token}`;
+      const link = `${siteUrl}/accord-voyage/${agreement.secure_token}`;
+      logStep("send:email_ready", {
+        agreement_id: agreement.id,
+        toDomain: emailDomain(recipient),
+        hasPublicUrl: Boolean(siteUrl),
+      });
       const variables = {
         agreement_id: agreement.id,
-        client_name: agreement.client_name,
-        participant_first_name: String(agreement.client_name ?? "").split(/\s+/)[0] || "",
-        booking_reference: agreement.booking_reference,
+        client_name: agreement.client_name || client?.full_name || booking?.contact_name || "Client",
+        participant_first_name: String(agreement.client_name || client?.full_name || booking?.contact_name || "").split(/\s+/)[0] || "",
+        booking_reference: agreement.booking_reference || booking?.reference,
         trip_title: agreement.trip_title,
         trip_name: agreement.trip_title,
         agreement_link: link,
       };
-      const result = await sendTemplatedEmail(admin, {
+      const result = await runStep("send_email", () => sendTemplatedEmail(admin, {
         templateKey: "travel_agreement_sent_client",
-        recipient: agreement.client_email,
+        recipient,
         variables,
         fallbackSubject: `Votre accord de voyage — ${agreement.trip_title || "LeJapon.ma"}`,
-        fallbackHtml: `<p>Bonjour ${escapeHtml(agreement.client_name)},</p><p>Votre accord de voyage est prêt.</p><p><a href="${escapeHtml(link)}">Lire et accepter mon accord de voyage</a></p>`,
-        fallbackText: `Bonjour ${agreement.client_name || ""},\n\nVotre accord de voyage est prêt.\n${link}`,
+        fallbackHtml: `<p>Bonjour ${escapeHtml(variables.client_name)},</p><p>Votre accord de voyage est prêt.</p><p><a href="${escapeHtml(link)}">Lire et accepter mon accord de voyage</a></p>`,
+        fallbackText: `Bonjour ${variables.client_name || ""},\n\nVotre accord de voyage est prêt.\n${link}`,
         eventType: "travel_agreement_sent_client",
         bookingId: agreement.booking_id,
-      });
-      if (!result.ok) throw new Error(String(result.error || "email_send_failed"));
+      }));
+      if (!result.ok) {
+        const resultCode = String((result as any).code || "");
+        const resultError = String((result as any).error || "email_send_failed");
+        if (resultCode === "email_settings_query_failed") {
+          throw httpError(500, "email_settings_query_failed", "Erreur lecture configuration email.", (result as any).details || resultError);
+        }
+        if (resultCode === "email_configuration_missing" || /missing smtp settings/i.test(resultError)) {
+          throw httpError(500, "email_configuration_missing", "Configuration email absente ou incomplète.", (result as any).details || resultError);
+        }
+        if (resultCode === "email_transport_not_supported") {
+          throw httpError(500, "email_transport_not_supported", "Le transport SMTP/Nodemailer n’est pas compatible ou pas configuré dans l’Edge Runtime.", resultError);
+        }
+        throw httpError(502, "email_provider_failed", "Le fournisseur email a refusé l’envoi.", (result as any).details || resultError);
+      }
       const now = new Date().toISOString();
-      const { data: updated, error: updateError } = await admin
-        .from("travel_agreements")
-        .update({ status: "sent", sent_at: now })
-        .eq("id", agreement.id)
-        .select("*")
-        .single();
-      if (updateError) throw updateError;
-      return new Response(JSON.stringify({ ok: true, agreement: updated, email: result }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      const { data: updated, error: updateError } = await runStep("agreement_update", () =>
+        admin
+          .from("travel_agreements")
+          .update({ status: "sent", sent_at: now, client_email: agreement.client_email || recipient })
+          .eq("id", agreement.id)
+          .select("*")
+          .single()
+      );
+      if (updateError) throw httpError(500, "agreement_update_failed", "Erreur mise à jour du statut de l'accord.", updateError);
+      logStep("send:success", {
+        agreement_id: agreement.id,
       });
+      return jsonResponse({ ok: true, agreement: updated, email: result });
     }
 
-    throw new Error("unknown_action");
+    if (action === "debug_send_requirements") {
+      await runStep("staff_authorization", () => requireStaff(req, admin));
+      if (!requestAgreementId) throw httpError(400, "missing_agreement_id", "Identifiant de l'accord manquant.");
+      const diagnostics = await sendRequirementChecks(admin, requestAgreementId);
+      return jsonResponse(diagnostics);
+    }
+
+    throw httpError(400, "unknown_action", "Action travel-agreement inconnue.");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const status = message === "unauthorized" ? 401 : message === "forbidden" ? 403 : 400;
-    return new Response(JSON.stringify({ ok: false, error: message }), {
-      status,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    const { status, body } = errorPayload(error);
+    if (requestAction === "send") {
+      console.error("[travel-agreement] send:error", {
+        agreement_id: requestAgreementId || null,
+        code: body.code,
+        message: body.message,
+        status,
+      });
+    } else {
+      console.warn("[travel-agreement] error", body);
+    }
+    return jsonResponse(body, status);
   }
 });

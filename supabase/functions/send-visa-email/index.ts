@@ -116,6 +116,25 @@ const fmtDate = (value: unknown) => {
   }
 };
 
+const isoDateOnly = (value?: string | null) => {
+  const match = String(value ?? "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+};
+
+const addCalendarDays = (value: string | null | undefined, offset: number) => {
+  const iso = isoDateOnly(value);
+  if (!iso) return null;
+  const [year, month, day] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + offset);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+};
+
+const visaTripDatesFromTrip = (trip: any) => ({
+  japanArrivalDate: addCalendarDays(trip?.start_date, 1) || isoDateOnly(trip?.visa_japan_arrival_date),
+  japanDepartureDate: addCalendarDays(trip?.end_date, -1) || isoDateOnly(trip?.visa_japan_departure_date),
+});
+
 const adminBaseUrl = () =>
   (Deno.env.get("ADMIN_BASE_URL") || Deno.env.get("SITE_URL") || "https://www.lejapon.ma").replace(/\/$/, "");
 
@@ -272,13 +291,13 @@ async function buildInternalVisaEmail(admin: any, app: any) {
   let booking: any = null;
   const tripId = app.selected_trip_id || app.document_trip_id || app.trip_id || null;
   if (tripId) {
-    const { data } = await admin.from("trips").select("id,title,season,start_date,end_date").eq("id", tripId).maybeSingle();
+    const { data } = await admin.from("trips").select("id,title,season,start_date,end_date,japan_stay_days,total_trip_days,duration_days,visa_japan_arrival_date,visa_japan_departure_date").eq("id", tripId).maybeSingle();
     trip = data ?? null;
   }
   if (!trip && app.booking_id) {
     const { data } = await admin
       .from("bookings")
-      .select("id,reference,trip_id,trips(id,title,season,start_date,end_date)")
+      .select("id,reference,trip_id,trips(id,title,season,start_date,end_date,japan_stay_days,total_trip_days,duration_days,visa_japan_arrival_date,visa_japan_departure_date)")
       .eq("id", app.booking_id)
       .maybeSingle();
     booking = data ?? null;
@@ -294,6 +313,7 @@ async function buildInternalVisaEmail(admin: any, app: any) {
   const hasProcuration = docRows.some((doc: any) => /procuration/i.test(`${doc.doc_type ?? ""} ${doc.file_name ?? ""}`));
   const clientName = [app.surname, app.given_names].filter(Boolean).join(" ") || missing;
   const tripLabel = trip ? [trip.season, trip.title].filter(Boolean).join(" — ") : missing;
+  const visaTripDates = visaTripDatesFromTrip(trip);
   const sections = [
     sectionHtml("Dossier visa", [
       ["Référence", app.reference],
@@ -308,8 +328,8 @@ async function buildInternalVisaEmail(admin: any, app: any) {
       ["Voyage", tripLabel],
       ["Réservation", booking?.reference || app.booking_id],
       ["Départ", fmtDate(trip?.start_date || app.date_of_arrival)],
-      ["Arrivée Japon", fmtDate(app.date_of_arrival)],
-      ["Retour / départ Japon", fmtDate(trip?.end_date || app.date_of_departure)],
+      ["Arrivée Japon", fmtDate(app.date_of_arrival || visaTripDates.japanArrivalDate)],
+      ["Départ Japon", fmtDate(visaTripDates.japanDepartureDate)],
     ]),
     sectionHtml("Documents", [
       ["Checklist", hasChecklist || app.requested_documents ? "Préparée" : "Non générée"],
@@ -337,7 +357,8 @@ Nationalité: ${plainMissing(app.nationality)}
 Situation professionnelle: ${professionalSituationLabel(app.professional_situation || app.category)}
 Voyage: ${tripLabel}
 Départ: ${fmtDate(trip?.start_date || app.date_of_arrival)}
-Arrivée Japon: ${fmtDate(app.date_of_arrival)}
+Arrivée Japon: ${fmtDate(app.date_of_arrival || visaTripDates.japanArrivalDate)}
+Départ Japon: ${fmtDate(visaTripDates.japanDepartureDate)}
 Checklist: ${hasChecklist || app.requested_documents ? "Préparée" : "Non générée"}
 Procuration: ${hasProcuration ? "Générée" : "Non générée"}
 

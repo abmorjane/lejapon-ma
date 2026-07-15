@@ -99,6 +99,8 @@ export type TravelAgreementAcceptance = {
   status?: "accepted" | "declined" | "needs_review";
   message?: string | null;
   accepted_at: string;
+  created_at?: string | null;
+  admin_seen_at?: string | null;
 };
 
 const SITE_URL = "https://www.lejapon.ma";
@@ -303,7 +305,7 @@ export async function loadAgreementSource(input: {
   if (input.bookingId) {
     const { data, error } = await supabase
       .from("bookings")
-      .select("*, trips(id,title,season,destination,start_date,end_date,duration_days,base_price_mad,promo_percent,outbound_flight_text,return_flight_text,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_address,visa_hotel_phone)")
+      .select("*, trips(id,title,season,destination,start_date,end_date,duration_days,total_trip_days,japan_stay_days,base_price_mad,promo_percent,outbound_flight_text,return_flight_text,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_address,visa_hotel_phone)")
       .eq("id", input.bookingId)
       .single();
     if (error) throw error;
@@ -338,7 +340,7 @@ export async function loadAgreementSource(input: {
     if (input.tripId) {
       const { data, error } = await supabase
         .from("trips")
-        .select("id,title,season,destination,start_date,end_date,duration_days,base_price_mad,promo_percent,outbound_flight_text,return_flight_text,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_address,visa_hotel_phone")
+        .select("id,title,season,destination,start_date,end_date,duration_days,total_trip_days,japan_stay_days,base_price_mad,promo_percent,outbound_flight_text,return_flight_text,visa_arrival_port,visa_arrival_flight_number,visa_hotel_name,visa_hotel_address,visa_hotel_phone")
         .eq("id", input.tripId)
         .single();
       if (error) throw error;
@@ -540,7 +542,8 @@ export function buildAgreementContent(source: {
           `Destination : ${destination}`,
           `Date de départ : ${fmtDate(trip?.start_date)}`,
           `Date de retour : ${fmtDate(trip?.end_date)}`,
-          `Durée : ${trip?.duration_days || "à confirmer"} jours`,
+          `Durée du voyage : ${trip?.total_trip_days || trip?.duration_days || "à confirmer"} jours`,
+          `Séjour au Japon : ${trip?.japan_stay_days || "à confirmer"} jours`,
           `Référence de réservation : ${booking?.reference || "à confirmer"}`,
           `Participant : ${clientName}`,
           `Statut de la réservation : ${bookingStatus}`,
