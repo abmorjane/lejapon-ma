@@ -79,6 +79,7 @@ const AdminBookings = lazy(() => import("@/admin/pages/Bookings"));
 const AdminBookingDetail = lazy(() => import("@/admin/pages/BookingDetail"));
 const AdminAccounting = lazy(() => import("@/admin/pages/Accounting"));
 const AdminOperationsCenter = lazy(() => import("@/admin/pages/OperationsCenter"));
+const AdminFlightTickets = lazy(() => import("@/admin/pages/FlightTickets"));
 const AdminTravelAgreements = lazy(() => import("@/admin/pages/TravelAgreements"));
 const AdminClients = lazy(() => import("@/admin/pages/Clients"));
 const AdminExtras = lazy(() => import("@/admin/pages/Extras"));
@@ -102,8 +103,10 @@ const AdminEmailTemplates = lazy(() => import("@/admin/pages/EmailTemplates"));
 const AdminEmailLogs = lazy(() => import("@/admin/pages/EmailLogs"));
 const AdminBackups = lazy(() => import("@/admin/pages/Backups"));
 const AdminUserGuide = lazy(() => import("@/admin/pages/AdminUserGuide"));
+const AdminOperationTaskTemplates = lazy(() => import("@/admin/pages/OperationTaskTemplates"));
 const AdminVisaApplications = lazy(() => import("@/admin/pages/VisaApplications"));
 const AdminVisaApplicationDetail = lazy(() => import("@/admin/pages/VisaApplicationDetail"));
+const AdminVisaGroupSubmissions = lazy(() => import("@/admin/pages/VisaGroupSubmissions"));
 const AdminVisaSettings = lazy(() => import("@/admin/pages/VisaSettings"));
 const AdminVisaChecklists = lazy(() => import("@/admin/pages/VisaChecklists"));
 const AdminFaqs = lazy(() => import("@/admin/pages/Faqs"));
@@ -119,6 +122,8 @@ const MarketingTemplates = lazy(() => import("@/admin/pages/marketing/MarketingT
 const MarketingSettings = lazy(() => import("@/admin/pages/marketing/MarketingSettings"));
 const SupplierTrips = lazy(() => import("@/admin/pages/supplier/SupplierTrips"));
 const SupplierTripCosts = lazy(() => import("@/admin/pages/supplier/SupplierTripCosts"));
+const SupplierFitRequests = lazy(() => import("@/admin/pages/supplier/SupplierFitRequests"));
+const AdminFitSupplierControl = lazy(() => import("@/admin/pages/FitSupplierControl"));
 
 const RouteFallback = () => (
   <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted-foreground">
@@ -227,6 +232,8 @@ const AppRoutes = () => {
         <Route path="profile" element={<RequireActiveAgencyMember><AgencyProfilePage /></RequireActiveAgencyMember>} />
         <Route path="onboarding" element={<RequireAgencyOnboarding><AgencyOnboarding /></RequireAgencyOnboarding>} />
       </Route>
+      {/* Private-token quote: deliberately outside every authenticated/layout guard. */}
+      <Route path="/devis-fit/:token" element={<FitQuotePublic />} />
       <Route element={<SiteLayout />}>
         <Route path="/" element={<Index />} />
         <Route path={`/${get("trips")}`} element={<Trips />} />
@@ -242,7 +249,6 @@ const AppRoutes = () => {
         <Route path="/ar/blog/:slug" element={<LocalizedRoute lang="ar"><BlogPost /></LocalizedRoute>} />
         <Route path={`/${get("contact")}`} element={<Contact />} />
         <Route path={`/${get("booking")}`} element={<Booking />} />
-        <Route path="/devis-fit/:token" element={<FitQuotePublic />} />
         <Route path="/accord-voyage/:token" element={<TravelAgreementPublic />} />
         <Route path={`/${get("programme")}`} element={<ProgrammePage />} />
         <Route path="/devenir-partenaire" element={<PartnerAcquisition />} />
@@ -336,6 +342,7 @@ const AppRoutes = () => {
         <Route path="trips" element={<SupplierTrips />} />
         <Route path="trips/:tripId" element={<SupplierTripCosts />} />
         <Route path="trips/:tripId/quote" element={<SupplierTripCosts />} />
+        <Route path="fit-requests" element={<SupplierFitRequests />} />
       </Route>
       <Route path="/sales" element={<AdminLayout />}>
         <Route path="fit-quotes" element={<RequireRole module="partner_fit_quotes"><AgencyFitQuotes mode="sales" /></RequireRole>} />
@@ -347,6 +354,7 @@ const AppRoutes = () => {
         <Route path="bookings/:id" element={<RequireRole module="bookings"><AdminBookingDetail /></RequireRole>} />
         <Route path="accounting" element={<RequireRole module="accounting"><AdminAccounting /></RequireRole>} />
         <Route path="operations-center" element={<RequireRole module="operations_center"><AdminOperationsCenter /></RequireRole>} />
+        <Route path="flight-tickets" element={<RequireRole module="flight_tickets"><AdminFlightTickets /></RequireRole>} />
         <Route path="travel-agreements" element={<RequireRole module="travel_agreements"><AdminTravelAgreements /></RequireRole>} />
         <Route path="clients" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
         <Route path="clients/:id" element={<RequireRole module="clients"><AdminClients /></RequireRole>} />
@@ -355,6 +363,7 @@ const AppRoutes = () => {
         <Route path="extras" element={<RequireRole module="extras"><AdminExtras /></RequireRole>} />
         <Route path="suppliers" element={<RequireRole module="suppliers"><AdminSuppliers /></RequireRole>} />
         <Route path="supplier-costs" element={<RequireRole module="supplier_costs"><AdminSupplierCosts /></RequireRole>} />
+        <Route path="fit-supplier-control" element={<RequireRole module="supplier_costs"><AdminFitSupplierControl /></RequireRole>} />
         <Route path="fit-quotes" element={<RequireRole module="fit_quotes"><AdminFitQuotes /></RequireRole>} />
         <Route path="international-payments" element={<RequireRole module="international_payments"><AdminInternationalPayments /></RequireRole>} />
         <Route path="articles" element={<RequireRole module="articles"><AdminArticles /></RequireRole>} />
@@ -371,7 +380,9 @@ const AppRoutes = () => {
         <Route path="email-logs" element={<RequireRole module="email_logs"><AdminEmailLogs /></RequireRole>} />
         <Route path="backups" element={<RequireRole module="backups"><AdminBackups /></RequireRole>} />
         <Route path="user-guide" element={<RequireRole module="faqs"><AdminUserGuide /></RequireRole>} />
+        <Route path="operation-task-templates" element={<RequireRole module="operation_task_templates"><AdminOperationTaskTemplates /></RequireRole>} />
         <Route path="visa" element={<RequireRole module="visa"><AdminVisaApplications /></RequireRole>} />
+        <Route path="visa-group-submissions" element={<RequireRole module="visa_group_submissions"><AdminVisaGroupSubmissions /></RequireRole>} />
         <Route path="visa/:id" element={<RequireRole module="visa"><AdminVisaApplicationDetail /></RequireRole>} />
         <Route path="visa-settings" element={<RequireRole module="visa_settings"><AdminVisaSettings /></RequireRole>} />
         <Route path="visa-checklists" element={<RequireRole module="visa_checklists"><AdminVisaChecklists /></RequireRole>} />

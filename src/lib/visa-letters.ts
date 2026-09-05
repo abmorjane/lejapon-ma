@@ -6,13 +6,28 @@ const PENCIL_BLACK = rgb(0.12, 0.12, 0.14);
 
 /** Strip characters that the WinAnsi (Helvetica) encoder cannot represent. */
 const winAnsiSafe = (s: string | null | undefined): string => {
-  if (!s) return "";
+  if (s == null) return "";
+
   return String(s)
-    .replace(/[\u3012]/g, "T")           // 〒 postal mark → T
-    .replace(/[\u2018\u2019]/g, "'")     // smart single quotes
-    .replace(/[\u201C\u201D]/g, '"')     // smart double quotes
-    .replace(/[\u2013\u2014]/g, "-")     // en/em dash
-    .replace(/[^\x00-\xFF]/g, "");        // drop anything else outside Latin-1
+    .normalize("NFKC")
+    // Remove invisible Unicode direction / embedding / isolate markers.
+    // In particular U+202A (LEFT-TO-RIGHT EMBEDDING), which crashes
+    // pdf-lib StandardFonts with: WinAnsi cannot encode "\u202A".
+    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
+    // Remove zero-width and BOM characters that can arrive from copy/paste/OCR.
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    // Replace non-breaking spaces by ordinary spaces.
+    .replace(/[\u00A0\u202F]/g, " ")
+    .replace(/\u3012/g, "T")                 // 〒 postal mark → T
+    .replace(/[\u2018\u2019]/g, "'")         // smart single quotes
+    .replace(/[\u201C\u201D]/g, '"')         // smart double quotes
+    .replace(/[\u2013\u2014\u2212]/g, "-")   // en/em dash / minus
+    .replace(/\u2026/g, "...")                // ellipsis
+    // StandardFonts.Helvetica uses WinAnsi: keep only characters it can encode.
+    .replace(/[^\x00-\xFF]/g, "")
+    // Drop remaining C0/C1 control characters.
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "")
+    .trim();
 };
 
 const splitDate = (s?: string | null) => {

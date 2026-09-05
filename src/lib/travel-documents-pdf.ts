@@ -338,7 +338,7 @@ export async function generateTravelConfirmationPdf(app: any, settings: any = {}
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const mono = await pdf.embedFont(StandardFonts.Courier);
   const agency = normalizeAgencySettings(ctx.agency);
-  const page = pdf.addPage([595.28, 841.89]);
+  let page = pdf.addPage([595.28, 841.89]);
   const logo = await embedImage(pdf, agency.logo_url || logoUrl);
   const stamp = await embedImage(pdf, agency.stamp_signature_url);
   const fullName = [app.surname, app.given_names].filter(Boolean).join(" ") || "Client";
@@ -359,11 +359,14 @@ export async function generateTravelConfirmationPdf(app: any, settings: any = {}
   const partnerAddress = settings.inviter_same_as_guarantor === false ? settings.inviter_address : settings.guarantor_address;
   const partnerPhone = settings.inviter_same_as_guarantor === false ? settings.inviter_tel : settings.guarantor_tel;
   const partnerRegistration = settings.guarantor_profession || settings.inviter_profession || "Travel agency / Tour operator";
-  const participants = (ctx.participants?.length ? ctx.participants : [{ first_name: app.given_names, last_name: app.surname, passport_no: app.passport_no }])
-    .map((p) => ({
+  const participants = (ctx.participants?.length ? ctx.participants : [{ first_name: app.given_names, last_name: app.surname, passport_no: app.passport_no, is_subject: true }])
+    .map((p, index) => ({
+      id: p.id || `fallback-${index}`,
       name: [p.first_name, p.last_name].filter(Boolean).join(" ") || fullName,
       passport: p.passport_no || "-",
-    }));
+      isSubject: Boolean(p.is_subject),
+    }))
+    .filter((p, index, arr) => arr.findIndex((item) => item.id === p.id) === index);
 
   const section = (title: string, y: number) => {
     page.drawRectangle({ x: 40, y: y - 15, width: 515, height: 15, color: BLACK });
@@ -378,6 +381,28 @@ export async function generateTravelConfirmationPdf(app: any, settings: any = {}
     const lines = sanitizePdfText(value).split(/\r?\n/).map((line) => line.replace(/\t/g, "    "));
     lines.forEach((line, idx) => text(page, line, x, y - idx * 8, mono, size, BLACK));
     return Math.max(lines.length, 1) * 8;
+  };
+  const confirmationFooter = (target: PDFPage) => {
+    target.drawRectangle({ x: 40, y: 58, width: 515, height: 0.6, color: BORDER });
+    text(target, `${agency.legal_company_name} / ${agency.brand_name}`, 40, 42, font, 7, GREY);
+    text(target, `${agencyAddressLine(agency)} · ${agencyIceLine(agency)}`, 40, 32, font, 7, GREY);
+    text(target, `${agency.email} · ${agency.phone}${agency.website ? ` · ${agency.website}` : ""}`, 40, 22, font, 7, GREY);
+  };
+  const drawParticipantLine = (participant: typeof participants[number], idx: number, x: number, lineY: number) => {
+    const label = `${idx + 1}. ${participant.name}`;
+    text(page, label, x, lineY, participant.isSubject ? bold : font, 7.6, BLACK);
+    const nameWidth = (participant.isSubject ? bold : font).widthOfTextAtSize(label, 7.6);
+    if (participant.isSubject) {
+      page.drawLine({
+        start: { x, y: lineY - 2.3 },
+        end: { x: Math.min(x + nameWidth, 540), y: lineY - 2.3 },
+        thickness: 0.45,
+        color: BLACK,
+      });
+      const passportText = `Passport: ${participant.passport}`;
+      text(page, passportText, x + Math.min(nameWidth + 10, 190), lineY, font, 7.1, GREY);
+      text(page, "Participant concerne", x + Math.min(nameWidth + font.widthOfTextAtSize(passportText, 7.1) + 22, 370), lineY, font, 6.8, GREY);
+    }
   };
 
   // Compact one-page header.
@@ -447,21 +472,24 @@ export async function generateTravelConfirmationPdf(app: any, settings: any = {}
   y -= 6;
 
   y = section("PARTICIPANTS", y);
-  const participantRows = participants.slice(0, 12);
-  participantRows.forEach((p, idx) => {
-    const col = idx % 2;
-    const rowIdx = Math.floor(idx / 2);
-    const x = col === 0 ? 48 : 302;
-    const rowY = y - rowIdx * 14;
-    text(page, `${idx + 1}. ${p.name}`, x, rowY, font, 7.6, BLACK);
-    text(page, `Passport: ${p.passport}`, x + 132, rowY, font, 7.2, GREY);
-  });
-  if (participants.length > participantRows.length) {
-    text(page, `+ ${participants.length - participantRows.length} participants supplementaires`, 48, y - Math.ceil(participantRows.length / 2) * 14, font, 7, GREY);
+  for (let idx = 0; idx < participants.length; idx += 1) {
+    if (y < 92) {
+      confirmationFooter(page);
+      page = pdf.addPage([595.28, 841.89]);
+      y = 792;
+      y = section("PARTICIPANTS", y);
+    }
+    drawParticipantLine(participants[idx], idx, 48, y);
+    y -= participants[idx].isSubject ? 17 : 13;
   }
-  y -= Math.max(28, Math.ceil(participantRows.length / 2) * 14 + 12);
+  y -= 8;
 
   const closing = "This document is issued based on the information available in our reservation file. Final entry permission remains subject to the decision of the competent authorities and the traveller's compliance with all applicable requirements.";
+  if (y < 150) {
+    confirmationFooter(page);
+    page = pdf.addPage([595.28, 841.89]);
+    y = 792;
+  }
   drawWrapped(page, closing, 40, Math.max(y, 138), 330, font, 7.2, GREY, 8.5, 3);
 
   const sigY = 112;
@@ -473,10 +501,7 @@ export async function generateTravelConfirmationPdf(app: any, settings: any = {}
   text(page, agency.manager_name || agency.legal_company_name, 394, sigY - 16, font, 7.5, GREY);
   if (agency.manager_title) text(page, agency.manager_title, 394, sigY - 26, font, 7, GREY);
 
-  page.drawRectangle({ x: 40, y: 58, width: 515, height: 0.6, color: BORDER });
-  text(page, `${agency.legal_company_name} / ${agency.brand_name}`, 40, 42, font, 7, GREY);
-  text(page, `${agencyAddressLine(agency)} · ${agencyIceLine(agency)}`, 40, 32, font, 7, GREY);
-  text(page, `${agency.email} · ${agency.phone}${agency.website ? ` · ${agency.website}` : ""}`, 40, 22, font, 7, GREY);
+  confirmationFooter(page);
 
   return pdf.save();
 }

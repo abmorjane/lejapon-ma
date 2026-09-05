@@ -1,159 +1,88 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { BookOpen, Loader2, Percent, Wallet } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, FileText, Loader2, RefreshCw, Target, TrendingUp, WalletCards } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
-import { fmtDateTime, fmtMAD } from "@/lib/format";
+import { fmtDate, fmtMAD } from "@/lib/format";
+import { useAuth } from "@/hooks/useAuth";
+import { PARTNER_FIT_SAFE_QUOTE_COLUMNS } from "../lib/fitPartner";
 import { useAgencyContext } from "../useAgencyContext";
-import type { AgencyBooking, CommissionRule } from "../agencyTypes";
-import { AgencyStatusBadge } from "../components/AgencyStatusBadge";
-import {
-  commissionRuleColumns,
-  estimateCommissionForBooking,
-  formatCommissionRuleValue,
-  getApplicableCommissionRule,
-  getCommissionScopeLabel,
-} from "../commissionEngine";
 
-type DbClient = { from: (table: string) => any };
-const db = supabase as unknown as DbClient;
+const db=supabase as any;
+const managerRoles=new Set(["owner","admin","manager","agency_admin","partner_agency_admin","finance","accountant"]);
+const stageOrder=["new","preparing","sent","viewed","negotiation","accepted","payment","booked","lost"] as const;
+type Stage=(typeof stageOrder)[number];
+const stageLabels:Record<Stage,string>={new:"Nouvelle demande",preparing:"Préparation",sent:"Devis envoyé",viewed:"Client consulté",negotiation:"Négociation",accepted:"Accepté",payment:"Paiement",booked:"Réservé",lost:"Perdu"};
 
-const bookingColumns = "id,reference,contact_name,contact_email,contact_phone,status,total_amount_mad,paid_amount_mad,created_at,preferred_dates,trip_id,agency_organization_id,trips:trip_id(id,title,destination,base_price_mad)";
+const stageFor=(status:string):Stage=>{
+  if(["lost","declined","expired","cancelled","archived"].includes(status))return"lost";
+  if(["converted_to_booking","booking_in_progress","confirmed"].includes(status))return"booked";
+  if(["deposit_pending","deposit_paid","partner_payment_pending","partner_payment_received","payment_authorized","admin_approved_for_payment"].includes(status))return"payment";
+  if(status==="accepted"||status==="client_preapproved")return"accepted";
+  if(["revision_requested","client_modification_requested","modification_requested"].includes(status))return"negotiation";
+  if(status==="viewed")return"viewed";
+  if(["sent","sent_to_client","quote_sent_to_agency"].includes(status))return"sent";
+  if(["new","submitted"].includes(status))return"new";
+  return"preparing";
+};
+const nextAction=(stage:Stage,followUp?:string|null)=>({new:"Qualifier la demande",preparing:"Finaliser la proposition",sent:followUp?`Relance ${fmtDate(followUp)}`:"Attendre ou relancer",viewed:followUp?`Relance ${fmtDate(followUp)}`:"Obtenir la décision",negotiation:"Créer la nouvelle version",accepted:"Demander l’acompte",payment:"Confirmer le paiement",booked:"Suivre le départ",lost:"Clôturé"})[stage];
+const isThisMonth=(value?:string|null)=>{if(!value)return false;const d=new Date(value),n=new Date();return d.getFullYear()===n.getFullYear()&&d.getMonth()===n.getMonth()};
 
-export default function AgencyDashboard() {
-  const { organization } = useAgencyContext();
-  const [bookings, setBookings] = useState<AgencyBooking[]>([]);
-  const [bookingCount, setBookingCount] = useState(0);
-  const [rules, setRules] = useState<CommissionRule[]>([]);
-  const [loading, setLoading] = useState(true);
+type Opportunity={id:string;requestId:string|null;quoteId:string|null;reference:string;client:string;destination:string;travelStart:string|null;travelers:number;amount:number;status:string;stage:Stage;version:number;agentId:string|null;commission:number;commissionStatus:string;updatedAt:string;followUpAt:string|null;bookingId:string|null};
 
-  useEffect(() => {
-    const load = async () => {
-      if (!organization) return;
-      setLoading(true);
-      const [{ data: bookingRows, count }, { data: ruleRows }] = await Promise.all([
-        db
-          .from("bookings")
-          .select(bookingColumns, { count: "exact" })
-          .eq("agency_organization_id", organization.id)
-          .order("created_at", { ascending: false })
-          .limit(500),
-        db
-          .from("commission_engine_rules")
-          .select(commissionRuleColumns)
-          .eq("organization_id", organization.id)
-          .eq("status", "active")
-          .limit(5),
-      ]);
-      setBookings((bookingRows ?? []) as AgencyBooking[]);
-      setBookingCount(count ?? 0);
-      setRules((ruleRows ?? []) as CommissionRule[]);
-      setLoading(false);
-    };
-    load();
-  }, [organization?.id]);
+export default function AgencyDashboard(){
+  const{user}=useAuth();const{organization,currentMembership}=useAgencyContext();
+  const[requests,setRequests]=useState<any[]>([]);const[quotes,setQuotes]=useState<any[]>([]);const[bookings,setBookings]=useState<any[]>([]);const[commissions,setCommissions]=useState<any[]>([]);const[profiles,setProfiles]=useState<any[]>([]);const[followups,setFollowups]=useState<any[]>([]);const[loading,setLoading]=useState(true);const[error,setError]=useState("");const[mobileStage,setMobileStage]=useState<Stage>("new");
+  const isManager=managerRoles.has(currentMembership?.role||"");
 
-  const defaultRule = useMemo(() => rules.find((rule) => rule.scope === "agency_default"), [rules]);
-  const estimatedEarnings = useMemo(
-    () => bookings.reduce((sum, booking) => {
-      const rule = getApplicableCommissionRule(rules, booking);
-      return sum + estimateCommissionForBooking(booking, rule);
-    }, 0),
-    [bookings, rules]
-  );
+  useEffect(()=>{const load=async()=>{if(!organization||!user)return;setLoading(true);setError("");const commissionView=isManager?"agency_fit_owner_commissions":"agency_fit_sales_agent_commissions";const results=await Promise.all([
+    db.from("agency_fit_requests").select("id,organization_id,requested_by,assigned_to,assigned_sales_agent_id,sales_agent_id,status,client_name,client_full_name,destination,destination_country,travel_start_date,desired_departure_date,travel_end_date,desired_return_date,adult_count,child_count,infant_count,adults,children,babies,budget_mad,base_total_price,final_client_price,fit_quote_id,converted_booking_id,quoted_at,created_at,updated_at").eq("organization_id",organization.id).order("updated_at",{ascending:false}),
+    db.from("fit_quotes").select(PARTNER_FIT_SAFE_QUOTE_COLUMNS).eq("partner_organization_id",organization.id).is("deleted_at",null).order("updated_at",{ascending:false}),
+    db.from("bookings").select("id,reference,status,total_amount_mad,created_at,assigned_to,originating_fit_quote_id,trips:trip_id(id,title,start_date,end_date,destination)").eq("agency_organization_id",organization.id).order("created_at",{ascending:false}),
+    db.from(commissionView).select("*").eq("organization_id",organization.id).eq("is_current",true),
+    db.from("organization_member_profiles").select("user_id,full_name").eq("organization_id",organization.id),
+    db.from("agency_fit_sales_followups_v6").select("*").eq("organization_id",organization.id).eq("status","todo").order("deadline",{ascending:true}),
+  ]);const firstError=results.find(result=>result.error)?.error;if(firstError){setError(firstError.message);setLoading(false);return;}setRequests(results[0].data||[]);setQuotes(results[1].data||[]);setBookings(results[2].data||[]);setCommissions(results[3].data||[]);setProfiles(results[4].data||[]);setFollowups(results[5].data||[]);setLoading(false)};void load()},[organization?.id,user?.id,isManager]);
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="font-display text-3xl">Tableau de bord</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{organization?.display_name}</p>
-        </div>
-        <div className="rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-muted-foreground">
-          Lecture seule
-        </div>
-      </div>
+  const opportunities=useMemo<Opportunity[]>(()=>{const quoteById=new Map(quotes.map(q=>[q.id,q]));const used=new Set<string>();const result:Opportunity[]=[];const commissionFor=(requestId:string|null,quoteId:string|null)=>commissions.find(c=>(quoteId&&c.fit_quote_id===quoteId)||(requestId&&c.agency_fit_request_id===requestId));const followUpFor=(requestId:string|null,quoteId:string|null)=>followups.find(f=>(quoteId&&f.fit_quote_id===quoteId)||(requestId&&f.agency_fit_request_id===requestId));
+    requests.forEach(r=>{const q=r.fit_quote_id?quoteById.get(r.fit_quote_id):null;if(q)used.add(q.id);const c=commissionFor(r.id,q?.id||null);const f=followUpFor(r.id,q?.id||null);const status=String(q?.commercial_status||q?.status||r.status||"new");result.push({id:r.id,requestId:r.id,quoteId:q?.id||null,reference:q?.quote_family_reference||q?.quote_number||`FIT-${String(r.id).slice(0,6).toUpperCase()}`,client:q?.client_name||r.client_name||r.client_full_name||"Client FIT",destination:r.destination||r.destination_country||"Japon",travelStart:q?.travel_start_date||r.travel_start_date||r.desired_departure_date||null,travelers:Number(q?.travelers_count||r.adult_count+r.child_count+r.infant_count||r.adults+r.children+r.babies||1),amount:Number(q?.accepted_amount_mad||q?.total_selling_price_mad||r.final_client_price||r.base_total_price||r.budget_mad||0),status,stage:stageFor(status),version:Number(q?.version_number||1),agentId:r.assigned_sales_agent_id||r.sales_agent_id||r.assigned_to||r.requested_by||q?.owner_user_id||null,commission:Number(c?.sales_agent_commission_amount_mad||0),commissionStatus:c?.sales_agent_commission_status||"estimated",updatedAt:q?.accepted_at||q?.updated_at||r.updated_at||r.created_at,followUpAt:f?.deadline||null,bookingId:q?.converted_booking_id||r.converted_booking_id||null})});
+    quotes.filter(q=>!used.has(q.id)&&q.is_current_version!==false).forEach(q=>{const c=commissionFor(null,q.id);const f=followUpFor(null,q.id);const status=String(q.commercial_status||q.status||"draft");result.push({id:q.id,requestId:null,quoteId:q.id,reference:q.quote_family_reference||q.quote_number,client:q.client_name||"Client FIT",destination:"Japon",travelStart:q.travel_start_date||null,travelers:Number(q.travelers_count||1),amount:Number(q.accepted_amount_mad||q.total_selling_price_mad||0),status,stage:stageFor(status),version:Number(q.version_number||1),agentId:q.owner_user_id||q.created_by||null,commission:Number(c?.sales_agent_commission_amount_mad||0),commissionStatus:c?.sales_agent_commission_status||"estimated",updatedAt:q.accepted_at||q.updated_at||q.created_at,followUpAt:f?.deadline||null,bookingId:q.converted_booking_id||null})});return result.sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)))},[requests,quotes,commissions,followups]);
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="p-5">
-          <BookOpen className="h-5 w-5 text-accent" />
-          <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">Réservations attribuées</p>
-          <p className="mt-1 text-3xl font-semibold">{loading ? "—" : bookingCount}</p>
-        </Card>
-        <Card className="p-5">
-          <Wallet className="h-5 w-5 text-accent" />
-          <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">Gains estimés</p>
-          <p className="mt-1 text-3xl font-semibold">{fmtMAD(estimatedEarnings)}</p>
-        </Card>
-        <Card className="p-5">
-          <Percent className="h-5 w-5 text-accent" />
-          <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">Règle active</p>
-          <p className="mt-1 text-lg font-semibold">
-            {defaultRule
-              ? formatCommissionRuleValue(defaultRule)
-              : "Non renseignée"}
-          </p>
-        </Card>
-      </div>
+  const visibleBookings=useMemo(()=>isManager?bookings:bookings.filter(b=>b.assigned_to===user?.id||commissions.some(c=>c.booking_id===b.id&&c.sales_agent_id===user?.id)),[bookings,commissions,isManager,user?.id]);
+  const accepted=opportunities.filter(o=>["accepted","payment","booked"].includes(o.stage));const monthSales=accepted.filter(o=>isThisMonth(o.updatedAt)).reduce((s,o)=>s+o.amount,0);const commissionTotals={estimated:commissions.filter(c=>!['confirmed','acquired','paid'].includes(c.sales_agent_commission_status)).reduce((s,c)=>s+Number(c.sales_agent_commission_amount_mad||0),0),confirmed:commissions.filter(c=>['confirmed','acquired'].includes(c.sales_agent_commission_status)).reduce((s,c)=>s+Number(c.sales_agent_commission_amount_mad||0),0),paid:commissions.filter(c=>c.sales_agent_commission_status==='paid').reduce((s,c)=>s+Number(c.sales_agent_commission_amount_mad||0),0)};
+  const totalCommission=commissionTotals.estimated+commissionTotals.confirmed+commissionTotals.paid;const target=Number(organization?.metadata?.fit_sales_targets?.[user?.id||""]||organization?.metadata?.fit_monthly_sales_target_mad||0);const targetProgress=target>0?Math.min(100,Math.round(monthSales/target*100)):0;const conversion=opportunities.length?Math.round(opportunities.filter(o=>o.stage==='booked').length/opportunities.length*100):0;
+  const ownerTotals=commissions.reduce((a,c)=>({gross:a.gross+Number(c.gross_agency_commission_amount_mad||0),agents:a.agents+Number(c.sales_agent_commission_amount_mad||0),net:a.net+Number(c.agency_net_commission_amount_mad||0)}),{gross:0,agents:0,net:0});
+  const topAgents=useMemo(()=>{const names=new Map(profiles.map(p=>[p.user_id,p.full_name]));const totals=new Map<string,{sales:number;commission:number}>();commissions.forEach(c=>{if(!c.sales_agent_id)return;const old=totals.get(c.sales_agent_id)||{sales:0,commission:0};totals.set(c.sales_agent_id,{sales:old.sales+Number(c.eligible_sale_amount_mad||0),commission:old.commission+Number(c.sales_agent_commission_amount_mad||0)})});return [...totals].map(([id,v])=>({id,name:names.get(id)||"Agent commercial",...v})).sort((a,b)=>b.sales-a.sales).slice(0,5)},[commissions,profiles]);
+  const pipeline=useMemo(()=>Object.fromEntries(stageOrder.map(stage=>[stage,opportunities.filter(o=>o.stage===stage)])) as Record<Stage,Opportunity[]>,[opportunities]);
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
-        <Card className="overflow-hidden">
-          <div className="flex items-center justify-between border-b border-border p-4">
-            <h2 className="font-display text-xl">Réservations récentes</h2>
-            <Button asChild variant="outline" size="sm">
-              <Link to="/agency/bookings">Voir tout</Link>
-            </Button>
-          </div>
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Chargement…
-            </div>
-          ) : bookings.length === 0 ? (
-            <p className="p-8 text-center text-sm text-muted-foreground">Aucune réservation attribuée.</p>
-          ) : (
-            <div className="divide-y divide-border">
-              {bookings.slice(0, 5).map((booking) => (
-                <Link key={booking.id} to={`/agency/bookings/${booking.id}`} className="block p-4 transition hover:bg-secondary/40">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-accent">{booking.reference}</p>
-                      <p className="text-sm">{booking.contact_name}</p>
-                      <p className="text-xs text-muted-foreground">{fmtDateTime(booking.created_at)}</p>
-                    </div>
-                    <AgencyStatusBadge value={booking.status} />
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </Card>
+  if(loading)return <Card className="flex min-h-72 items-center justify-center gap-2 rounded-md text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin"/>Chargement du workspace…</Card>;
+  if(error)return <Card className="rounded-md border-destructive/30 p-8 text-center"><p className="font-semibold text-destructive">Le workspace FIT ne peut pas être chargé.</p><p className="mt-1 text-sm text-muted-foreground">{error}</p></Card>;
+  return <div className="min-w-0 space-y-6 overflow-x-hidden">
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[.16em] text-accent">Espace commercial B2B</p><h1 className="mt-1 font-display text-2xl sm:text-3xl">Pilotage FIT</h1><p className="mt-1 text-sm text-muted-foreground">{organization?.display_name} · {isManager?"Vue agence":"Mon portefeuille"}</p></div><Button asChild className="min-h-11"><Link to="/agency/fit-quotes"><FileText className="h-4 w-4"/>Ouvrir les demandes FIT</Link></Button></header>
 
-        <Card className="p-5">
-          <h2 className="font-display text-xl">Commission preview</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Les commissions affichées sont des règles de référence. Les montants définitifs seront validés par Moroccan Express Travel & Events.
-          </p>
-          <div className="mt-5 space-y-3">
-            {rules.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucune règle active visible.</p>
-            ) : (
-              rules.map((rule) => (
-                <div key={rule.id} className="rounded-lg border border-border p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium">{getCommissionScopeLabel(rule)}</p>
-                    <p className="text-sm font-semibold">
-                      {formatCommissionRuleValue(rule)}
-                    </p>
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{rule.notes || "Règle active visible"}</p>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
+    <section aria-label="Indicateurs commerciaux" className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
+      <Metric icon={FileText} label="Mes demandes" value={String(opportunities.length)}/><Metric icon={Clock3} label="Attente client" value={String(opportunities.filter(o=>['sent','viewed'].includes(o.stage)).length)}/><Metric icon={RefreshCw} label="Révisions" value={String(pipeline.negotiation.length)}/><Metric icon={CheckCircle2} label="Acceptés" value={String(accepted.length)}/><Metric icon={BookOpen} label="Réservations" value={String(visibleBookings.length)}/><Metric icon={CalendarDays} label="Départs à venir" value={String(visibleBookings.filter(b=>b.trips?.start_date&&new Date(b.trips.start_date)>=new Date()).length)}/><Metric icon={TrendingUp} label={isManager?"CA accepté":"Mes ventes du mois"} value={fmtMAD(isManager?accepted.reduce((s,o)=>s+o.amount,0):monthSales)}/><Metric icon={WalletCards} label={isManager?"Commissions agence":"Ma commission"} value={fmtMAD(isManager?ownerTotals.gross:totalCommission)}/>
+    </section>
+
+    {!isManager&&<section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Highlight label="Ventes ce mois" value={fmtMAD(monthSales)} detail={`${accepted.filter(o=>isThisMonth(o.updatedAt)).length} dossier(s)`}/><Highlight label="Réservations confirmées" value={String(visibleBookings.filter(b=>['confirmed','paid'].includes(b.status)).length)} detail="Portefeuille personnel"/><Highlight label="Commission estimée" value={fmtMAD(commissionTotals.estimated)} detail="À confirmer"/><Highlight label="Commission confirmée / payée" value={`${fmtMAD(commissionTotals.confirmed)} / ${fmtMAD(commissionTotals.paid)}`} detail="Suivi transparent"/></section>}
+
+    {target>0&&<Card className="rounded-md p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><p className="flex items-center gap-2 font-semibold"><Target className="h-4 w-4 text-accent"/>Objectif commercial mensuel</p><p className="mt-1 text-sm text-muted-foreground">{fmtMAD(monthSales)} réalisés sur {fmtMAD(target)}</p></div><span className="text-xl font-semibold tabular-nums">{targetProgress}%</span></div><Progress value={targetProgress} className="mt-4 h-2"/><p className="mt-2 text-xs text-muted-foreground">{monthSales>=target?"Objectif atteint avec une performance durable.":`${fmtMAD(Math.max(0,target-monthSales))} restent à sécuriser.`}</p></Card>}
+
+    {isManager&&<section className="grid gap-4 lg:grid-cols-[1fr_.8fr]"><Card className="rounded-md p-5"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Performance agence</p><h2 className="font-display text-xl">Commissions et conversion</h2></div><Badge variant="outline">{conversion}% conversion</Badge></div><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><Mini label="Chiffre d’affaires" value={fmtMAD(accepted.reduce((s,o)=>s+o.amount,0))}/><Mini label="Commission brute" value={fmtMAD(ownerTotals.gross)}/><Mini label="Commissions agents" value={fmtMAD(ownerTotals.agents)}/><Mini label="Commission nette" value={fmtMAD(ownerTotals.net)}/></div></Card><Card className="rounded-md p-5"><p className="text-sm text-muted-foreground">Équipe commerciale</p><h2 className="font-display text-xl">Top agents</h2><div className="mt-4 space-y-3">{topAgents.length?topAgents.map((agent,index)=><div key={agent.id} className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold">{index+1}</span><span className="truncate text-sm font-medium">{agent.name}</span></div><div className="text-right"><p className="text-sm font-semibold">{fmtMAD(agent.sales)}</p><p className="text-xs text-muted-foreground">{fmtMAD(agent.commission)}</p></div></div>):<p className="text-sm text-muted-foreground">Aucune vente commissionnée.</p>}</div></Card></section>}
+
+    <section aria-labelledby="pipeline-title"><div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><p className="text-sm text-muted-foreground">Opportunités par étape</p><h2 id="pipeline-title" className="font-display text-xl">Pipeline FIT</h2></div><Badge variant="secondary">{opportunities.reduce((s,o)=>s+o.amount,0).toLocaleString('fr-FR')} MAD en portefeuille</Badge></div>
+      <div className="md:hidden"><Select value={mobileStage} onValueChange={v=>setMobileStage(v as Stage)}><SelectTrigger className="min-h-11" aria-label="Étape du pipeline"><SelectValue/></SelectTrigger><SelectContent>{stageOrder.map(stage=><SelectItem key={stage} value={stage}>{stageLabels[stage]} · {pipeline[stage].length}</SelectItem>)}</SelectContent></Select><div className="mt-3 space-y-3">{pipeline[mobileStage].length?pipeline[mobileStage].map(o=><OpportunityCard key={o.id} item={o} managerView={isManager}/>):<EmptyStage/>}</div></div>
+      <div className="hidden gap-3 overflow-x-auto pb-3 md:flex">{stageOrder.map(stage=><div key={stage} className="w-72 shrink-0 rounded-md border border-border bg-secondary/25 p-3"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold">{stageLabels[stage]}</h3><Badge variant="outline">{pipeline[stage].length}</Badge></div><div className="space-y-3">{pipeline[stage].length?pipeline[stage].map(o=><OpportunityCard key={o.id} item={o} managerView={isManager}/>):<EmptyStage/>}</div></div>)}</div>
+    </section>
+  </div>;
 }
+
+function Metric({icon:Icon,label,value}:{icon:any;label:string;value:string}){return <Card className="min-w-0 rounded-md p-3"><Icon className="h-4 w-4 text-accent"/><p className="mt-3 truncate text-lg font-semibold tabular-nums sm:text-xl">{value}</p><p className="mt-1 text-xs leading-tight text-muted-foreground">{label}</p></Card>}
+function Highlight({label,value,detail}:{label:string;value:string;detail:string}){return <Card className="rounded-md border-accent/25 p-4"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></Card>}
+function Mini({label,value}:{label:string;value:string}){return <div className="rounded-md bg-secondary/55 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-sm font-semibold tabular-nums sm:text-base">{value}</p></div>}
+function EmptyStage(){return <div className="rounded-md border border-dashed p-5 text-center text-xs text-muted-foreground">Aucun dossier à cette étape.</div>}
+function OpportunityCard({item,managerView}:{item:Opportunity;managerView:boolean}){const commissionLabel=item.commissionStatus==='paid'?'Payée':item.commissionStatus==='acquired'?'Acquise':item.commissionStatus==='confirmed'?'Confirmée':'Estimée';const href=item.quoteId?`/agency/fit-quotes?quote=${item.quoteId}`:"/agency/fit-requests";return <Card className="rounded-md p-3 shadow-none transition-colors hover:border-accent/50"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">{item.reference} · V{item.version}</p><p className="truncate text-sm">{item.client}</p></div><span className="shrink-0 text-sm font-semibold">{fmtMAD(item.amount)}</span></div><div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"><span>{item.travelers} voyageur(s)</span><span>{fmtDate(item.travelStart)}</span></div><div className="mt-3 rounded-md bg-secondary/55 p-2"><p className="text-[11px] text-muted-foreground">Prochaine action</p><p className="text-xs font-semibold">{nextAction(item.stage,item.followUpAt)}</p></div><div className="mt-3 flex items-center justify-between gap-2"><div><p className="text-[11px] text-muted-foreground">{managerView?'Commission agent':'Ma commission'}</p><p className="text-sm font-semibold text-emerald-700">{fmtMAD(item.commission)} · {commissionLabel}</p></div><Button asChild size="sm" variant="ghost" className="min-h-10 shrink-0"><Link to={href} aria-label={`Ouvrir ${item.reference}`}>Ouvrir<ArrowRight className="h-4 w-4"/></Link></Button></div></Card>}

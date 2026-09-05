@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/admin/components/PageHeader";
 import { format } from "date-fns";
-import { ArrowRight, ChevronDown, Search, X, Trash2 } from "lucide-react";
+import { ArrowRight, ChevronDown, Search, X, Trash2, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -35,6 +36,7 @@ export default function VisaApplications() {
   const [items, setItems] = useState<any[]>([]);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("all");
+  const [linkFilter, setLinkFilter] = useState<string>("all");
   const [from, setFrom] = useState<string>("");
   const [to, setTo] = useState<string>("");
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
@@ -43,7 +45,7 @@ export default function VisaApplications() {
 
   const reload = () => {
     supabase.from("visa_applications")
-      .select("id, reference, status, surname, given_names, passport_no, residential_email, submitted_at, created_at")
+      .select("id, reference, status, surname, given_names, passport_no, residential_email, submitted_at, created_at, booking_id, booking_participant_id")
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (error) toast.error(error.message);
@@ -72,6 +74,8 @@ export default function VisaApplications() {
 
   const filtered = items.filter((it) => {
     if (status !== "all" && it.status !== status) return false;
+    if (linkFilter === "unlinked" && (it.booking_id || it.booking_participant_id)) return false;
+    if (linkFilter === "linked" && (!it.booking_id || !it.booking_participant_id)) return false;
     if (from && new Date(it.created_at) < new Date(from)) return false;
     if (to && new Date(it.created_at) > new Date(to + "T23:59:59")) return false;
     if (q) {
@@ -83,8 +87,8 @@ export default function VisaApplications() {
     return true;
   });
 
-  const hasFilters = status !== "all" || from || to || q;
-  const reset = () => { setStatus("all"); setFrom(""); setTo(""); setQ(""); };
+  const hasFilters = status !== "all" || linkFilter !== "all" || from || to || q;
+  const reset = () => { setStatus("all"); setLinkFilter("all"); setFrom(""); setTo(""); setQ(""); };
 
   return (
     <motion.div
@@ -92,24 +96,45 @@ export default function VisaApplications() {
       animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
     >
-      <PageHeader title="Demandes de visa" description="Toutes les demandes des clients" />
+      <PageHeader
+        title="Demandes de visa"
+        description="Toutes les demandes des clients"
+        action={(
+          <Button asChild variant="outline">
+            <Link to="/admin/visa-group-submissions">
+              <ClipboardList className="h-4 w-4" /> Préparer un dépôt groupé
+            </Link>
+          </Button>
+        )}
+      />
 
       <Card className="mb-4 rounded-2xl p-3 shadow-sm sm:p-4">
         <div className="grid gap-3 md:grid-cols-12 items-end">
-          <div className="md:col-span-5">
+          <div className="md:col-span-4">
             <label className="text-xs text-muted-foreground mb-1 block">Recherche</label>
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input className="pl-9 min-h-11" type="search" enterKeyHint="search" placeholder="Nom, référence, passeport, email…" value={q} onChange={(e) => setQ(e.target.value)} />
             </div>
           </div>
-          <div className="md:col-span-3">
+          <div className="md:col-span-2">
             <label className="text-xs text-muted-foreground mb-1 block">Statut</label>
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tous les statuts</SelectItem>
                 {Object.entries(STATUS_LABEL).map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-xs text-muted-foreground mb-1 block">Association</label>
+            <Select value={linkFilter} onValueChange={setLinkFilter}>
+              <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Toutes</SelectItem>
+                <SelectItem value="unlinked">Sans réservation associée</SelectItem>
+                <SelectItem value="linked">Réservation associée</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -143,6 +168,11 @@ export default function VisaApplications() {
                       <Badge variant={it.status === "draft" ? "outline" : it.status === "rejected" ? "destructive" : "secondary"}>
                         {STATUS_LABEL[it.status]}
                       </Badge>
+                      {(!it.booking_id || !it.booking_participant_id) && (
+                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+                          Non relié
+                        </Badge>
+                      )}
                     </div>
                     <p className="text-sm truncate">
                       {[it.surname, it.given_names].filter(Boolean).join(" ") || "—"}
@@ -171,6 +201,11 @@ export default function VisaApplications() {
                     <Badge variant={it.status === "draft" ? "outline" : it.status === "rejected" ? "destructive" : "secondary"}>
                       {STATUS_LABEL[it.status]}
                     </Badge>
+                    {(!it.booking_id || !it.booking_participant_id) && (
+                      <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+                        Non relié
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-sm">
                     {[it.surname, it.given_names].filter(Boolean).join(" ") || "—"}

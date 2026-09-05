@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Download, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { Seo } from "@/components/Seo";
@@ -51,6 +52,16 @@ export default function ClientDocuments() {
                     </div>
                     <h2 className="truncate font-medium">{document.title || document.file_name || document.number || "Document"}</h2>
                     <p className="mt-1 text-sm text-muted-foreground">{fmtDateTime(document.client_visible_at || document.created_at)}</p>
+                    {document.flight_info && (
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        {document.flight_info.pnr && <span>PNR {document.flight_info.pnr}</span>}
+                        {document.flight_info.airline && <span>{document.flight_info.airline}</span>}
+                        {document.flight_info.flight_number && <span>Vol {document.flight_info.flight_number}</span>}
+                        {document.flight_info.e_ticket_numbers?.length ? (
+                          <span>E-ticket {document.flight_info.e_ticket_numbers.join(" · ")}</span>
+                        ) : null}
+                      </div>
+                    )}
                     {document.visibility_scope === "booking_owner_only" && (
                       <p className="mt-1 text-xs text-muted-foreground">Visible uniquement par le contact principal.</p>
                     )}

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { supabase } from "@/integrations/supabase/client";
 
 export type ClientBooking = {
@@ -70,6 +71,13 @@ export type ClientBookingDocument = {
   visible_to_client?: boolean | null;
   client_visible_at?: string | null;
   visibility_scope?: "booking_participants" | "booking_owner_only" | null;
+  flight_info?: {
+    pnr?: string | null;
+    airline?: string | null;
+    flight_number?: string | null;
+    status?: string | null;
+    e_ticket_numbers?: string[];
+  } | null;
 };
 
 export type ClientAgreement = {
@@ -176,7 +184,77 @@ export async function loadClientDocuments(bookingIds: string[]) {
     .eq("visible_to_client", true)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []) as ClientBookingDocument[];
+  const documents = (data ?? []) as ClientBookingDocument[];
+  const flightDocumentIds = documents
+    .filter((document) => ["flight_ticket", "billet_avion"].includes(String(document.document_type || document.kind || "")))
+    .map((document) => document.id);
+
+  if (flightDocumentIds.length === 0) return documents;
+
+  try {
+    const { data: ticketDocs, error: ticketDocsError } = await (supabase as any)
+      .from("booking_flight_ticket_documents")
+      .select("id,booking_document_id,flight_reservation_id")
+      .in("booking_document_id", flightDocumentIds)
+      .is("deleted_at", null);
+    if (ticketDocsError) throw ticketDocsError;
+
+    const flightIds = Array.from(new Set((ticketDocs ?? []).map((row: any) => row.flight_reservation_id).filter(Boolean)));
+    const ticketDocIds = Array.from(new Set((ticketDocs ?? []).map((row: any) => row.id).filter(Boolean)));
+
+    const [{ data: flights }, { data: links }] = await Promise.all([
+      flightIds.length
+        ? (supabase as any).from("booking_flight_reservations").select("id,pnr,airline,flight_number,status").in("id", flightIds)
+        : Promise.resolve({ data: [] } as any),
+      ticketDocIds.length
+        ? (supabase as any).from("booking_flight_ticket_document_travelers").select("flight_ticket_document_id,participant_id").in("flight_ticket_document_id", ticketDocIds)
+        : Promise.resolve({ data: [] } as any),
+    ]);
+
+    const participantIds = Array.from(new Set((links ?? []).map((row: any) => row.participant_id).filter(Boolean)));
+    const { data: ticketNumbers } = participantIds.length
+      ? await (supabase as any)
+        .from("booking_flight_traveler_ticket_numbers")
+        .select("participant_id,e_ticket_number")
+        .in("participant_id", participantIds)
+      : ({ data: [] } as any);
+
+    const flightById = new Map((flights ?? []).map((row: any) => [row.id, row]));
+    const linksByTicketDocId = new Map<string, any[]>();
+    (links ?? []).forEach((row: any) => {
+      const current = linksByTicketDocId.get(row.flight_ticket_document_id) ?? [];
+      current.push(row);
+      linksByTicketDocId.set(row.flight_ticket_document_id, current);
+    });
+    const numbersByParticipantId = new Map<string, string[]>();
+    (ticketNumbers ?? []).forEach((row: any) => {
+      const current = numbersByParticipantId.get(row.participant_id) ?? [];
+      if (row.e_ticket_number) current.push(row.e_ticket_number);
+      numbersByParticipantId.set(row.participant_id, current);
+    });
+
+    return documents.map((document) => {
+      const ticketDoc = (ticketDocs ?? []).find((row: any) => row.booking_document_id === document.id);
+      if (!ticketDoc) return document;
+      const flight = flightById.get(ticketDoc.flight_reservation_id) as any;
+      const participantNumbers = (linksByTicketDocId.get(ticketDoc.id) ?? [])
+        .flatMap((link) => numbersByParticipantId.get(link.participant_id) ?? []);
+      return {
+        ...document,
+        flight_info: {
+          pnr: flight?.pnr ?? null,
+          airline: flight?.airline ?? null,
+          flight_number: flight?.flight_number ?? null,
+          status: flight?.status ?? null,
+          e_ticket_numbers: Array.from(new Set(participantNumbers)),
+        },
+      };
+    });
+  } catch (flightInfoError: any) {
+    const missingFlightTables = /booking_flight_ticket_documents|booking_flight_ticket_document_travelers|booking_flight_traveler_ticket_numbers|schema cache|Could not find the table/i.test(flightInfoError?.message ?? "");
+    if (!missingFlightTables) console.warn("[client-portal] flight document info unavailable", flightInfoError);
+    return documents;
+  }
 }
 
 export async function signedBookingDocumentUrl(storagePath: string) {

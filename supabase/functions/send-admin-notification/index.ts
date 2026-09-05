@@ -17,6 +17,15 @@ type EventType =
   | "agency_booking_internal"
   | "agency_fit_request"
   | "agency_fit_quote_ready"
+  | "fit_quote_viewed"
+  | "fit_quote_revision_requested"
+  | "fit_quote_accepted"
+  | "fit_quote_declined"
+  | "fit_quote_sent"
+  | "fit_quote_revision_ready"
+  | "fit_deposit_requested"
+  | "fit_payment_received"
+  | "fit_booking_confirmed"
   | "payment_recorded"
   | "agency_payment_recorded"
   | "new_reservation"
@@ -29,7 +38,7 @@ type EventType =
   | "resend_log"
   | "unknown";
 type LogStatus = "pending" | "sent" | "failed";
-type AdminNotificationType = "new_reservation" | "new_payment" | "new_visa_request" | "agency_fit_request";
+type AdminNotificationType = "new_reservation" | "new_payment" | "new_visa_request" | "agency_fit_request" | "fit_commercial";
 type AdminNotificationChannel = "email" | "push";
 
 type EmailPayload = {
@@ -558,6 +567,7 @@ function adminNotificationTypeForPayload(payload: EmailPayload): AdminNotificati
   if (["payment_recorded", "new_payment"].includes(payload.eventType)) return "new_payment";
   if (payload.eventType === "new_visa_request") return "new_visa_request";
   if (payload.eventType === "agency_fit_request") return "agency_fit_request";
+  if (["fit_quote_viewed", "fit_quote_revision_requested", "fit_quote_accepted", "fit_quote_declined"].includes(payload.eventType)) return "fit_commercial";
   return null;
 }
 
@@ -572,12 +582,14 @@ function notificationFromEmailPayload(payload: EmailPayload): AdminNotification 
     new_payment: "Nouveau paiement reçu",
     new_visa_request: "Nouvelle demande de visa",
     agency_fit_request: "Nouvelle demande FIT agence",
+    fit_commercial: String(metadata.notification_title || "Mise à jour devis FIT"),
   };
   const messages: Record<AdminNotificationType, string> = {
     new_reservation: `${clientName} vient de faire une réservation.`,
     new_payment: `${clientName} a payé ${amount || "un montant enregistré"}.`,
     new_visa_request: `${clientName} a créé une nouvelle demande de visa.`,
     agency_fit_request: `${plainMissing(metadata.agency_name)} a envoyé une demande FIT pour ${clientName}.`,
+    fit_commercial: String(metadata.notification_message || `${clientName} a mis à jour son devis FIT.`),
   };
   const relatedId = payload.related_payment_id ?? payload.related_booking_id ?? String(metadata.visa_application_id ?? metadata.related_id ?? "");
   return {
@@ -1519,6 +1531,72 @@ Ouvrir mon espace agence: ${agencyUrl}`,
   };
 }
 
+const fitLifecycleEvents = [
+  "fit_quote_viewed", "fit_quote_revision_requested", "fit_quote_accepted", "fit_quote_declined",
+  "fit_quote_sent", "fit_quote_revision_ready", "fit_deposit_requested", "fit_payment_received", "fit_booking_confirmed",
+] as const;
+
+async function fitLifecycleEmails(admin: any, body: any, req: Request): Promise<EmailPayload[]> {
+  const eventType = String(body.event_type || body.type) as EventType;
+  const payload = body?.payload && typeof body.payload === "object" ? body.payload : {};
+  const publicEvent = ["fit_quote_viewed", "fit_quote_revision_requested", "fit_quote_accepted", "fit_quote_declined"].includes(eventType);
+  let quoteId = String(body.quote_id || payload.quote_id || "");
+
+  if (publicEvent) {
+    const token = String(payload.token || body.token || "");
+    if (token.length < 32) throw new Error("invalid_fit_token");
+    const { data: tokenQuote } = await admin.from("fit_quotes").select("id").eq("share_token", token).eq("share_enabled", true).eq("public_client_visible", true).is("deleted_at", null).is("public_link_revoked_at", null).or(`public_link_expires_at.is.null,public_link_expires_at.gt.${new Date().toISOString()}`).maybeSingle();
+    if (!tokenQuote?.id) throw new Error("invalid_fit_token");
+    quoteId = tokenQuote.id;
+  } else {
+    await requireStaff(admin, req);
+  }
+  if (!quoteId) throw new Error("missing_fit_quote_id");
+
+  const { data: quote, error } = await admin
+    .from("fit_quotes")
+    .select("id,quote_number,quote_family_reference,version_number,client_name,total_selling_price_mad,accepted_amount_mad,public_deposit_mad,share_token,converted_booking_id,clients:client_id(email,full_name)")
+    .eq("id", quoteId)
+    .maybeSingle();
+  if (error || !quote) throw new Error(error?.message || "FIT quote not found");
+
+  const metadataKey = { fit_quote_id: quote.id, lifecycle_event: eventType };
+  const { data: existing } = await admin.from("email_logs").select("id").contains("metadata", metadataKey).in("status", ["pending", "sent"]).limit(1);
+  if (existing?.length) return [];
+
+  const reference = `${quote.quote_family_reference || quote.quote_number} · V${quote.version_number || 1}`;
+  const clientName = quote.clients?.full_name || quote.client_name || "Client FIT";
+  const clientEmail = normalizeEmail(quote.clients?.email);
+  const amount = fmtMAD(quote.accepted_amount_mad || quote.total_selling_price_mad || 0);
+  const deposit = fmtMAD(quote.public_deposit_mad || 0);
+  const adminUrl = `${adminBaseUrl()}/admin/fit-quotes`;
+  const publicUrl = quote.share_token ? `${adminBaseUrl()}/devis-fit/${quote.share_token}` : adminBaseUrl();
+  const internalCopy: Record<string, [string, string]> = {
+    fit_quote_viewed: ["Devis FIT consulté", `${clientName} a consulté ${reference}.`],
+    fit_quote_revision_requested: ["Modification FIT demandée", `${clientName} demande une modification de ${reference}. Créez une nouvelle version.`],
+    fit_quote_accepted: ["Devis FIT accepté", `${clientName} a accepté ${reference} pour ${amount}.`],
+    fit_quote_declined: ["Devis FIT refusé", `${clientName} a refusé ${reference}.`],
+  };
+  const clientCopy: Record<string, [string, string]> = {
+    fit_quote_sent: ["Votre devis FIT est prêt", `Votre proposition ${reference} est disponible dans votre espace sécurisé.`],
+    fit_quote_revision_ready: ["Nouvelle version de votre devis FIT", `La version V${quote.version_number || 1} de votre proposition est prête.`],
+    fit_quote_accepted: ["Confirmation d’acceptation de votre devis", `Nous confirmons votre acceptation de ${reference}, d’un montant de ${amount}.`],
+    fit_deposit_requested: ["Instructions pour votre acompte", `Votre devis est accepté. L’acompte demandé est de ${deposit}. Votre conseiller vous communiquera les modalités de paiement.`],
+    fit_payment_received: ["Votre acompte a bien été reçu", `Nous confirmons la réception de votre paiement pour ${reference}.`],
+    fit_booking_confirmed: ["Votre réservation est confirmée", `Votre réservation issue de ${reference} a été créée. Notre équipe démarre les opérations.`],
+  };
+  const result: EmailPayload[] = [];
+  if (internalCopy[eventType]) {
+    const [title, message] = internalCopy[eventType];
+    result.push({ eventType, recipient: adminRecipient(), subject: `${title} — ${reference}`, html: emailShell(title, message, [["Client", clientName], ["Référence", reference], ["Montant", amount]], { label: "Ouvrir le devis FIT", href: adminUrl }), text: `${title}\n${message}\n${adminUrl}`, metadata: { ...metadataKey, client_name: clientName, amount, admin_url: adminUrl, notification_title: title, notification_message: message, related_id: quote.id } });
+  }
+  if (clientCopy[eventType] && clientEmail) {
+    const [title, message] = clientCopy[eventType];
+    result.push({ eventType, recipient: clientEmail, subject: `${title} — LeJapon.ma`, html: emailShell(title, message, [["Référence", reference], ["Montant", amount], ["Acompte", deposit]], { label: "Ouvrir mon devis sécurisé", href: publicUrl }), text: `${title}\n${message}\n${publicUrl}`, metadata: { ...metadataKey, client_name: clientName, audience: "client" } });
+  }
+  return result;
+}
+
 function contactEmailPayload(contact: any): EmailPayload {
   const sentAt = fmtDate(contact.created_at);
   const subject = `Nouveau message depuis LeJapon.ma – ${contact.name}`;
@@ -1639,6 +1717,7 @@ function eventTypeFromBody(body: any): EventType {
   if (type === "agency_booking") return "agency_booking_internal";
   if (type === "agency_fit_request") return "agency_fit_request";
   if (type === "agency_fit_quote_ready") return "agency_fit_quote_ready";
+  if ((fitLifecycleEvents as readonly string[]).includes(type)) return type as EventType;
   if (type === "payment" || type === "new_payment") return "payment_recorded";
   if (type === "visa_request" || type === "new_visa_request") return "new_visa_request";
   if (type === "agency_payment") return "agency_payment_recorded";
@@ -1649,7 +1728,7 @@ function eventTypeFromBody(body: any): EventType {
   if (["contact_internal", "contact_client", "booking_internal", "booking_client", "client_portal_invitation", "new_visa_request", "agency_fit_request", "agency_fit_quote_ready"].includes(type)) return type as EventType;
 
   const eventType = String(body?.event_type ?? "");
-  if (["booking_created", "new_booking", "client_portal_invitation", "agency_booking_internal", "agency_fit_request", "agency_fit_quote_ready", "payment_recorded", "new_payment", "new_visa_request", "visa_request", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log"].includes(eventType)) {
+  if (["booking_created", "new_booking", "client_portal_invitation", "agency_booking_internal", "agency_fit_request", "agency_fit_quote_ready", "payment_recorded", "new_payment", "new_visa_request", "visa_request", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log", ...fitLifecycleEvents].includes(eventType)) {
     if (eventType === "new_booking") return "booking_created";
     if (eventType === "new_payment") return "payment_recorded";
     if (eventType === "visa_request") return "new_visa_request";
@@ -1685,6 +1764,7 @@ function errorCode(message: string) {
 async function payloadFromBody(admin: any, body: any, req: Request): Promise<EmailPayload[]> {
   const type = String(body.type ?? "");
   const payload = body?.payload && typeof body.payload === "object" ? body.payload : {};
+  if ((fitLifecycleEvents as readonly string[]).includes(type) || (fitLifecycleEvents as readonly string[]).includes(String(body.event_type || ""))) return fitLifecycleEmails(admin, body, req);
   if (type === "contact") return contactEmailsFromPayload(admin, body.payload ?? {});
   if (type === "contact_internal") {
     const contactId = String(body.payload?.contact_id ?? body.contact_id ?? "");

@@ -1,5 +1,5 @@
 import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
-import { ClipboardList, LogOut, Plane } from "lucide-react";
+import { ClipboardList, FileCheck2, LogOut, Plane } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/logo-lejapon.png";
@@ -31,7 +31,7 @@ export const SupplierLayout = () => {
             <img src={logo} alt="lejapon.ma" className="h-8 w-auto" />
             <span className="text-xs text-muted-foreground font-medium">/ Japan office</span>
           </NavLink>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             <NavLink to="/supplier" end className={({ isActive }) =>
               `flex items-center gap-1.5 text-sm font-medium ${isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"}`
             }>
@@ -41,6 +41,11 @@ export const SupplierLayout = () => {
               `flex items-center gap-1.5 text-sm font-medium ${isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"}`
             }>
               <ClipboardList className="w-4 h-4" /> Voyages assignés
+            </NavLink>
+            <NavLink to="/supplier/fit-requests" className={({ isActive }) =>
+              `flex items-center gap-1.5 text-sm font-medium ${isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"}`
+            }>
+              <FileCheck2 className="w-4 h-4" /> FIT assignés
             </NavLink>
             <div className="text-right hidden sm:block">
               <p className="text-xs text-muted-foreground leading-tight">{user.email}</p>

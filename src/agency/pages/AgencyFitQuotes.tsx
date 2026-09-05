@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CreditCard, Download, ExternalLink, FileText, ListChecks, Loader2, Pencil, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Copy, CopyPlus, CreditCard, Download, ExternalLink, FileText, History, ListChecks, Loader2, MoreHorizontal, Pencil, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { FitInput as Input, FitTextarea as Textarea } from "@/components/fit/FitFormControls";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { downloadFitPdf, generateFitClientPdf } from "@/lib/fit-pdfs";
@@ -212,6 +213,7 @@ const mergeById = (...groups: any[][]) => {
 };
 
 export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner" | "sales" }) {
+  const [searchParams] = useSearchParams();
   const { user, roles } = useAuth();
   const agencyContext = useOptionalAgencyContext();
   const organization = mode === "partner" ? agencyContext?.organization ?? null : null;
@@ -224,6 +226,11 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
   const [settings, setSettings] = useState<any>(null);
   const [partnerProfile, setPartnerProfile] = useState<any>(null);
   const [selectedQuote, setSelectedQuote] = useState<any | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<any | null>(null);
+  const [duplicateAndEdit, setDuplicateAndEdit] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const [versionTarget, setVersionTarget] = useState<any | null>(null);
+  const [versioning, setVersioning] = useState(false);
   const [pricing, setPricing] = useState<any | null>(null);
   const [days, setDays] = useState<any[]>([]);
   const [components, setComponents] = useState<any[]>([]);
@@ -233,6 +240,8 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
   const [editForm, setEditForm] = useState(defaultEditForm);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [commission, setCommission] = useState<any | null>(null);
 
   const canAdjustMargin = isSalesMode || currentMembership?.role !== "viewer";
   const netLabel = isSalesMode ? "Total net commercial" : "Total net agence";
@@ -247,6 +256,15 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
   };
   const effectiveSettings = settings ?? defaultSettings;
   const shareUrl = selectedQuote?.share_token ? `${window.location.origin}/devis-fit/${selectedQuote.share_token}` : "";
+  const currentQuotes = useMemo(() => quotes.filter((quote) => quote.is_current_version !== false), [quotes]);
+  const quoteVersions = useMemo(() => {
+    if (!selectedQuote) return [];
+    const groupId = selectedQuote.quote_group_id || selectedQuote.id;
+    return quotes
+      .filter((quote) => (quote.quote_group_id || quote.id) === groupId)
+      .sort((a, b) => numberValue(b.version_number) - numberValue(a.version_number));
+  }, [quotes, selectedQuote]);
+  const isHistoricalVersion = selectedQuote?.is_current_version === false;
 
   const quoteToEditForm = (quote: any, quotePricing = pricing) => ({
     client_name: quote?.client_name || "",
@@ -282,6 +300,7 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
         .select(PARTNER_FIT_SAFE_QUOTE_COLUMNS)
         .eq("quote_channel", "partner")
         .is("deleted_at", null)
+        .is("archived_at", null)
         .order("updated_at", { ascending: false });
     const scopedQuoteQuery = isSalesMode
       ? quoteQuery.is("partner_organization_id", null).eq("owner_user_id", user.id)
@@ -300,15 +319,21 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
     setTemplateComponents(componentRows ?? []);
     setSettings(settingsRows ?? defaultSettings);
     setPartnerProfile(profileRow ?? null);
+    const requestedQuote = searchParams.get("quote");
+    const targetQuote = requestedQuote ? (quoteRows ?? []).find((quote: any) => quote.id === requestedQuote) : null;
+    if (targetQuote) await loadQuote(targetQuote);
     setLoading(false);
   };
 
   const loadQuote = async (quote: any) => {
     setSelectedQuote(quote);
-    const [{ data: dayRows, error: daysError }, { data: pricingRow, error: pricingError }] = await Promise.all([
+    const [{ data: dayRows, error: daysError }, { data: pricingRow, error: pricingError }, { data: agentCommission }, { data: ownerCommission }] = await Promise.all([
       db.from("fit_quote_days").select(PARTNER_FIT_DAY_COLUMNS).eq("quote_id", quote.id).order("day_number", { ascending: true }).order("sort_order", { ascending: true }),
       db.from("fit_quote_partner_pricing").select("*").eq("quote_id", quote.id).maybeSingle(),
+      db.from("agency_fit_sales_agent_commissions").select("*").eq("fit_quote_id", quote.id).eq("is_current", true).maybeSingle(),
+      db.from("agency_fit_owner_commissions").select("*").eq("fit_quote_id", quote.id).eq("is_current", true).maybeSingle(),
     ]);
+    setCommission(ownerCommission || agentCommission || null);
     if (daysError) throw daysError;
     if (pricingError) throw pricingError;
     const quoteDays = dayRows ?? [];
@@ -362,6 +387,8 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
   const persistPricing = async (quote = selectedQuote, quoteDays = days, quoteComponents = components, nextPricing = pricing) => {
     if (!user || !quote) return null;
     if (mode === "partner" && !organization) return null;
+    if (quote.is_current_version === false) return null;
+    setAutosaveStatus("saving");
     const result = calculatePartnerPricing({
       days: quoteDays,
       components: quoteComponents,
@@ -385,7 +412,11 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
       approval_required: result.approvalRequired,
       approval_reason: result.approvalReason,
     };
-    await db.from("fit_quote_partner_pricing").upsert(patchPricing);
+    const { error: pricingSaveError } = await db.from("fit_quote_partner_pricing").upsert(patchPricing);
+    if (pricingSaveError) {
+      setAutosaveStatus("error");
+      throw pricingSaveError;
+    }
 
     const totalNet = Math.max(1, result.netPartnerTotal);
     const dayUpdates = quoteDays.map((day: any) => {
@@ -397,7 +428,12 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
         ...clientLists,
       }).eq("id", day.id);
     });
-    await Promise.all(dayUpdates);
+    const dayResults = await Promise.all(dayUpdates);
+    const daySaveError = dayResults.find((result: any) => result.error)?.error;
+    if (daySaveError) {
+      setAutosaveStatus("error");
+      throw daySaveError;
+    }
 
     const mutablePricingStatuses = ["draft", "sent", "sent_to_client", "pending_partner_review", "pending_lejapon_approval"];
     const quoteStatus = result.approvalRequired && mutablePricingStatuses.includes(quote.status)
@@ -415,11 +451,16 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
       approval_reason: result.approvalReason,
       status: quoteStatus,
     };
-    await db.from("fit_quotes").update(quotePatch).eq("id", quote.id);
+    const { error: quoteSaveError } = await db.from("fit_quotes").update(quotePatch).eq("id", quote.id);
+    if (quoteSaveError) {
+      setAutosaveStatus("error");
+      throw quoteSaveError;
+    }
     const updatedQuote = { ...quote, ...quotePatch };
     setSelectedQuote(updatedQuote);
     setPricing(patchPricing);
     setQuotes((current) => current.map((item) => item.id === quote.id ? { ...item, ...quotePatch } : item));
+    setAutosaveStatus("saved");
     return { result, quote: updatedQuote, pricing: patchPricing };
   };
 
@@ -481,6 +522,69 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
     toast.success(isSalesMode ? "Devis FIT commercial créé." : "Devis FIT partenaire créé.");
   };
 
+  const confirmDuplicate = (quote: any, andEdit = false) => {
+    setDuplicateTarget(quote);
+    setDuplicateAndEdit(andEdit);
+  };
+
+  const duplicateQuote = async () => {
+    if (!duplicateTarget?.id) return;
+    setDuplicating(true);
+    try {
+      const { data, error } = await db.rpc("duplicate_fit_quote", { p_source_quote_id: duplicateTarget.id });
+      if (error) throw error;
+      if (!data?.ok || !data?.new_quote_id) throw new Error("La copie du devis n’a pas été créée correctement.");
+      const { data: createdQuote, error: fetchError } = await db
+        .from("fit_quotes")
+        .select(PARTNER_FIT_SAFE_QUOTE_COLUMNS)
+        .eq("id", data.new_quote_id)
+        .single();
+      if (fetchError || !createdQuote) throw fetchError || new Error("Copie créée mais impossible à ouvrir.");
+      const duplicatedQuote = { ...createdQuote, duplicated_from_reference: data.source_reference };
+      setDuplicateTarget(null);
+      await load();
+      const loaded = await loadQuote(duplicatedQuote);
+      if (duplicateAndEdit) {
+        setEditForm(quoteToEditForm(duplicatedQuote, loaded.pricing));
+        setEditOpen(true);
+      }
+      toast.success(`Devis ${data.new_reference} créé.`, {
+        description: `Copie de ${data.source_reference}. Le devis original reste inchangé.`,
+      });
+    } catch (error: any) {
+      toast.error(error?.message || "Impossible de dupliquer ce devis FIT.");
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
+  const createNewVersion = async () => {
+    if (!versionTarget?.id) return;
+    setVersioning(true);
+    try {
+      const { data, error } = await db.rpc("create_new_fit_quote_version", { p_source_quote_id: versionTarget.id });
+      if (error) throw error;
+      const { data: createdQuote, error: fetchError } = await db
+        .from("fit_quotes")
+        .select(PARTNER_FIT_SAFE_QUOTE_COLUMNS)
+        .eq("id", data?.new_quote_id)
+        .single();
+      if (fetchError || !createdQuote) throw fetchError || new Error("La nouvelle version ne peut pas être ouverte.");
+      setVersionTarget(null);
+      await load();
+      const loaded = await loadQuote(createdQuote);
+      setEditForm(quoteToEditForm(createdQuote, loaded.pricing));
+      setEditOpen(true);
+      toast.success(`Version V${data.version_number} créée.`, {
+        description: `${data.family_reference} reste lié à son historique. La version précédente est en lecture seule.`,
+      });
+    } catch (error: any) {
+      toast.error(error?.message || "Impossible de créer une nouvelle version.");
+    } finally {
+      setVersioning(false);
+    }
+  };
+
   const deleteQuote = async (quote = selectedQuote) => {
     if (!quote?.id || !user) return;
     if (!confirm("Voulez-vous vraiment supprimer ce devis ?")) return;
@@ -497,6 +601,19 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
     setQuotes((current) => current.filter((item) => item.id !== quote.id));
     setBusy(false);
     toast.success("Devis supprimé.");
+  };
+
+  const archiveQuote = async () => {
+    if (!selectedQuote?.id || !user || isHistoricalVersion) return;
+    if (!confirm("Archiver ce devis FIT ? Il sera retiré de la liste active.")) return;
+    const { error } = await db.from("fit_quotes").update({ archived_at: new Date().toISOString(), archived_by: user.id, share_enabled: false }).eq("id", selectedQuote.id);
+    if (error) return toast.error(error.message);
+    setSelectedQuote(null);
+    setDays([]);
+    setComponents([]);
+    setPricing(null);
+    setQuotes((current) => current.filter((quote) => quote.id !== selectedQuote.id));
+    toast.success("Devis FIT archivé.");
   };
 
   const addTemplateDay = async (templateId: string) => {
@@ -607,8 +724,11 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
   };
 
   useEffect(() => {
-    if (!selectedQuote || loading) return;
-    void persistPricing();
+    if (!selectedQuote || loading || selectedQuote.is_current_version === false) return;
+    const timer = window.setTimeout(() => {
+      void persistPricing().catch(() => setAutosaveStatus("error"));
+    }, 450);
+    return () => window.clearTimeout(timer);
   }, [days.length, components.map((component) => `${component.id}:${component.enabled}`).join("|")]);
 
   const updateMargin = async (patch: Record<string, any>) => {
@@ -714,14 +834,27 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
       return;
     }
     const token = selectedQuote.share_token || partnerShareToken();
-    const patch = { share_token: token, share_enabled: true, status: "sent_to_client", production_status: "sent_to_client" };
-    const { error } = await db.from("fit_quotes").update(patch).eq("id", selectedQuote.id);
+    const sentAt = new Date().toISOString();
+    const linkPatch = { share_token: token, share_enabled: true, public_client_visible: true, public_link_revoked_at: null, production_status: "sent_to_client" };
+    const { error } = await db.from("fit_quotes").update(linkPatch).eq("id", selectedQuote.id);
     if (error) return toast.error(error.message);
+    const { error: statusError } = await db.rpc("set_fit_commercial_status_v3", { p_quote_id: selectedQuote.id, p_status: "sent", p_reason: null, p_override: false });
+    if (statusError) {
+      await db.from("fit_quotes").update({ share_enabled: false }).eq("id", selectedQuote.id);
+      return toast.error(statusError.message);
+    }
+    const patch = { ...linkPatch, status: "sent", commercial_status: "sent", sent_at: sentAt };
     const updated = { ...selectedQuote, ...patch };
     setSelectedQuote(updated);
     setQuotes((current) => current.map((quote) => quote.id === updated.id ? updated : quote));
     await logAction(selectedQuote.id, "partner_quote_shared", { token });
     toast.success("Lien client activé.");
+  };
+
+  const copyShare = async () => {
+    if (!shareUrl) return toast.error("Générez d’abord le lien client.");
+    await navigator.clipboard.writeText(shareUrl);
+    toast.success("Lien client copié.");
   };
 
   const downloadPdf = async () => {
@@ -746,6 +879,32 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
     const bytes = await generateFitClientPdf({ quote, days: pdfDays, hotelLines: [], flightLines: [], branding });
     downloadFitPdf(bytes, `${quote.quote_number || (isSalesMode ? "devis-fit-commercial" : "devis-fit-partenaire")}-client.pdf`);
     await logAction(selectedQuote.id, "partner_pdf_generated");
+  };
+
+  const previewPdf = async () => {
+    if (!selectedQuote) return;
+    const latest = await persistPricing();
+    const quote = latest?.quote || selectedQuote;
+    const pdfDays = days.map((day) => ({ ...day, ...clientListsFromComponents(day, components), selling_price_mad: calculateDayNet(day, components) }));
+    const bytes = await generateFitClientPdf({
+      quote,
+      days: pdfDays,
+      hotelLines: [],
+      flightLines: [],
+      branding: {
+        logoUrl: partnerProfile?.logo_url || organization?.metadata?.agency_logo_url,
+        agencyName: partnerProfile?.commercial_name || partnerProfile?.name || organization?.display_name,
+        contactEmail: partnerProfile?.contact_email || organization?.email,
+        contactPhone: partnerProfile?.whatsapp || partnerProfile?.contact_phone || organization?.phone,
+        website: partnerProfile?.website || organization?.website,
+        footerText: partnerProfile?.footer_text,
+        brandingMode: quote.partner_branding_mode || partnerProfile?.branding_mode,
+        primaryColor: partnerProfile?.primary_color,
+      },
+    });
+    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
+    window.open(url, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
   const updatePaymentStep = async (status: "partner_payment_pending" | "partner_payment_received") => {
@@ -775,7 +934,7 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
   const selectedDayComponents = (dayId: string) => components.filter((component) => component.quote_day_id === dayId);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6 overflow-x-hidden pb-24 md:pb-0">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="font-display text-3xl">{isSalesMode ? "Devis FIT commercial" : "Devis FIT partenaire"}</h1>
@@ -804,6 +963,45 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
         </Dialog>
       </div>
 
+      <AlertDialog open={Boolean(duplicateTarget)} onOpenChange={(open) => { if (!open && !duplicating) setDuplicateTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Dupliquer ce devis FIT ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Une nouvelle copie indépendante de <strong className="text-foreground">{duplicateTarget?.quote_number}</strong> sera créée en brouillon. Aucune modification du devis original ne sera effectuée.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-lg border border-border bg-secondary/50 p-3 text-sm text-muted-foreground">
+            Le lien client, les validations, paiements, documents générés et historiques ne seront pas copiés.
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={duplicating}>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void duplicateQuote()} disabled={duplicating}>
+              {duplicating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CopyPlus className="mr-2 h-4 w-4" />}
+              {duplicateAndEdit ? "Dupliquer et modifier" : "Dupliquer"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={Boolean(versionTarget)} onOpenChange={(open) => { if (!open && !versioning) setVersionTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Créer une nouvelle version ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Une V{numberValue(versionTarget?.version_number || 1) + 1} liée à <strong className="text-foreground">{versionTarget?.quote_family_reference || versionTarget?.quote_number}</strong> sera créée. La version actuelle restera accessible en lecture seule.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-md border border-border bg-secondary/50 p-3 text-sm text-muted-foreground">Les validations, paiements, liens client et documents générés sont réinitialisés.</div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={versioning}>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void createNewVersion()} disabled={versioning}>
+              {versioning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <History className="mr-2 h-4 w-4" />} Créer la version
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
         <Card className="overflow-hidden">
           <div className="border-b border-border p-4">
@@ -812,25 +1010,27 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
           </div>
           {loading ? (
             <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Chargement…</div>
-          ) : quotes.length === 0 ? (
+          ) : currentQuotes.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">{isSalesMode ? "Aucun devis FIT commercial." : "Aucun devis FIT partenaire."}</div>
           ) : (
             <div className="divide-y divide-border">
-              {quotes.map((quote) => (
-                <button
-                  key={quote.id}
-                  onClick={() => loadQuote(quote)}
-                  className={`block w-full cursor-pointer p-4 text-left transition-colors hover:bg-secondary/50 ${selectedQuote?.id === quote.id ? "bg-secondary" : ""}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold">{quote.client_name}</p>
-                      <p className="text-xs text-muted-foreground">{quote.quote_number} · {fmtDateTime(quote.updated_at)}</p>
+              {currentQuotes.map((quote) => (
+                <div key={quote.id} className={selectedQuote?.id === quote.id ? "bg-secondary" : ""}>
+                  <button onClick={() => loadQuote(quote)} className="block w-full cursor-pointer p-4 text-left transition-colors hover:bg-secondary/50">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{quote.client_name}</p>
+                        <p className="text-xs text-muted-foreground">{quote.quote_family_reference || quote.quote_number} · V{quote.version_number || 1} · {fmtDateTime(quote.updated_at)}</p>
+                      </div>
+                      <Badge variant={quote.requires_lejapon_approval ? "destructive" : "outline"}>{statusLabels[quote.status] || quote.status}</Badge>
                     </div>
-                    <Badge variant={quote.requires_lejapon_approval ? "destructive" : "outline"}>{statusLabels[quote.status] || quote.status}</Badge>
+                    <p className="mt-2 text-sm font-semibold text-accent">{fmtMAD(quote.total_selling_price_mad)}</p>
+                    {quote.duplicated_from_id && <p className="mt-1 text-xs text-accent">Copie de {quotes.find((item) => item.id === quote.duplicated_from_id)?.quote_number || "un devis FIT"}</p>}
+                  </button>
+                  <div className="border-t border-border px-3 py-1.5">
+                    <Button type="button" size="sm" variant="ghost" className="w-full justify-start" onClick={() => confirmDuplicate(quote)}><CopyPlus className="h-4 w-4" /> Dupliquer</Button>
                   </div>
-                  <p className="mt-2 text-sm font-semibold text-accent">{fmtMAD(quote.total_selling_price_mad)}</p>
-                </button>
+                </div>
               ))}
             </div>
           )}
@@ -923,17 +1123,62 @@ export default function AgencyFitQuotes({ mode = "partner" }: { mode?: "partner"
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="font-display text-2xl">{selectedQuote.client_name}</h2>
                     <Badge variant={selectedQuote.requires_lejapon_approval ? "destructive" : "secondary"}>{statusLabels[selectedQuote.status] || selectedQuote.status}</Badge>
+                    <Select value={String(selectedQuote.version_number || 1)} onValueChange={(value) => { const version = quoteVersions.find((item) => String(item.version_number || 1) === value); if (version) void loadQuote(version); }}>
+                      <SelectTrigger className="h-9 w-auto min-w-20" aria-label="Choisir une version"><SelectValue /></SelectTrigger>
+                      <SelectContent>{quoteVersions.map((version) => <SelectItem key={version.id} value={String(version.version_number || 1)}>V{version.version_number || 1} — {statusLabels[version.status] || version.status}{version.is_current_version ? " — actuelle" : ""}</SelectItem>)}</SelectContent>
+                    </Select>
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">{selectedQuote.quote_number} · {selectedQuote.travelers_count} voyageur(s)</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{selectedQuote.quote_family_reference || selectedQuote.quote_number} · {selectedQuote.travelers_count} voyageur(s)</p>
+                  {isHistoricalVersion && <p className="mt-1 text-sm font-semibold text-amber-700">Version historique en lecture seule</p>}
+                  {!isHistoricalVersion && autosaveStatus !== "idle" && <p className={`mt-1 text-xs ${autosaveStatus === "error" ? "text-destructive" : "text-muted-foreground"}`}>{autosaveStatus === "saving" ? "Enregistrement…" : autosaveStatus === "saved" ? "Modifications enregistrées" : "Erreur d’enregistrement"}</p>}
+                  {selectedQuote.duplicated_from_id && <p className="mt-1 text-sm font-semibold text-accent">Copie de {selectedQuote.duplicated_from_reference || quotes.find((item) => item.id === selectedQuote.duplicated_from_id)?.quote_number || "un devis FIT"}</p>}
+                  {quotes.some((item) => item.duplicated_from_id === selectedQuote.id) && <p className="mt-1 text-xs text-muted-foreground">Dupliqué en {quotes.filter((item) => item.duplicated_from_id === selectedQuote.id).map((item) => item.quote_number).join(", ")}</p>}
                   {selectedQuote.approval_reason && <p className="mt-2 text-sm font-medium text-destructive">{selectedQuote.approval_reason}</p>}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={openEditQuote}><Pencil className="h-4 w-4" /> Modifier le devis</Button>
-                  <Button variant="outline" onClick={downloadPdf}><Download className="h-4 w-4" /> PDF client</Button>
-                  <Button variant="outline" onClick={enableShare}><Send className="h-4 w-4" /> Générer lien</Button>
-                  {shareUrl && <Button variant="ghost" asChild><a href={shareUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /> Ouvrir</a></Button>}
-                  <Button variant="ghost" onClick={() => deleteQuote()} disabled={busy}><Trash2 className="h-4 w-4 text-destructive" /> Supprimer</Button>
+                <div className="hidden flex-wrap justify-end gap-2 md:flex">
+                  <Button onClick={openEditQuote} disabled={busy || isHistoricalVersion}><Pencil className="h-4 w-4" /> Sauver</Button>
+                  <Button variant="secondary" onClick={enableShare} disabled={busy || isHistoricalVersion}><Send className="h-4 w-4" /> Envoyer au client</Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild><Button variant="outline"><MoreHorizontal className="h-4 w-4" /> Actions</Button></DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-64">
+                      <DropdownMenuLabel>Devis client</DropdownMenuLabel>
+                      {shareUrl && <DropdownMenuItem asChild><a href={shareUrl} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-4 w-4" /> Ouvrir comme client</a></DropdownMenuItem>}
+                      <DropdownMenuItem onClick={copyShare} disabled={!shareUrl}><Copy className="mr-2 h-4 w-4" /> Copier lien client</DropdownMenuItem>
+                      <DropdownMenuItem onClick={previewPdf}><FileText className="mr-2 h-4 w-4" /> Aperçu PDF</DropdownMenuItem>
+                      <DropdownMenuItem onClick={downloadPdf}><Download className="mr-2 h-4 w-4" /> Télécharger PDF client</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => confirmDuplicate(selectedQuote, true)}><CopyPlus className="mr-2 h-4 w-4" /> Dupliquer et modifier</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setVersionTarget(selectedQuote)} disabled={isHistoricalVersion}><History className="mr-2 h-4 w-4" /> Créer nouvelle version</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={archiveQuote} disabled={busy || isHistoricalVersion}>Archiver</DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => deleteQuote()} disabled={busy || isHistoricalVersion}><Trash2 className="mr-2 h-4 w-4" /> Supprimer</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
+              </div>
+              {commission && (
+                <div className="mt-4 grid gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-4 sm:grid-cols-3">
+                  <div><p className="text-xs font-medium uppercase tracking-wide text-emerald-800">Votre commission</p><p className="mt-1 text-2xl font-semibold text-emerald-950">{fmtMAD(commission.sales_agent_commission_amount_mad || 0)}</p><p className="text-sm text-emerald-800">{commission.sales_agent_commission_status === "paid" ? "Payée" : ["deposit_paid", "converted_to_booking"].includes(selectedQuote.commercial_status) ? "Acquise" : commission.sales_agent_commission_status === "confirmed" ? "Confirmée" : "Estimée"}</p></div>
+                  {commission.gross_agency_commission_amount_mad != null && <><div><p className="text-xs text-muted-foreground">Commission brute agence</p><p className="mt-1 font-semibold">{fmtMAD(commission.gross_agency_commission_amount_mad)}</p></div><div><p className="text-xs text-muted-foreground">Commission nette agence</p><p className="mt-1 font-semibold">{fmtMAD(commission.agency_net_commission_amount_mad)}</p></div></>}
+                </div>
+              )}
+              <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-border bg-background/95 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))] shadow-lg backdrop-blur md:hidden">
+                <Button className="min-h-11 flex-1" onClick={openEditQuote} disabled={busy || isHistoricalVersion}><Pencil className="h-4 w-4" /> Sauver</Button>
+                <Button className="min-h-11 flex-1" variant="secondary" onClick={enableShare} disabled={busy || isHistoricalVersion}><Send className="h-4 w-4" /> Envoyer</Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild><Button className="min-h-11" variant="outline"><MoreHorizontal className="h-5 w-5" /> Plus</Button></DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="top" className="w-64">
+                    {shareUrl && <DropdownMenuItem asChild><a href={shareUrl} target="_blank" rel="noreferrer">Ouvrir comme client</a></DropdownMenuItem>}
+                    <DropdownMenuItem onClick={copyShare} disabled={!shareUrl}>Copier lien client</DropdownMenuItem>
+                    <DropdownMenuItem onClick={previewPdf}>Aperçu PDF</DropdownMenuItem>
+                    <DropdownMenuItem onClick={downloadPdf}>Télécharger PDF client</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => confirmDuplicate(selectedQuote, true)}>Dupliquer et modifier</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setVersionTarget(selectedQuote)} disabled={isHistoricalVersion}>Créer nouvelle version</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={archiveQuote} disabled={isHistoricalVersion}>Archiver</DropdownMenuItem>
+                    <DropdownMenuItem className="text-destructive" onClick={() => deleteQuote()} disabled={isHistoricalVersion}>Supprimer</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
               {shareUrl && (
                 <div className="mt-4 rounded-md border border-border bg-secondary/50 p-3 text-sm">

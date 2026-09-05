@@ -1,22 +1,26 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, Copy, Download, ExternalLink, Eye, FileText, GripVertical, ImagePlus, Link2, Plus, RefreshCw, Save, Sparkles, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarCheck, CheckCircle2, Copy, CopyPlus, Download, ExternalLink, Eye, FileText, GripVertical, History, ImagePlus, Link2, Loader2, MoreHorizontal, PackageCheck, Plus, RefreshCw, Save, Send, Sparkles, Trash2, Upload, WalletCards } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "../components/PageHeader";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { FitInput as Input, FitTextarea as Textarea } from "@/components/fit/FitFormControls";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { fmtMAD } from "@/lib/format";
 import { downloadFitPdf, generateFitClientPdf, generateFitInternalPdf } from "@/lib/fit-pdfs";
 import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
+import { fitCommercialLabel, fitCommercialStatus, fitCommercialTone, fitNextAction } from "@/lib/fit-commercial";
+import { FitFinancialPanel } from "@/components/fit/FitFinancialPanel";
 
 const db = supabase as any;
 
@@ -121,6 +125,8 @@ const emptyQuote = {
   rounding_rule: "unit",
   manual_adjustment_mad: 0,
   discount_mad: 0,
+  public_deposit_mad: 0,
+  public_payment_deadline: "",
   valid_until: "",
   client_notes: "",
   share_enabled: false,
@@ -406,7 +412,6 @@ const generateClientFields = (day: any) => {
 };
 const todayToken = () => new Date().toISOString().slice(0, 10).replaceAll("-", "");
 const quoteNumber = () => `FIT-${todayToken()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-const tokenValue = () => crypto.randomUUID().replaceAll("-", "").slice(0, 24);
 const imageUrlsFromForm = (form: any) => listFromText(form.image_urls_text);
 const imagePathFromPublicUrl = (url: string) => {
   const marker = "/storage/v1/object/public/programme-images/";
@@ -435,6 +440,8 @@ const fitQuotePayload = (form: any, totals?: Record<string, unknown>, extra?: Re
   rounding_rule: form.rounding_rule || "unit",
   manual_adjustment_mad: numberValue(form.manual_adjustment_mad),
   discount_mad: numberValue(form.discount_mad),
+  public_deposit_mad: numberValue(form.public_deposit_mad),
+  public_payment_deadline: form.public_payment_deadline || null,
   valid_until: form.valid_until || null,
   client_notes: form.client_notes || null,
   share_token: form.share_token || null,
@@ -790,6 +797,7 @@ const partnerTemplateIssues = (template: any) => {
 
 export default function FitQuotes() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [templates, setTemplates] = useState<any[]>([]);
   const [quotes, setQuotes] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
@@ -804,12 +812,20 @@ export default function FitQuotes() {
   const [flightLines, setFlightLines] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<any>(null);
+  const [duplicateAndEdit, setDuplicateAndEdit] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const [versionTarget, setVersionTarget] = useState<any>(null);
+  const [versioning, setVersioning] = useState(false);
+  const [timeline, setTimeline] = useState<any[]>([]);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({ amount: "", method: "bank_transfer", reference: "" });
 
   const load = async () => {
     const [{ data: templateRows }, { data: templateLines }, { data: quoteRows }, { data: clientRows }] = await Promise.all([
       db.from("fit_day_templates").select("*").order("city").order("title"),
       db.from("fit_day_template_cost_lines").select("*").order("sort_order"),
-      db.from("fit_quotes").select("*, clients:client_id(full_name,email,phone)").is("deleted_at", null).order("updated_at", { ascending: false }),
+      db.from("fit_quotes").select("*, clients:client_id(full_name,email,phone)").is("deleted_at", null).is("archived_at", null).order("updated_at", { ascending: false }),
       db.from("clients").select("id,full_name,email,phone").order("full_name").limit(200),
     ]);
     const lineRows = templateLines ?? [];
@@ -877,6 +893,23 @@ export default function FitQuotes() {
     [calculatedQuoteDays],
   );
   const shareUrl = quoteForm.share_token ? `${window.location.origin}/devis-fit/${quoteForm.share_token}` : "";
+  const currentQuotes = useMemo(() => quotes.filter((quote) => quote.is_current_version !== false), [quotes]);
+  const quoteVersions = useMemo(() => {
+    if (!selectedQuote) return [];
+    const groupId = selectedQuote.quote_group_id || selectedQuote.id;
+    return quotes
+      .filter((quote) => (quote.quote_group_id || quote.id) === groupId)
+      .sort((a, b) => numberValue(b.version_number) - numberValue(a.version_number));
+  }, [quotes, selectedQuote]);
+  const isHistoricalVersion = selectedQuote?.is_current_version === false;
+
+  const publicExpiryInput = (() => {
+    if (!quoteForm.public_link_expires_at) return "";
+    const date = new Date(quoteForm.public_link_expires_at);
+    if (Number.isNaN(date.getTime())) return "";
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  })();
 
   const loadQuote = async (quote: any) => {
     setSelectedQuote(quote);
@@ -888,13 +921,15 @@ export default function FitQuotes() {
       travel_end_date: dateOnly(quote.travel_end_date),
       valid_until: dateOnly(quote.valid_until),
     });
-    const [{ data: days }, { data: dayLines }, { data: lines }, { data: hotels }, { data: flights }] = await Promise.all([
+    const [{ data: days }, { data: dayLines }, { data: lines }, { data: hotels }, { data: flights }, { data: timelineRows }] = await Promise.all([
       db.from("fit_quote_days").select("*").eq("quote_id", quote.id).order("sort_order"),
       db.from("fit_quote_day_cost_lines").select("*").eq("quote_id", quote.id).order("sort_order"),
       db.from("fit_quote_cost_lines").select("*").eq("quote_id", quote.id).order("sort_order"),
       db.from("fit_quote_hotel_lines").select("*").eq("quote_id", quote.id).order("sort_order"),
       db.from("fit_quote_flight_lines").select("*").eq("quote_id", quote.id).order("sort_order"),
+      db.rpc("get_fit_quote_commercial_timeline_v3", { p_quote_id: quote.id }),
     ]);
+    setTimeline(Array.isArray(timelineRows) ? timelineRows : []);
     const lineRows = dayLines ?? [];
     const quoteForCalculation = { ...emptyQuote, ...quote };
     setQuoteDays((days ?? []).map((day: any) => recalcDay({
@@ -1146,6 +1181,64 @@ export default function FitQuotes() {
     await loadQuote(data);
   };
 
+  const confirmDuplicate = (quote: any, andEdit = false) => {
+    setDuplicateTarget(quote);
+    setDuplicateAndEdit(andEdit);
+  };
+
+  const duplicateQuote = async () => {
+    if (!duplicateTarget?.id) return;
+    setDuplicating(true);
+    try {
+      const { data, error } = await db.rpc("duplicate_fit_quote", { p_source_quote_id: duplicateTarget.id });
+      if (error) throw error;
+      if (!data?.ok || !data?.new_quote_id) throw new Error("La copie du devis n’a pas été créée correctement.");
+      const { data: createdQuote, error: fetchError } = await db
+        .from("fit_quotes")
+        .select("*, clients:client_id(full_name,email,phone)")
+        .eq("id", data.new_quote_id)
+        .single();
+      if (fetchError || !createdQuote) throw fetchError || new Error("Copie créée mais impossible à ouvrir.");
+      const duplicatedQuote = { ...createdQuote, duplicated_from_reference: data.source_reference };
+      setDuplicateTarget(null);
+      await load();
+      await loadQuote(duplicatedQuote);
+      toast.success(`Devis ${data.new_reference} créé.`, {
+        description: `Copie de ${data.source_reference}. Le devis original reste inchangé.`,
+      });
+    } catch (error: any) {
+      toast.error(error?.message || "Impossible de dupliquer ce devis FIT.");
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
+  const createNewVersion = async () => {
+    if (!versionTarget?.id) return;
+    setVersioning(true);
+    try {
+      const { data, error } = await db.rpc("create_new_fit_quote_version", { p_source_quote_id: versionTarget.id });
+      if (error) throw error;
+      const { data: createdQuote, error: fetchError } = await db
+        .from("fit_quotes")
+        .select("*, clients:client_id(full_name,email,phone)")
+        .eq("id", data?.new_quote_id)
+        .single();
+      if (fetchError || !createdQuote) throw fetchError || new Error("La nouvelle version ne peut pas être ouverte.");
+      setVersionTarget(null);
+      await load();
+      await loadQuote(createdQuote);
+      void db.functions.invoke("send-admin-notification", { body: { event_type: "fit_quote_revision_ready", quote_id: createdQuote.id } });
+      toast.success(`Version V${data.version_number} créée.`, {
+        description: `${data.family_reference} reste lié à son historique. V${data.version_number - 1} est désormais en lecture seule.`,
+      });
+    } catch (error: any) {
+      toast.error(error?.message || "Impossible de créer une nouvelle version.");
+    } finally {
+      setVersioning(false);
+    }
+  };
+
   const addTemplateDay = (templateId: string) => {
     const template = templates.find((item) => item.id === templateId);
     if (!template) return;
@@ -1252,7 +1345,7 @@ export default function FitQuotes() {
       const quoteCalculation = calculateFitQuote(quoteDays, quoteForm, costLines, hotelLines, flightLines);
       const normalizedDays = quoteCalculation.days;
       const normalizedSpecialLines = quoteCalculation.specialLines;
-      const nextVersion = Math.max(1, numberValue(selectedQuote.version_number || quoteForm.version_number || 1)) + 1;
+      const nextVersion = Math.max(1, numberValue(selectedQuote.version_number || quoteForm.version_number || 1));
       const quotePayload = cleanPayload(fitQuotePayload(
         quoteForm,
         quoteCalculation.totals,
@@ -1432,6 +1525,16 @@ export default function FitQuotes() {
     toast.success("Devis FIT supprimé.");
   };
 
+  const archiveQuote = async () => {
+    if (!selectedQuote?.id || !user || isHistoricalVersion) return;
+    if (!confirm("Archiver ce devis FIT ? Il sera retiré de la liste active.")) return;
+    const { error } = await db.from("fit_quotes").update({ archived_at: new Date().toISOString(), archived_by: user.id, share_enabled: false }).eq("id", selectedQuote.id);
+    if (error) return toast.error(error.message);
+    setSelectedQuote(null);
+    setQuotes((current) => current.filter((quote) => quote.id !== selectedQuote.id));
+    toast.success("Devis FIT archivé.");
+  };
+
   const auditProduction = async (actionType: string, payload: Record<string, any> = {}) => {
     if (!selectedQuote?.id) return;
     await db.from("quote_audit_logs").insert({
@@ -1529,15 +1632,97 @@ export default function FitQuotes() {
 
   const enableShare = async () => {
     if (!selectedQuote?.id) return;
-    const token = quoteForm.share_token || tokenValue();
-    const patch = { share_token: token, share_enabled: true };
-    const { error } = await db.from("fit_quotes").update(patch).eq("id", selectedQuote.id);
+    if (!quoteForm.share_token) {
+      await regenerateShare();
+      return;
+    }
+    const expiresAt = quoteForm.public_link_expires_at || null;
+    const { error } = await db.rpc("set_public_fit_quote_link", {
+      p_quote_id: selectedQuote.id,
+      p_enabled: true,
+      p_expires_at: expiresAt,
+    });
     if (error) return toast.error(error.message);
+    const patch = { share_enabled: true, public_link_revoked_at: null };
     const next = { ...selectedQuote, ...quoteForm, ...patch };
     setSelectedQuote(next);
     setQuoteForm(next);
-    await navigator.clipboard?.writeText(`${window.location.origin}/devis-fit/${token}`).catch(() => undefined);
+    await navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
     toast.success("Lien client activé et copié.");
+  };
+
+  const regenerateShare = async () => {
+    if (!selectedQuote?.id) return;
+    const expiresAt = quoteForm.public_link_expires_at || null;
+    const { data, error } = await db.rpc("regenerate_public_fit_quote_token", {
+      p_quote_id: selectedQuote.id,
+      p_expires_at: expiresAt,
+    });
+    if (error || !data?.token) return toast.error(error?.message || "Impossible de régénérer le lien.");
+    const patch = {
+      share_token: data.token,
+      share_enabled: true,
+      public_link_revoked_at: null,
+      public_link_expires_at: data.expires_at,
+      public_client_status: quoteForm.public_client_status || "quoted",
+    };
+    const next = { ...selectedQuote, ...quoteForm, ...patch };
+    setSelectedQuote(next);
+    setQuoteForm(next);
+    await navigator.clipboard?.writeText(`${window.location.origin}/devis-fit/${data.token}`).catch(() => undefined);
+    toast.success("Nouveau lien privé généré et copié. L’ancien lien est invalide.");
+  };
+
+  const sendToClient = async () => {
+    if (!selectedQuote?.id || isHistoricalVersion) return;
+    if (!quoteForm.share_token) await regenerateShare();
+    else await enableShare();
+    const sentAt = new Date().toISOString();
+    const { error } = await db.rpc("set_fit_commercial_status_v3", {
+      p_quote_id: selectedQuote.id,
+      p_status: "sent",
+      p_reason: null,
+      p_override: false,
+    });
+    if (error) return toast.error(error.message);
+    const patch = { status: "sent", commercial_status: "sent", production_status: "sent_to_client", sent_at: sentAt };
+    setSelectedQuote((current: any) => ({ ...current, ...patch }));
+    setQuoteForm((current: any) => ({ ...current, ...patch }));
+    void db.functions.invoke("send-admin-notification", { body: { event_type: "fit_quote_sent", quote_id: selectedQuote.id } });
+    toast.success("Devis prêt à être envoyé au client.");
+  };
+
+  const copyShare = async () => {
+    if (!shareUrl) return toast.error("Générez d’abord un lien client.");
+    await navigator.clipboard?.writeText(shareUrl);
+    toast.success("Lien client copié.");
+  };
+
+  const deactivateShare = async () => {
+    if (!selectedQuote?.id || !quoteForm.share_token) return;
+    const { error } = await db.rpc("set_public_fit_quote_link", {
+      p_quote_id: selectedQuote.id,
+      p_enabled: false,
+      p_expires_at: quoteForm.public_link_expires_at || null,
+    });
+    if (error) return toast.error(error.message);
+    const patch = { share_enabled: false, public_link_revoked_at: new Date().toISOString() };
+    const next = { ...selectedQuote, ...quoteForm, ...patch };
+    setSelectedQuote(next);
+    setQuoteForm(next);
+    toast.success("Lien client désactivé.");
+  };
+
+  const savePublicExpiry = async () => {
+    if (!selectedQuote?.id || !quoteForm.share_token) return toast.error("Générez d’abord un lien client.");
+    const expiresAt = quoteForm.public_link_expires_at || null;
+    const { error } = await db.rpc("set_public_fit_quote_link", {
+      p_quote_id: selectedQuote.id,
+      p_enabled: Boolean(quoteForm.share_enabled),
+      p_expires_at: expiresAt,
+    });
+    if (error) return toast.error(error.message);
+    toast.success("Date d’expiration enregistrée.");
   };
 
   const saveDayAsTemplate = async (day: any) => {
@@ -1608,41 +1793,64 @@ export default function FitQuotes() {
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
-  const convertToBooking = async () => {
+  const requestDeposit = async () => {
     if (!selectedQuote?.id) return;
-    if (!confirm("Convertir ce devis FIT en réservation ?")) return;
     setSaving(true);
     try {
-      let clientId = quoteForm.client_id || null;
-      if (!clientId && quoteForm.client_name) {
-        const { data: client, error: clientError } = await db.from("clients").insert({
-          full_name: quoteForm.client_name,
-          source: "fit_quote",
-          metadata: { fit_quote_id: selectedQuote.id },
-        }).select("id").single();
-        if (clientError) throw clientError;
-        clientId = client?.id ?? null;
-      }
-      const { data: booking, error: bookingError } = await db.from("bookings").insert({
-        client_id: clientId,
-        contact_name: quoteForm.client_name || "Client FIT",
-        contact_email: "fit@non-renseigne.local",
-        trip_id: null,
-        preferred_dates: [quoteForm.travel_start_date, quoteForm.travel_end_date].filter(Boolean).join(" - ") || null,
-        num_adults: Math.max(1, numberValue(quoteForm.travelers_count)),
-        num_children: 0,
-        total_amount_mad: Math.round(totals.total_selling_price_mad),
-        paid_amount_mad: 0,
-        status: "lead",
-        source: "fit_quote",
-        message: quoteForm.notes || null,
-        metadata: { fit_quote_id: selectedQuote.id, fit_quote_number: selectedQuote.quote_number },
-      }).select("id,reference").single();
-      if (bookingError) throw bookingError;
-      await db.from("fit_quotes").update({ status: "converted_to_booking", converted_booking_id: booking.id, client_id: clientId, ...totals }).eq("id", selectedQuote.id);
-      toast.success(`Devis converti en réservation ${booking.reference}.`);
+      const { error } = await db.rpc("request_fit_deposit_v3", { p_quote_id: selectedQuote.id });
+      if (error) throw error;
+      const patch = { status: "deposit_pending", commercial_status: "deposit_pending", deposit_requested_at: new Date().toISOString() };
+      setSelectedQuote((current: any) => ({ ...current, ...patch }));
+      setQuoteForm((current: any) => ({ ...current, ...patch }));
+      void db.functions.invoke("send-admin-notification", { body: { event_type: "fit_deposit_requested", quote_id: selectedQuote.id } });
+      toast.success("Demande d’acompte enregistrée.");
+    } catch (error: any) {
+      toast.error(error?.message || "Impossible de demander l’acompte.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDeposit = async () => {
+    if (!selectedQuote?.id) return;
+    const amount = Number(paymentForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return toast.error("Saisissez un montant valide.");
+    setSaving(true);
+    try {
+      const { data, error } = await db.rpc("confirm_fit_deposit_payment_v3", {
+        p_quote_id: selectedQuote.id,
+        p_amount_mad: amount,
+        p_method: paymentForm.method,
+        p_reference: paymentForm.reference || null,
+        p_idempotency_key: `fit-deposit:${selectedQuote.id}:${paymentForm.reference || amount}`,
+      });
+      if (error) throw error;
+      const patch = { status: "deposit_paid", commercial_status: "deposit_paid", deposit_paid_at: new Date().toISOString() };
+      setSelectedQuote((current: any) => ({ ...current, ...patch }));
+      setQuoteForm((current: any) => ({ ...current, ...patch }));
+      setPaymentOpen(false);
+      void db.functions.invoke("send-admin-notification", { body: { event_type: "fit_payment_received", quote_id: selectedQuote.id, payment_id: data?.payment_id } });
+      toast.success("Acompte confirmé. La réservation peut être créée.");
+    } catch (error: any) {
+      toast.error(error?.message || "Impossible de confirmer le paiement.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const convertToBooking = async () => {
+    if (!selectedQuote?.id) return;
+    if (selectedQuote.converted_booking_id) return navigate(`/admin/bookings/${selectedQuote.converted_booking_id}`);
+    if (!confirm("Créer la réservation depuis la version acceptée ? Cette opération est idempotente.")) return;
+    setSaving(true);
+    try {
+      const { data, error } = await db.rpc("convert_fit_quote_to_booking_v3", { p_quote_id: selectedQuote.id, p_override_reason: null });
+      if (error) throw error;
+      if (!data?.booking_id) throw new Error("La réservation n’a pas été retournée.");
+      toast.success(data.already_created ? "Réservation déjà créée." : `Réservation ${data.booking_reference} créée.`);
+      if (!data.already_created) void db.functions.invoke("send-admin-notification", { body: { event_type: "fit_booking_confirmed", quote_id: selectedQuote.id, booking_id: data.booking_id } });
       await load();
-      await loadQuote({ ...selectedQuote, status: "converted_to_booking", converted_booking_id: booking.id, client_id: clientId, ...totals });
+      navigate(`/admin/bookings/${data.booking_id}`);
     } catch (error: any) {
       toast.error(error?.message ?? "Conversion impossible.");
     } finally {
@@ -1651,7 +1859,7 @@ export default function FitQuotes() {
   };
 
   return (
-    <div>
+    <div className="min-w-0 overflow-x-hidden pb-24 md:pb-0">
       <PageHeader
         title="Devis FIT / Programmes sur mesure"
         description="Composez un devis privé avec des blocs journée et des lignes de coût façon Excel."
@@ -1677,6 +1885,60 @@ export default function FitQuotes() {
         }
       />
 
+      <AlertDialog open={Boolean(duplicateTarget)} onOpenChange={(open) => { if (!open && !duplicating) setDuplicateTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Dupliquer ce devis FIT ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Une nouvelle copie indépendante de <strong className="text-foreground">{duplicateTarget?.quote_number}</strong> sera créée en brouillon. Aucune modification du devis original ne sera effectuée.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-lg border border-border bg-secondary/50 p-3 text-sm text-muted-foreground">
+            Le lien client, les validations, paiements, documents générés et historiques ne seront pas copiés.
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={duplicating}>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void duplicateQuote()} disabled={duplicating}>
+              {duplicating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CopyPlus className="mr-2 h-4 w-4" />}
+              {duplicateAndEdit ? "Dupliquer et modifier" : "Dupliquer"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={Boolean(versionTarget)} onOpenChange={(open) => { if (!open && !versioning) setVersionTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Créer une nouvelle version ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Une V{numberValue(versionTarget?.version_number || 1) + 1} liée à <strong className="text-foreground">{versionTarget?.quote_family_reference || versionTarget?.quote_number}</strong> sera créée. La version actuelle restera consultable en lecture seule.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-md border border-border bg-secondary/50 p-3 text-sm text-muted-foreground">
+            Les validations, signatures, paiements, liens client et PDF générés ne seront pas repris.
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={versioning}>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void createNewVersion()} disabled={versioning}>
+              {versioning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <History className="mr-2 h-4 w-4" />}
+              Créer la version
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Confirmer l’acompte reçu</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2"><Label htmlFor="fit-deposit-amount">Montant reçu (MAD)</Label><Input id="fit-deposit-amount" inputMode="decimal" value={paymentForm.amount} onChange={(event) => setPaymentForm((current) => ({ ...current, amount: event.target.value }))} placeholder={String(quoteForm.public_deposit_mad || "")} /></div>
+            <div className="space-y-2"><Label>Moyen de paiement</Label><Select value={paymentForm.method} onValueChange={(method) => setPaymentForm((current) => ({ ...current, method }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="bank_transfer">Virement bancaire</SelectItem><SelectItem value="card">Carte</SelectItem><SelectItem value="cash">Espèces</SelectItem><SelectItem value="cheque">Chèque</SelectItem><SelectItem value="other">Autre</SelectItem></SelectContent></Select></div>
+            <div className="space-y-2"><Label htmlFor="fit-deposit-reference">Référence</Label><Input id="fit-deposit-reference" value={paymentForm.reference} onChange={(event) => setPaymentForm((current) => ({ ...current, reference: event.target.value }))} placeholder="Référence bancaire ou reçu" /></div>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setPaymentOpen(false)}>Annuler</Button><Button onClick={confirmDeposit} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Confirmer le paiement</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Tabs defaultValue="quotes">
         <TabsList className="mb-4">
           <TabsTrigger value="quotes">Devis FIT</TabsTrigger>
@@ -1684,58 +1946,150 @@ export default function FitQuotes() {
         </TabsList>
 
         <TabsContent value="quotes">
-          <div className="grid gap-4 xl:grid-cols-[340px_1fr]">
-            <Card className="p-4">
+          <div className="grid min-w-0 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+            <Card className="min-w-0 p-4">
               <h2 className="font-display text-lg">Devis</h2>
               <div className="mt-4 space-y-2">
-                {quotes.map((quote) => (
-                  <button
-                    key={quote.id}
-                    type="button"
-                    onClick={() => loadQuote(quote)}
-                    className={`w-full rounded-lg border p-3 text-left text-sm transition hover:bg-secondary ${selectedQuote?.id === quote.id ? "border-accent bg-accent/5" : "border-border"}`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-semibold">{quote.quote_number}</p>
-                      <Badge variant={quote.status === "accepted" ? "default" : "outline"}>{quote.status}</Badge>
+                {currentQuotes.map((quote) => (
+                  <div key={quote.id} className={`rounded-lg border transition-colors hover:bg-secondary ${selectedQuote?.id === quote.id ? "border-accent bg-accent/5" : "border-border"}`}>
+                    <button type="button" onClick={() => loadQuote(quote)} className="w-full cursor-pointer p-3 text-left text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold">{quote.quote_family_reference || quote.quote_number} <span className="text-xs text-muted-foreground">· V{quote.version_number || 1}</span></p>
+                        <Badge variant={fitCommercialTone(fitCommercialStatus(quote))}>{fitCommercialLabel(quote)}</Badge>
+                      </div>
+                      <p className="mt-1 text-muted-foreground">{quote.client_name || "Client FIT"} · {quote.travelers_count || 1} pax</p>
+                      <p className="mt-1 text-xs font-medium">{fmtMAD(quote.total_selling_price_mad || 0)}</p>
+                      {quote.duplicated_from_id && <p className="mt-1 text-xs text-accent">Copie de {quotes.find((item) => item.id === quote.duplicated_from_id)?.quote_number || "un devis FIT"}</p>}
+                    </button>
+                    <div className="border-t border-border px-2 py-1.5">
+                      <Button type="button" size="sm" variant="ghost" className="w-full justify-start" onClick={() => confirmDuplicate(quote)}><CopyPlus className="h-4 w-4" /> Dupliquer</Button>
                     </div>
-                    <p className="mt-1 text-muted-foreground">{quote.client_name || "Client FIT"} · {quote.travelers_count || 1} pax</p>
-                    <p className="mt-1 text-xs font-medium">{fmtMAD(quote.total_selling_price_mad || 0)}</p>
-                  </button>
+                  </div>
                 ))}
-                {quotes.length === 0 && <p className="text-sm text-muted-foreground">Aucun devis FIT.</p>}
+                {currentQuotes.length === 0 && <p className="text-sm text-muted-foreground">Aucun devis FIT.</p>}
               </div>
             </Card>
 
-            <Card className="p-4">
+            <Card className="min-w-0 p-4">
               {!selectedQuote ? (
                 <div className="py-16 text-center text-muted-foreground">Sélectionnez ou créez un devis FIT.</div>
               ) : (
                 <div className="space-y-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h2 className="font-display text-xl">{quoteForm.quote_number}</h2>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="font-display text-xl">{quoteForm.quote_family_reference || quoteForm.quote_number}</h2>
+                        <Select value={String(quoteForm.version_number || 1)} onValueChange={(value) => { const version = quoteVersions.find((item) => String(item.version_number || 1) === value); if (version) void loadQuote(version); }}>
+                          <SelectTrigger className="h-9 w-auto min-w-20" aria-label="Choisir une version"><SelectValue /></SelectTrigger>
+                          <SelectContent>{quoteVersions.map((version) => <SelectItem key={version.id} value={String(version.version_number || 1)}>V{version.version_number || 1} — {productionStatusLabels[version.production_status || version.status] || version.status}{version.is_current_version ? " — actuelle" : ""}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
                       <p className="text-sm text-muted-foreground">{quoteForm.client_name || "Client FIT"} · {quoteForm.travelers_count} voyageur(s)</p>
+                      {isHistoricalVersion && <p className="mt-1 text-sm font-semibold text-amber-700">Version historique en lecture seule</p>}
+                      {quoteForm.duplicated_from_id && <p className="mt-1 text-sm font-semibold text-accent">Copie de {quoteForm.duplicated_from_reference || quotes.find((item) => item.id === quoteForm.duplicated_from_id)?.quote_number || "un devis FIT"}</p>}
+                      {quotes.some((item) => item.duplicated_from_id === selectedQuote.id) && <p className="mt-1 text-xs text-muted-foreground">Dupliqué en {quotes.filter((item) => item.duplicated_from_id === selectedQuote.id).map((item) => item.quote_number).join(", ")}</p>}
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Select value={quoteForm.status} onValueChange={(status) => { setQuoteForm({ ...quoteForm, status, production_status: status }); updateStatus(status); }}>
-                        <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-                        <SelectContent>{fitProductionStatuses.map((status) => <SelectItem key={status} value={status}>{productionStatusLabels[status] || status}</SelectItem>)}</SelectContent>
-                      </Select>
-                      <Button variant="outline" onClick={enableShare}><Link2 className="h-4 w-4" /> Lien client</Button>
-                      {shareUrl && <Button variant="ghost" asChild><a href={shareUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /> Ouvrir</a></Button>}
-                      <Button variant="outline" onClick={previewClientPdf}><Eye className="h-4 w-4" /> Aperçu PDF</Button>
-                      <Button variant="outline" onClick={() => downloadPdf("client")}><Download className="h-4 w-4" /> PDF client</Button>
-                      <Button variant="outline" onClick={() => downloadPdf("internal")}><FileText className="h-4 w-4" /> PDF interne</Button>
-                      {quoteForm.status === "accepted" && !quoteForm.converted_booking_id && <Button variant="outline" onClick={convertToBooking}>Convertir réservation</Button>}
-                      <Button variant="ghost" onClick={deleteQuote}><Trash2 className="h-4 w-4 text-destructive" /> Supprimer</Button>
-                      <Button onClick={saveQuote} disabled={saving}><Save className="h-4 w-4" /> {saving ? "Sauvegarde…" : "Sauver"}</Button>
+                    <div className="hidden flex-wrap justify-end gap-2 md:flex">
+                      <Button onClick={saveQuote} disabled={saving || isHistoricalVersion}><Save className="h-4 w-4" /> {saving ? "Enregistrement…" : "Sauver"}</Button>
+                      <Button variant="secondary" onClick={sendToClient} disabled={isHistoricalVersion}><Send className="h-4 w-4" /> Envoyer au client</Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild><Button variant="outline"><MoreHorizontal className="h-4 w-4" /> Actions</Button></DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-64">
+                          <DropdownMenuLabel>Devis client</DropdownMenuLabel>
+                          {shareUrl && quoteForm.share_enabled && <DropdownMenuItem asChild><a href={shareUrl} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-4 w-4" /> Ouvrir comme client</a></DropdownMenuItem>}
+                          <DropdownMenuItem onClick={copyShare} disabled={!shareUrl}><Copy className="mr-2 h-4 w-4" /> Copier lien client</DropdownMenuItem>
+                          <DropdownMenuItem onClick={previewClientPdf}><Eye className="mr-2 h-4 w-4" /> Aperçu PDF</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => downloadPdf("client")}><Download className="mr-2 h-4 w-4" /> Télécharger PDF client</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => downloadPdf("internal")}><FileText className="mr-2 h-4 w-4" /> Télécharger PDF interne</DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => confirmDuplicate(selectedQuote, true)}><CopyPlus className="mr-2 h-4 w-4" /> Dupliquer et modifier</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setVersionTarget(selectedQuote)} disabled={isHistoricalVersion}><History className="mr-2 h-4 w-4" /> Créer nouvelle version</DropdownMenuItem>
+                          <DropdownMenuItem onClick={regenerateShare} disabled={isHistoricalVersion}><RefreshCw className="mr-2 h-4 w-4" /> Régénérer le lien</DropdownMenuItem>
+                          {shareUrl && quoteForm.share_enabled && <DropdownMenuItem onClick={deactivateShare} disabled={isHistoricalVersion}><Link2 className="mr-2 h-4 w-4" /> Désactiver le lien</DropdownMenuItem>}
+                          {quoteForm.accepted_snapshot_id && <DropdownMenuItem onClick={() => navigate(`/admin/fit-supplier-control?quote=${selectedQuote.id}`)}><PackageCheck className="mr-2 h-4 w-4" /> Demandes fournisseurs</DropdownMenuItem>}
+                          {fitCommercialStatus(quoteForm) === "deposit_paid" && !quoteForm.converted_booking_id && <DropdownMenuItem onClick={convertToBooking} disabled={isHistoricalVersion}>Créer la réservation</DropdownMenuItem>}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={archiveQuote} disabled={isHistoricalVersion}>Archiver</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={deleteQuote} disabled={isHistoricalVersion}><Trash2 className="mr-2 h-4 w-4" /> Supprimer</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
 
+                  <div className="grid gap-3 rounded-md border border-border bg-secondary/25 p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={fitCommercialTone(fitCommercialStatus(quoteForm))}>{fitCommercialLabel(quoteForm)}</Badge>
+                        <span className="text-sm text-muted-foreground">{quoteForm.client_name || "Client FIT"} · {quoteForm.travelers_count || 1} voyageur(s)</span>
+                      </div>
+                      <p className="mt-2 text-2xl font-semibold tabular-nums">{fmtMAD(quoteForm.accepted_amount_mad || totals.total_selling_price_mad || 0)}</p>
+                      <p className="mt-1 text-sm"><span className="text-muted-foreground">Prochaine action :</span> <strong>{fitNextAction(quoteForm)}</strong></p>
+                      {fitCommercialStatus(quoteForm) === "accepted" && <p className="mt-1 text-sm text-muted-foreground">Acompte : {fmtMAD(quoteForm.public_deposit_mad || 0)} · Solde : {fmtMAD(Math.max(0, Number(quoteForm.accepted_amount_mad || totals.total_selling_price_mad || 0) - Number(quoteForm.public_deposit_mad || 0)))}</p>}
+                    </div>
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      {fitCommercialStatus(quoteForm) === "revision_requested" && <Button onClick={() => setVersionTarget(selectedQuote)}><History className="h-4 w-4" /> Créer V{Number(quoteForm.version_number || 1) + 1}</Button>}
+                      {fitCommercialStatus(quoteForm) === "accepted" && <Button onClick={requestDeposit} disabled={saving}><WalletCards className="h-4 w-4" /> Demander l’acompte</Button>}
+                      {fitCommercialStatus(quoteForm) === "deposit_pending" && <Button onClick={() => { setPaymentForm((current) => ({ ...current, amount: String(quoteForm.public_deposit_mad || "") })); setPaymentOpen(true); }}><WalletCards className="h-4 w-4" /> Confirmer paiement</Button>}
+                      {fitCommercialStatus(quoteForm) === "deposit_paid" && <Button onClick={convertToBooking} disabled={saving}><CalendarCheck className="h-4 w-4" /> Créer la réservation</Button>}
+                      {quoteForm.accepted_snapshot_id && <Button variant="outline" onClick={() => navigate(`/admin/fit-supplier-control?quote=${selectedQuote.id}`)}><PackageCheck className="h-4 w-4" /> Fournisseurs</Button>}
+                      {quoteForm.converted_booking_id && <Button onClick={() => navigate(`/admin/bookings/${quoteForm.converted_booking_id}`)}><ExternalLink className="h-4 w-4" /> Ouvrir la réservation</Button>}
+                    </div>
+                  </div>
+
+                  <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-border bg-background/95 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))] shadow-lg backdrop-blur md:hidden">
+                    <Button className="min-h-11 flex-1" onClick={saveQuote} disabled={saving || isHistoricalVersion}><Save className="h-4 w-4" /> Sauver</Button>
+                    <Button className="min-h-11 flex-1" variant="secondary" onClick={sendToClient} disabled={isHistoricalVersion}><Send className="h-4 w-4" /> Envoyer</Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild><Button className="min-h-11" variant="outline" aria-label="Plus d’actions"><MoreHorizontal className="h-5 w-5" /> Plus</Button></DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" side="top" className="w-64">
+                        {shareUrl && quoteForm.share_enabled && <DropdownMenuItem asChild><a href={shareUrl} target="_blank" rel="noreferrer">Ouvrir comme client</a></DropdownMenuItem>}
+                        <DropdownMenuItem onClick={copyShare} disabled={!shareUrl}>Copier lien client</DropdownMenuItem>
+                        <DropdownMenuItem onClick={previewClientPdf}>Aperçu PDF</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => downloadPdf("client")}>PDF client</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => confirmDuplicate(selectedQuote, true)}>Dupliquer et modifier</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setVersionTarget(selectedQuote)} disabled={isHistoricalVersion}>Créer nouvelle version</DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={archiveQuote} disabled={isHistoricalVersion}>Archiver</DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive" onClick={deleteQuote} disabled={isHistoricalVersion}>Supprimer</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+
+                  <fieldset disabled={isHistoricalVersion} className="contents">
+
+                  {timeline.length > 0 && (
+                    <details className="rounded-md border border-border bg-background p-4">
+                      <summary className="cursor-pointer text-sm font-semibold">Historique commercial ({timeline.length})</summary>
+                      <ol className="mt-4 space-y-3 border-l border-border pl-4">
+                        {timeline.slice(0, 20).map((item, index) => <li key={`${item.occurred_at}-${item.event}-${index}`} className="text-sm"><p className="font-medium">{fitCommercialLabel(String(item.event || "").replace(/^client_/, "").replace(/^commercial_status_/, ""))}</p><p className="text-xs text-muted-foreground">{new Date(item.occurred_at).toLocaleString("fr-FR")}{item.payload?.version ? ` · V${item.payload.version}` : ""}{item.payload?.amount_mad ? ` · ${fmtMAD(item.payload.amount_mad)}` : ""}</p></li>)}
+                      </ol>
+                    </details>
+                  )}
+
+                  <FitFinancialPanel quoteId={selectedQuote.id} readOnly={isHistoricalVersion} />
+
                   {shareUrl && (
-                    <div className="rounded-lg border border-dashed border-accent/50 bg-accent/5 p-3 text-sm">
-                      <span className="font-medium">Lien client privé :</span> <span className="break-all">{shareUrl}</span>
+                    <div className="grid gap-4 rounded-lg border border-dashed border-accent/50 bg-accent/5 p-4 text-sm md:grid-cols-[minmax(0,1fr)_280px]">
+                      <div>
+                        <p><span className="font-medium">Lien client privé :</span> <span className="break-all">{shareUrl}</span></p>
+                        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-muted-foreground">
+                          <span>Statut du lien : <strong className="text-foreground">{quoteForm.share_enabled ? "Actif" : "Désactivé"}</strong></span>
+                          <span>Statut client : <strong className="text-foreground">{quoteForm.public_client_status || "Aucune réponse"}</strong></span>
+                          <span>Dernière consultation : <strong className="text-foreground">{quoteForm.public_last_viewed_at ? new Date(quoteForm.public_last_viewed_at).toLocaleString("fr-FR") : "Jamais"}</strong></span>
+                        </div>
+                      </div>
+                      <div className="flex items-end gap-2">
+                        <div className="min-w-0 flex-1">
+                          <Label htmlFor="fit-public-expiry">Date d’expiration</Label>
+                          <Input
+                            id="fit-public-expiry"
+                            type="datetime-local"
+                            value={publicExpiryInput}
+                            onChange={(event) => setQuoteForm({ ...quoteForm, public_link_expires_at: event.target.value ? new Date(event.target.value).toISOString() : null })}
+                          />
+                        </div>
+                        <Button variant="outline" onClick={savePublicExpiry}>Enregistrer</Button>
+                      </div>
                     </div>
                   )}
 
@@ -1868,6 +2222,7 @@ export default function FitQuotes() {
                   <HotelLines lines={hotelLines} addLine={addHotelLine} updateLine={updateHotelLine} removeLine={(id) => setHotelLines((current) => current.filter((line) => line.local_id !== id))} />
                   <FlightLines lines={flightLines} addLine={addFlightLine} updateLine={updateFlightLine} removeLine={(id) => setFlightLines((current) => current.filter((line) => line.local_id !== id))} />
                   <SpecialLines lines={costLines} addLine={addCostLine} updateLine={updateCostLine} removeLine={(id) => setCostLines((current) => current.filter((line) => line.local_id !== id))} />
+                  </fieldset>
                 </div>
               )}
             </Card>
@@ -2138,7 +2493,7 @@ function SpecialLines({ lines, addLine, updateLine, removeLine }: { lines: any[]
 
 function TableBlock({ title, onAdd, children }: { title: string; onAdd: () => void; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-border p-3">
+    <div className="min-w-0 rounded-lg border border-border p-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-semibold">{title}</h3>
         <Button variant="outline" onClick={onAdd}><Plus className="h-4 w-4" /> Ligne</Button>
@@ -2221,6 +2576,8 @@ function QuoteForm({ form, setForm, clients, compact = false }: { form: any; set
             </Field>
             <Field label="Ajustement MAD"><Input type="number" value={form.manual_adjustment_mad ?? 0} onChange={(event) => update("manual_adjustment_mad", +event.target.value)} /></Field>
             <Field label="Remise MAD"><Input type="number" value={form.discount_mad ?? 0} onChange={(event) => update("discount_mad", +event.target.value)} /></Field>
+            <Field label="Acompte client MAD"><Input type="number" min={0} value={form.public_deposit_mad ?? 0} onChange={(event) => update("public_deposit_mad", +event.target.value)} /></Field>
+            <Field label="Échéance acompte"><Input type="date" value={form.public_payment_deadline ?? ""} onChange={(event) => update("public_payment_deadline", event.target.value)} /></Field>
           </div>
         </AccordionContent>
       </AccordionItem>

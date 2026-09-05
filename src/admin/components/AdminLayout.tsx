@@ -3,7 +3,8 @@ import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Plane, CalendarCheck, Sparkles, Users, FileText, Wallet, Banknote,
   Image as ImageIcon, Building2, BookOpen, LogOut, ShieldCheck, Mail, Stamp, ListChecks, Menu, Map, Type, Send, HelpCircle, Languages, Settings, Archive, Palette, Hotel,
-  Bell, FileSignature, ChevronDown, BriefcaseBusiness, CircleDollarSign, FolderKanban, UserCog,
+  Bell, FileSignature, ChevronDown, BriefcaseBusiness, CircleDollarSign, FolderKanban, UserCog, TicketCheck, ClipboardList,
+  type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -19,8 +20,8 @@ import { toast } from "sonner";
 import { SUPPLIER_PORTAL_PATH } from "../lib/portal-access";
 
 type NavGroupId = "dashboard" | "sales" | "visa" | "operations" | "partners" | "finance" | "marketing" | "administration";
-type AdminNavItem = { to: string; icon: any; label: string; end?: boolean; module: ModuleKey };
-type AdminNavGroup = { id: NavGroupId; label: string; icon: any; items: AdminNavItem[] };
+type AdminNavItem = { to: string; icon: LucideIcon; label: string; end?: boolean; module: ModuleKey };
+type AdminNavGroup = { id: NavGroupId; label: string; icon: LucideIcon; items: AdminNavItem[] };
 
 const ADMIN_NAV_STATE_KEY = "lejapon.admin.nav.openGroups";
 const ADMIN_LAST_PAGE_KEY = "lejapon.admin.lastPage";
@@ -52,6 +53,7 @@ const navGroups: AdminNavGroup[] = [
     icon: Stamp,
     items: [
       { to: "/admin/visa", icon: Stamp, label: "Demandes de visa", module: "visa" },
+      { to: "/admin/visa-group-submissions", icon: ClipboardList, label: "Dépôts groupés", module: "visa_group_submissions" },
       { to: "/admin/visa-checklists", icon: ListChecks, label: "Documents visa", module: "visa_checklists" },
       { to: "/admin/visa-settings", icon: ShieldCheck, label: "Suivi & Bureau Japon", module: "visa_settings" },
       { to: "/admin/email-logs", icon: Mail, label: "Historique emails visa", module: "email_logs" },
@@ -64,11 +66,13 @@ const navGroups: AdminNavGroup[] = [
     items: [
       { to: "/admin/trips", icon: Plane, label: "Voyages", module: "trips" },
       { to: "/admin/operations-center", icon: ListChecks, label: "Operations Center", module: "operations_center" },
+      { to: "/admin/flight-tickets", icon: TicketCheck, label: "Billets d’avion", module: "flight_tickets" },
       { to: "/admin/programmes", icon: Map, label: "Programmes opérationnels", module: "programmes" },
       { to: "/admin/hotels", icon: Hotel, label: "Hôtels", module: "hotels" },
       { to: "/admin/extras", icon: Sparkles, label: "Activités & extras", module: "extras" },
       { to: "/admin/suppliers", icon: Building2, label: "Fournisseurs Japon", module: "suppliers" },
       { to: "/admin/supplier-costs", icon: Wallet, label: "Coûts fournisseurs", module: "supplier_costs" },
+      { to: "/admin/fit-supplier-control", icon: ClipboardList, label: "FIT Supplier Control", module: "supplier_costs" },
       { to: "/admin/international-payments", icon: Banknote, label: "Paiements Japon", module: "international_payments" },
     ],
   },
@@ -111,6 +115,7 @@ const navGroups: AdminNavGroup[] = [
     icon: UserCog,
     items: [
       { to: "/admin/users", icon: ShieldCheck, label: "Users, rôles & permissions", module: "users" },
+      { to: "/admin/operation-task-templates", icon: ListChecks, label: "Tâches standards", module: "operation_task_templates" },
       { to: "/admin/user-guide", icon: HelpCircle, label: "FAQ & User Guide", module: "faqs" },
       { to: "/admin/faqs", icon: HelpCircle, label: "FAQ publique", module: "faqs" },
       { to: "/admin/email-settings", icon: Mail, label: "Paramètres email", module: "email_settings" },

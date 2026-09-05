@@ -6,9 +6,8 @@ import { PageHeader } from "@/admin/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { FitInput as Input, FitTextarea as Textarea } from "@/components/fit/FitFormControls";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtDate, fmtDateTime, fmtMAD } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
@@ -71,6 +70,7 @@ export default function AdminAgencyFitRequests() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [agencyFilter, setAgencyFilter] = useState("all");
   const [destinationFilter, setDestinationFilter] = useState("all");
+  const [search, setSearch] = useState("");
   const [drafts, setDrafts] = useState<Record<string, any>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -128,11 +128,13 @@ export default function AdminAgencyFitRequests() {
 
   const agencies = useMemo(() => Array.from(new Map(rows.map((row) => [row.organization_id, row.organizations?.display_name || row.organizations?.legal_name || row.organization_id])).entries()), [rows]);
   const destinations = useMemo(() => Array.from(new Set(rows.map((row) => row.destination_country).filter(Boolean))).sort(), [rows]);
-  const visibleRows = rows.filter((row) =>
-    (statusFilter === "all" || row.status === statusFilter) &&
-    (agencyFilter === "all" || row.organization_id === agencyFilter) &&
-    (destinationFilter === "all" || row.destination_country === destinationFilter)
-  );
+  const visibleRows = rows.filter((row) => {
+    const haystack = [row.reference, row.client_full_name, row.client_email, row.client_phone, row.destination_country, row.organizations?.display_name, row.organizations?.legal_name].join(" ").toLocaleLowerCase("fr");
+    return (statusFilter === "all" || row.status === statusFilter) &&
+      (agencyFilter === "all" || row.organization_id === agencyFilter) &&
+      (destinationFilter === "all" || row.destination_country === destinationFilter) &&
+      (!search.trim() || haystack.includes(search.trim().toLocaleLowerCase("fr")));
+  });
 
   const updateDraft = (id: string, key: string, value: unknown) =>
     setDrafts((current) => ({ ...current, [id]: { ...(current[id] ?? {}), [key]: value } }));
@@ -221,10 +223,11 @@ export default function AdminAgencyFitRequests() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6 overflow-x-hidden">
       <PageHeader title="Demandes FIT agences" description="Réception, qualification et retour des devis FIT vers les agences partenaires." />
 
-      <Card className="grid gap-3 p-4 md:grid-cols-3">
+      <Card className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+        <div><Label htmlFor="fit-request-search">Recherche</Label><Input id="fit-request-search" className="mt-1" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Référence, client, email…" /></div>
         <Filter label="Statut" value={statusFilter} onChange={setStatusFilter} options={[["all", "Tous les statuts"], ...statuses.map((status) => [status, statusLabels[status]])]} />
         <Filter label="Agence" value={agencyFilter} onChange={setAgencyFilter} options={[["all", "Toutes les agences"], ...agencies]} />
         <Filter label="Destination" value={destinationFilter} onChange={setDestinationFilter} options={[["all", "Toutes destinations"], ...destinations.map((item) => [item, item])]} />

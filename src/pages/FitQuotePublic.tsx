@@ -16,6 +16,7 @@ import {
   Sparkles,
   Train,
   Users,
+  XCircle,
 } from "lucide-react";
 import { useParams } from "react-router-dom";
 import logo from "@/assets/logo-lejapon.png";
@@ -30,7 +31,8 @@ import teamlabFallback from "@/assets/exp-teamlab.jpg";
 import { Seo } from "@/components/Seo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FitTextarea as Textarea } from "@/components/fit/FitFormControls";
 import { supabase } from "@/integrations/supabase/client";
 import { downloadFitPdf, generateFitClientPdf } from "@/lib/fit-pdfs";
 import { toast } from "sonner";
@@ -133,8 +135,8 @@ const hasIncludedFlights = (flights: any[], quote?: any) =>
 const flightPriceLabel = (flights: any[], quote?: any) =>
   hasIncludedFlights(flights, quote) ? "Vols internationaux inclus" : "Prix terrestre hors vols internationaux";
 
-const perPersonLabel = (quote: any, flights: any[]) =>
-  `${fmtMAD(quote?.price_per_person_mad)} / personne ${hasIncludedFlights(flights, quote) ? "vols internationaux inclus" : "hors vols internationaux"}`;
+const perPersonLabel = (quote: any, flights: any[], total?: number) =>
+  `${fmtMAD(total == null ? quote?.price_per_person_mad : total / Math.max(1,Number(quote?.travelers_count||1)))} / personne ${hasIncludedFlights(flights, quote) ? "vols internationaux inclus" : "hors vols internationaux"}`;
 
 const filteredExclusions = (quote: any, flights: any[]) => {
   const items = asList(quote?.exclusions || "Dépenses personnelles\nRepas non mentionnés\nOptions non confirmées\nAssurances si non précisées");
@@ -179,62 +181,126 @@ export default function FitQuotePublic() {
   const [visibleLines, setVisibleLines] = useState<any[]>([]);
   const [hotelLines, setHotelLines] = useState<any[]>([]);
   const [flightLines, setFlightLines] = useState<any[]>([]);
-  const [partnerProfile, setPartnerProfile] = useState<any>(null);
+  const [proposalContext, setProposalContext] = useState<any>(null);
+  const [savingExtra, setSavingExtra] = useState("");
   const [loading, setLoading] = useState(true);
   const [clientNotes, setClientNotes] = useState("");
   const [acceptedConditions, setAcceptedConditions] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [acceptanceOpen, setAcceptanceOpen] = useState(false);
+  const [revisionOpen, setRevisionOpen] = useState(false);
+  const [revisionCategories, setRevisionCategories] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const { data: quoteRow, error } = await db
-        .from("fit_quotes")
-        .select("id,quote_number,client_name,travelers_count,travel_start_date,travel_end_date,hotel_category,room_type,currency,language,status,production_status,payment_status,booking_status,total_selling_price_mad,price_per_person_mad,payment_conditions,cancellation_conditions,production_public_note,inclusions,exclusions,valid_until,client_notes,share_token,share_enabled,quote_channel,partner_organization_id,partner_branding_mode,partner_contact_name")
-        .eq("share_token", token)
-        .eq("share_enabled", true)
-        .is("deleted_at", null)
-        .maybeSingle();
-      if (error || !quoteRow) {
+      setQuote(null);
+      const [{ data, error }, { data: contextData }] = await Promise.all([
+        db.rpc("get_public_fit_quote_by_token", { p_token: token }),
+        db.rpc("get_public_fit_quote_context_v7", { p_token: token }),
+      ]);
+      if (error || !data) {
         setLoading(false);
         return;
       }
-      const [{ data: dayRows }, { data: lineRows }, { data: hotels }, { data: flights }, { data: partner }] = await Promise.all([
-        db
-          .from("fit_quote_days")
-          .select("id,quote_id,day_number,sort_order,date,title,city,description_client,client_summary,sales_summary,optimized_client_description,client_highlights,client_inclusions,client_options,visits,optional_visits,rhythm,day_pace,transport_type,transport_modes,meal_notes,meals,meal_plan,selling_price_mad,image_urls")
-          .eq("quote_id", quoteRow.id)
-          .order("sort_order"),
-        db
-          .from("fit_quote_day_cost_lines")
-          .select("id,quote_id,day_id,sort_order,category,label,is_optional,is_client_visible")
-          .eq("quote_id", quoteRow.id)
-          .eq("is_client_visible", true)
-          .order("sort_order"),
-        db
-          .from("fit_quote_hotel_lines")
-          .select("id,quote_id,sort_order,city,hotel_name,image_url,category,room_type,nights,public_notes")
-          .eq("quote_id", quoteRow.id)
-          .order("sort_order"),
-        db
-          .from("fit_quote_flight_lines")
-          .select("id,quote_id,sort_order,route,airline,status,passengers_count,public_notes")
-          .eq("quote_id", quoteRow.id)
-          .order("sort_order"),
-        quoteRow.partner_organization_id
-          ? db.from("partner_organizations").select("id,name,commercial_name,logo_url,primary_color,branding_mode,contact_email,contact_phone,whatsapp,website,footer_text,show_powered_by_lejapon").eq("id", quoteRow.partner_organization_id).maybeSingle()
-          : Promise.resolve({ data: null }),
-      ]);
+      const publicQuote = data as any;
+      const dayRows = (publicQuote.programme?.days ?? []).map((day: any) => ({
+        id: String(day.key),
+        day_number: day.day_number,
+        date: day.date,
+        title: day.title,
+        city: day.city,
+        description_client: day.description,
+        client_summary: day.summary,
+        client_highlights: day.highlights,
+        client_inclusions: day.included_services,
+        client_options: day.visible_extras,
+        rhythm: day.pace,
+        day_pace: day.pace,
+        transport_modes: day.transport,
+        meal_notes: day.public_meal_notes,
+        meals: day.meals,
+        meal_plan: day.meals,
+        selling_price_mad: day.selling_price,
+        image_urls: day.images,
+      }));
+      const quoteRow = {
+        quote_number: publicQuote.fit_reference,
+        client_name: publicQuote.client_display_name,
+        destination: publicQuote.destination,
+        travelers_count: publicQuote.travelers,
+        travel_start_date: publicQuote.dates?.start,
+        travel_end_date: publicQuote.dates?.end,
+        hotel_category: publicQuote.hotel_level,
+        room_type: publicQuote.room_type,
+        currency: publicQuote.selling_price?.currency || "MAD",
+        status: publicQuote.status,
+        total_selling_price_mad: publicQuote.selling_price?.total,
+        price_per_person_mad: publicQuote.selling_price?.per_traveler,
+        deposit_mad: publicQuote.deposit,
+        payment_conditions: publicQuote.public_notes?.payment,
+        cancellation_conditions: publicQuote.public_notes?.cancellation,
+        production_public_note: publicQuote.public_notes?.general,
+        inclusions: publicQuote.included_services,
+        exclusions: publicQuote.excluded_services,
+        valid_until: publicQuote.validity_date,
+        client_pdf_link: publicQuote.client_pdf_link,
+        version_number: contextData?.version_number || 1,
+        quote_family_reference: contextData?.family_reference || publicQuote.fit_reference,
+        public_payment_deadline: contextData?.payment_deadline,
+      };
       setQuote(quoteRow);
-      setPartnerProfile(partner ?? null);
-      setClientNotes(quoteRow.client_notes ?? "");
-      setDays(dayRows ?? []);
-      setVisibleLines(lineRows ?? []);
-      setHotelLines(hotels ?? []);
-      setFlightLines(flights ?? []);
+      setProposalContext(contextData || null);
+      setClientNotes("");
+      setDays(dayRows);
+      setVisibleLines((publicQuote.visible_extras ?? []).map((line: any, index: number) => ({
+        id: `extra-${index}`,
+        day_id: String(line.day_key),
+        category: line.category,
+        label: line.label,
+        is_optional: line.optional,
+        is_client_visible: true,
+      })));
+      setHotelLines((publicQuote.programme?.hotels ?? []).map((hotel: any, index: number) => ({
+        id: `hotel-${index}`,
+        city: hotel.city,
+        hotel_name: hotel.name,
+        image_url: hotel.image,
+        category: hotel.level,
+        room_type: hotel.room_type,
+        nights: hotel.nights,
+        public_notes: hotel.public_notes,
+      })));
+      setFlightLines((publicQuote.programme?.flights ?? []).map((flight: any, index: number) => ({
+        id: `flight-${index}`,
+        route: flight.route,
+        airline: flight.airline,
+        status: flight.status,
+        passengers_count: flight.travelers,
+        public_notes: flight.public_notes,
+      })));
+      void db.rpc("track_public_fit_quote_event_v7", { p_token: token, p_event: "quote_opened" });
+      void supabase.functions.invoke("send-admin-notification", {
+        body: { type: "fit_quote_viewed", payload: { token } },
+      }).catch(() => undefined);
       setLoading(false);
     })();
   }, [token]);
+
+  useEffect(() => {
+    if (!quote || !token) return;
+    const seen = new Set<string>();
+    const observer = new IntersectionObserver((entries) => entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const event = (entry.target as HTMLElement).dataset.analyticsEvent;
+      if (!event || seen.has(event)) return;
+      seen.add(event);
+      void db.rpc("track_public_fit_quote_event_v7", { p_token: token, p_event: event });
+      observer.unobserve(entry.target);
+    }), { threshold: 0.3 });
+    document.querySelectorAll<HTMLElement>("[data-analytics-event]").forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [quote, token]);
 
   const linesByDay = useMemo(() => {
     const map = new Map<string, any[]>();
@@ -243,66 +309,151 @@ export default function FitQuotePublic() {
   }, [visibleLines]);
 
   const cities = useMemo(() => Array.from(new Set(days.map((day) => day.city).filter(Boolean))), [days]);
+  const transportItems = useMemo(() => uniqueList([
+    ...days.flatMap((day) => [...asList(day.transport_modes), day.transport_type].filter(Boolean)),
+    ...visibleLines.filter((line) => /transport|train|bus|transfer|luggage/i.test(line.category)).map((line) => line.label),
+  ], 10), [days, visibleLines]);
+  const activityItems = useMemo(() => uniqueList([
+    ...days.flatMap((day) => [...asList(day.client_highlights), ...asList(day.visits)]),
+    ...visibleLines.filter((line) => /visit|activit|ticket|entry/i.test(line.category)).map((line) => line.label),
+  ], 12), [days, visibleLines]);
   const tripDays = durationDays(quote, days);
   const heroImage = days.flatMap((day) => asList(day.image_urls))[0] || heroFallback;
   const pdfDays = useMemo(() => days.map((day) => ({ ...day, cost_lines: linesByDay.get(day.id) ?? [] })), [days, linesByDay]);
   const includedFlights = hasIncludedFlights(flightLines, quote);
-  const brandName = partnerProfile?.commercial_name || partnerProfile?.name || "LeJapon.ma";
-  const brandLogo = partnerProfile?.logo_url || logo;
-  const brandWhatsapp = String(partnerProfile?.whatsapp || partnerProfile?.contact_phone || WHATSAPP).replace(/\D/g, "") || WHATSAPP;
-  const isWhiteLabel = quote?.partner_branding_mode === "white_label" || partnerProfile?.branding_mode === "white_label";
-  const advisorLabel = isWhiteLabel ? brandName : "LeJapon.ma";
-  const pdfBranding = partnerProfile ? {
-    logoUrl: partnerProfile.logo_url,
-    agencyName: brandName,
-    contactEmail: partnerProfile.contact_email,
-    contactPhone: partnerProfile.whatsapp || partnerProfile.contact_phone,
-    website: partnerProfile.website,
-    footerText: partnerProfile.footer_text,
-    brandingMode: quote?.partner_branding_mode || partnerProfile.branding_mode,
-    primaryColor: partnerProfile.primary_color,
-  } : undefined;
+  const brandName = "LeJapon.ma";
+  const brandLogo = logo;
+  const brandWhatsapp = proposalContext?.advisor?.whatsapp || WHATSAPP;
+  const advisorLabel = proposalContext?.advisor?.name || "LeJapon.ma";
+  const selectableExtras = proposalContext?.extras || [];
+  const selectedExtras = selectableExtras.filter((extra: any) => extra.selected);
+  const proposalTotal = Number(proposalContext?.proposal_total_mad ?? quote?.total_selling_price_mad ?? 0);
+  const deposit = Number(quote?.deposit_mad || 0);
+  const balance = Math.max(0, proposalTotal - deposit);
+  const proposalLocked = ["accepted", "lost", "declined"].includes(quote?.status);
 
   const downloadPdf = async () => {
     if (!quote) return;
-    const bytes = await generateFitClientPdf({ quote, days: pdfDays, hotelLines, flightLines, branding: pdfBranding });
+    if (quote.client_pdf_link && selectedExtras.length === 0) {
+      window.open(quote.client_pdf_link, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const bytes = await generateFitClientPdf({ quote: { ...quote, total_selling_price_mad: proposalTotal, inclusions: [quote.inclusions, ...selectedExtras.map((extra: any) => extra.label)].filter(Boolean).join("\n") }, days: pdfDays, hotelLines, flightLines });
     downloadFitPdf(bytes, `${quote.quote_number || "devis-fit"}-client.pdf`);
   };
 
-  const respond = async (status: "accepted" | "sent") => {
-    if (!quote?.id) return;
-    if (status === "accepted" && !acceptedConditions) {
+  const toggleExtra = async (extra: any) => {
+    if (!token || savingExtra || proposalLocked) return;
+    setSavingExtra(extra.id);
+    const { data, error } = await db.rpc("set_public_fit_quote_extra_selection_v7", { p_token: token, p_line_id: extra.id, p_selected: !extra.selected });
+    setSavingExtra("");
+    if (error || !data) return toast.error("Cette expérience ne peut pas être modifiée pour le moment.");
+    const ids = new Set((data.selected_ids || []).map(String));
+    setProposalContext((current: any) => ({ ...current, extras: (current?.extras || []).map((item: any) => ({ ...item, selected: ids.has(String(item.id)) })), selected_extras_total_mad: data.selected_extras_total_mad, proposal_total_mad: data.proposal_total_mad }));
+  };
+
+  const respond = async (action: "accepted" | "revision_requested" | "declined") => {
+    if (!quote) return;
+    if (action === "accepted" && !acceptedConditions) {
       return toast.error("Merci d’accepter les conditions de réservation et d’annulation avant validation.");
     }
     setSaving(true);
-    const { data, error } = status === "accepted"
-      ? await db.rpc("fit_quote_client_preapprove", { _share_token: token, _client_notes: clientNotes })
-      : await db.rpc("fit_quote_client_request_modification", { _share_token: token, _client_notes: clientNotes });
+    // Record the decline before the commercial transition makes the token
+    // intentionally unresolvable. No browser/device metadata is sent.
+    if (action === "declined") {
+      await db.rpc("track_public_fit_quote_event_v7", { p_token: token, p_event: "quote_declined" });
+    }
+    const request = action === "accepted"
+      ? db.rpc("accept_public_fit_quote_v7", { p_token: token, p_client_confirmation: true, p_client_notes: clientNotes })
+      : action === "revision_requested"
+        ? db.rpc("request_public_fit_quote_revision_v3", { p_token: token, p_categories: revisionCategories, p_client_notes: clientNotes })
+        : db.rpc("decline_public_fit_quote_v3", { p_token: token, p_client_notes: clientNotes });
+    const { data, error } = await request;
     setSaving(false);
-    if (error) return toast.error("Impossible d'enregistrer votre réponse.");
-    setQuote({ ...quote, status: data?.status || quote.status, production_status: data?.production_status || quote.production_status, client_notes: clientNotes });
-    toast.success(status === "accepted" ? "Votre accord a bien été transmis. Les disponibilités seront vérifiées avant confirmation finale." : "Votre demande de modification a été envoyée.");
+    if (error || !data) return toast.error("Impossible d'enregistrer votre réponse. Le lien est peut-être expiré.");
+    setQuote({
+      ...quote,
+      status: data.status || quote.status,
+      total_selling_price_mad: action === "accepted" ? proposalTotal : quote.total_selling_price_mad,
+      price_per_person_mad: action === "accepted" ? proposalTotal / Math.max(1, Number(quote.travelers_count || 1)) : quote.price_per_person_mad,
+    });
+    setAcceptanceOpen(false);
+    setRevisionOpen(false);
+    if (action === "accepted") void db.rpc("track_public_fit_quote_event_v7", { p_token: token, p_event: "quote_accepted" });
+    void supabase.functions.invoke("send-admin-notification", {
+      body: { type: action === "accepted" ? "fit_quote_accepted" : action === "revision_requested" ? "fit_quote_revision_requested" : "fit_quote_declined", payload: { token } },
+    }).catch(() => undefined);
+    toast.success(action === "accepted"
+      ? "Votre accord a bien été transmis. Les disponibilités seront vérifiées avant confirmation finale."
+      : action === "revision_requested"
+        ? "Votre demande de modification a été envoyée."
+        : "Votre réponse a été enregistrée.");
   };
 
   if (loading) {
     return (
-      <div className="grid min-h-[60vh] place-items-center text-muted-foreground">
-        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Chargement du devis…
+      <div className="grid min-h-[60vh] place-items-center text-muted-foreground" role="status" aria-live="polite">
+        <div className="flex items-center"><Loader2 className="mr-2 h-5 w-5 animate-spin" aria-hidden="true" /> Chargement sécurisé du devis…</div>
       </div>
     );
   }
 
   if (!quote) {
     return (
-      <div className="container-app py-24 text-center">
-        <h1 className="font-display text-3xl">Devis introuvable</h1>
-        <p className="mt-3 text-muted-foreground">Le lien est expiré ou n'est plus actif.</p>
+      <div className="container-app flex min-h-[65vh] items-center justify-center py-16 text-center">
+        <Card className="w-full max-w-xl p-8 md:p-12">
+          <ShieldCheck className="mx-auto h-10 w-10 text-accent" aria-hidden="true" />
+          <h1 className="mt-5 font-display text-3xl">Lien de devis indisponible</h1>
+          <p className="mt-3 leading-7 text-muted-foreground">Ce devis n’est plus disponible ou le lien est incorrect. Contactez votre conseiller LeJapon.ma.</p>
+          <Button className="mt-6" variant="outline" asChild>
+            <a href={`https://wa.me/${WHATSAPP}`} target="_blank" rel="noreferrer"><Headphones className="h-4 w-4" /> Contacter LeJapon.ma</a>
+          </Button>
+        </Card>
       </div>
     );
   }
 
   return (
-    <>
+    <div className="min-w-0 overflow-x-hidden pb-20 md:pb-0">
+      <Dialog open={acceptanceOpen} onOpenChange={setAcceptanceOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Accepter ce devis</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-secondary/40 p-4 text-sm">
+              <p className="font-semibold">{quote.quote_number}</p>
+              <p className="mt-1 text-muted-foreground">Montant accepté : {fmtMAD(proposalTotal)}</p>
+            </div>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4 text-sm focus-within:ring-2 focus-within:ring-ring">
+              <input type="checkbox" className="mt-1 h-5 w-5 shrink-0" checked={acceptedConditions} onChange={(event) => setAcceptedConditions(event.target.checked)} />
+              <span>Je confirme avoir pris connaissance du programme, du prix et des conditions de ce devis.</span>
+            </label>
+            <Textarea value={clientNotes} onChange={(event) => setClientNotes(event.target.value)} placeholder="Note facultative pour votre conseiller" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAcceptanceOpen(false)}>Annuler</Button>
+            <Button onClick={() => respond("accepted")} disabled={saving || !acceptedConditions}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Confirmer l’acceptation</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={revisionOpen} onOpenChange={setRevisionOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Que souhaitez-vous modifier ?</DialogTitle></DialogHeader>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {[["hotel","Hôtel"],["dates","Dates"],["programme","Programme"],["travelers","Nombre de voyageurs"],["budget","Budget"],["other","Autre"]].map(([value,label]) => (
+              <label key={value} className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-ring">
+                <input type="checkbox" className="h-4 w-4" checked={revisionCategories.includes(value)} onChange={(event) => setRevisionCategories((current) => event.target.checked ? [...current,value] : current.filter((item) => item !== value))} />
+                {label}
+              </label>
+            ))}
+          </div>
+          <Textarea className="min-h-28" value={clientNotes} onChange={(event) => setClientNotes(event.target.value)} placeholder="Décrivez simplement les ajustements souhaités…" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevisionOpen(false)}>Annuler</Button>
+            <Button onClick={() => respond("revision_requested")} disabled={saving || (!revisionCategories.length && !clientNotes.trim())}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Envoyer la demande</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Seo
         title={`Devis FIT ${quote.quote_number} — ${brandName}`}
         description={`Votre proposition de voyage privé au Japon préparée par ${brandName}.`}
@@ -311,27 +462,28 @@ export default function FitQuotePublic() {
       />
 
       <section className="relative overflow-hidden bg-foreground text-background">
-        <img src={heroImage} alt="Voyage privé au Japon" className="absolute inset-0 h-full w-full object-cover opacity-45" width={1920} height={1080} loading="eager" />
+        <img src={heroImage} alt="Voyage privé au Japon" className="absolute inset-0 h-full w-full object-cover opacity-45" width={1920} height={1080} loading="eager" fetchPriority="high" decoding="async" />
         <div className="absolute inset-0 bg-gradient-to-r from-foreground via-foreground/88 to-foreground/45" />
         <div className="container-app relative py-10 md:py-16">
-          <div className="mb-12 flex items-center justify-between gap-4">
-            <img src={brandLogo} alt={brandName} width={220} height={88} className="h-12 w-auto rounded-xl bg-white/90 p-2" />
-            <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold backdrop-blur">Réf. {quote.quote_number}</span>
+          <div className="mb-8 flex flex-wrap items-center justify-between gap-4 md:mb-12">
+            <img src={brandLogo} alt={brandName} width={220} height={88} className="h-12 max-w-[65vw] rounded-lg bg-white/90 p-2 object-contain" />
+            <span className="max-w-full break-all rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold backdrop-blur">Réf. {quote.quote_number}</span>
           </div>
           <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_380px]">
             <div className="max-w-4xl">
               <span className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-bold text-accent-foreground">
                 <Sparkles className="h-4 w-4" /> Programme privé sur mesure
               </span>
+              {Number(quote.version_number || 1) > 1 && <p className="mt-4 inline-flex rounded-full border border-white/25 bg-white/12 px-4 py-2 text-sm font-semibold backdrop-blur">Nouvelle proposition — Version {quote.version_number}</p>}
               <h1 className="mt-6 font-display text-4xl leading-tight md:text-6xl">Votre voyage privé au Japon</h1>
               <p className="mt-5 max-w-2xl text-lg leading-relaxed text-white/82">
                 {quote.client_name || "Cher client"}, voici une proposition pensée pour votre groupe, avec un itinéraire clair, des prestations sélectionnées et l'assistance {advisorLabel}.
               </p>
-              <div className="mt-8 flex flex-wrap gap-3">
-                <Button size="lg" onClick={() => respond("accepted")} disabled={saving}><CheckCircle2 className="h-4 w-4" /> Accepter sous réserve de disponibilité</Button>
-                <Button size="lg" variant="secondary" onClick={() => respond("sent")} disabled={saving}><MessageCircle className="h-4 w-4" /> Demander une modification</Button>
-                <Button size="lg" variant="outline" className="border-white/30 bg-white/10 text-white hover:bg-white hover:text-foreground" onClick={downloadPdf}><Download className="h-4 w-4" /> Télécharger le PDF</Button>
-                <Button size="lg" variant="outline" className="border-white/30 bg-white/10 text-white hover:bg-white hover:text-foreground" asChild>
+              <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:flex lg:flex-wrap">
+                <Button size="lg" className="min-h-11 whitespace-normal" onClick={() => setAcceptanceOpen(true)} disabled={saving || proposalLocked}><CheckCircle2 className="h-4 w-4 shrink-0" /> {quote.status === "accepted" ? "Devis accepté" : "Accepter ce devis"}</Button>
+                <Button size="lg" className="min-h-11 whitespace-normal" variant="secondary" onClick={() => setRevisionOpen(true)} disabled={saving || ["accepted", "lost", "declined"].includes(quote.status)}><MessageCircle className="h-4 w-4 shrink-0" /> Demander une modification</Button>
+                <Button size="lg" variant="outline" className="min-h-11 whitespace-normal border-white/30 bg-white/10 text-white hover:bg-white hover:text-foreground" onClick={downloadPdf}><Download className="h-4 w-4 shrink-0" /> Télécharger le PDF</Button>
+                <Button size="lg" variant="outline" className="min-h-11 whitespace-normal border-white/30 bg-white/10 text-white hover:bg-white hover:text-foreground" asChild>
                   <a href={`https://wa.me/${brandWhatsapp}?text=${encodeURIComponent(`Bonjour, je souhaite parler du devis ${quote.quote_number}.`)}`} target="_blank" rel="noreferrer">
                     <Headphones className="h-4 w-4" /> Contacter un conseiller
                   </a>
@@ -343,12 +495,14 @@ export default function FitQuotePublic() {
                 <HeroMetric icon={CalendarDays} label="Dates" value={[fmtDate(quote.travel_start_date), fmtDate(quote.travel_end_date)].filter(Boolean).join(" → ") || "À confirmer"} />
                 <HeroMetric icon={Users} label="Voyageurs" value={`${quote.travelers_count || 1} personne(s)`} />
                 <HeroMetric icon={Clock3} label="Durée" value={tripDays ? `${tripDays} jours` : "À confirmer"} />
-                <HeroMetric icon={MapPin} label="Destination" value="Japon" />
+                <HeroMetric icon={MapPin} label="Destination" value={quote.destination || "Japon"} />
               </div>
-              <div className="mt-5 rounded-2xl bg-accent/10 p-5">
+              <div className="mt-5 rounded-lg bg-accent/10 p-5">
                 <p className="text-sm font-medium text-muted-foreground">Prix total</p>
-                <p className="mt-1 text-3xl font-bold text-accent">{fmtMAD(quote.total_selling_price_mad)}</p>
-                <p className="mt-1 text-sm font-semibold">{perPersonLabel(quote, flightLines)}</p>
+                <p className="mt-1 text-3xl font-bold text-accent">{fmtMAD(proposalTotal)}</p>
+                <p className="mt-1 text-sm font-semibold">{perPersonLabel(quote, flightLines, proposalTotal)}</p>
+                {selectedExtras.length > 0 && <p className="mt-2 text-sm text-foreground/75">Dont expériences sélectionnées : <strong>{fmtMAD(proposalContext?.selected_extras_total_mad)}</strong></p>}
+                {deposit > 0 && <p className="mt-2 text-sm text-foreground/75">Acompte demandé : <strong>{fmtMAD(deposit)}</strong></p>}
                 <p className="mt-3 rounded-full bg-background px-3 py-1 text-xs font-bold text-foreground">{flightPriceLabel(flightLines, quote)}</p>
               </div>
               {quote.valid_until && <p className="mt-4 text-sm text-muted-foreground">Valable jusqu'au {fmtDate(quote.valid_until)}</p>}
@@ -423,7 +577,7 @@ export default function FitQuotePublic() {
           </Card>
         </section>
 
-        <section className="container-app space-y-6 pb-10">
+        <section className="container-app space-y-6 pb-10" data-analytics-event="itinerary_viewed">
           {days.map((day, index) => (
             <DayCard
               key={day.id}
@@ -436,20 +590,32 @@ export default function FitQuotePublic() {
           ))}
         </section>
 
+        {(transportItems.length > 0 || activityItems.length > 0) && <section className="container-app grid gap-6 pb-10 lg:grid-cols-2">
+          <InfoSection title="Transports prévus" items={transportItems.length ? transportItems : ["Transports organisés selon le programme"]} positive />
+          <InfoSection title="Activités et expériences" items={activityItems.length ? activityItems : ["Expériences selon le programme détaillé"]} positive />
+        </section>}
+
+        {selectableExtras.length > 0 && <section className="container-app pb-10">
+          <Card className="overflow-hidden border-accent/25">
+            <div className="border-b border-border bg-accent/5 p-6 md:p-8"><p className="eyebrow mb-3">Expériences optionnelles</p><h2 className="font-display text-2xl md:text-3xl">Personnalisez encore votre voyage</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Sélectionnez les expériences qui vous intéressent. Le total est recalculé immédiatement, sans modifier une proposition déjà acceptée.</p></div>
+            <div className="grid gap-3 p-4 sm:grid-cols-2 md:p-6">{selectableExtras.map((extra:any)=><button key={extra.id} type="button" onClick={()=>void toggleExtra(extra)} disabled={Boolean(savingExtra)||proposalLocked} aria-pressed={Boolean(extra.selected)} className={`flex min-h-20 cursor-pointer items-center justify-between gap-4 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 ${extra.selected?"border-accent bg-accent/8":"border-border bg-background hover:border-accent/45"}`}><span className="flex min-w-0 items-start gap-3"><span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border ${extra.selected?"border-accent bg-accent text-accent-foreground":"border-border"}`}>{extra.selected&&<CheckCircle2 className="h-3.5 w-3.5"/>}</span><span><span className="block font-semibold">{cleanText(extra.label)}</span><span className="mt-1 block text-xs text-muted-foreground">Jour {extra.day_key||"à confirmer"}</span></span></span><span className="shrink-0 font-semibold text-accent">+ {fmtMAD(extra.client_price_mad)}</span></button>)}</div>
+          </Card>
+        </section>}
+
         <section className="container-app grid gap-6 pb-10 lg:grid-cols-2">
           <InfoSection title="Ce qui est inclus dans votre voyage" items={buildInclusions(quote, flightLines, days, hotelLines, visibleLines)} positive />
           <InfoSection title="Non inclus" items={filteredExclusions(quote, flightLines)} />
         </section>
 
         {(hotelLines.length > 0 || flightLines.length > 0) && (
-          <section className="container-app grid gap-6 pb-10 lg:grid-cols-2">
+          <section className="container-app grid gap-6 pb-10 lg:grid-cols-2" data-analytics-event={hotelLines.length ? "hotel_viewed" : undefined}>
             {hotelLines.length > 0 && (
               <Card className="p-6">
                 <p className="eyebrow mb-3">Hôtels prévus</p>
                 <div className="space-y-4">
                   {hotelLines.map((hotelLine) => (
                     <div key={hotelLine.id || hotelLine.local_id} className="overflow-hidden rounded-2xl border border-border bg-background">
-                      <img src={hotelLine.image_url || fallbackImageForDay(hotelLine)} alt={hotelLine.hotel_name || "Hôtel prévu"} width={720} height={360} className="h-40 w-full object-cover" loading="lazy" />
+                      <img src={hotelLine.image_url || fallbackImageForDay(hotelLine)} alt={hotelLine.hotel_name || "Hôtel prévu"} width={720} height={360} className="aspect-[2/1] w-full object-cover" loading="lazy" decoding="async" />
                       <div className="p-4">
                         <div className="flex flex-wrap gap-2">
                           <span className="rounded-full bg-accent/10 px-3 py-1 text-xs font-semibold text-accent">{hotelCategoryLabel(hotelLine.category || quote.hotel_category) || "Hôtel 4★"}</span>
@@ -458,6 +624,7 @@ export default function FitQuotePublic() {
                         <h3 className="mt-3 font-display text-xl">{hotelLine.hotel_name || "Hôtel à confirmer"}</h3>
                         <p className="text-sm text-muted-foreground">{hotelLine.city || "Ville à confirmer"} · {hotelLine.nights || 1} nuit(s)</p>
                         {hotelLine.public_notes && <p className="mt-2 text-sm text-foreground/75">{cleanText(hotelLine.public_notes)}</p>}
+                        {(hotelLine.hotel_name||hotelLine.city)&&<a className="mt-3 inline-flex min-h-10 items-center gap-2 text-sm font-semibold text-accent hover:underline" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([hotelLine.hotel_name,hotelLine.city,"Japan"].filter(Boolean).join(", "))}`} target="_blank" rel="noreferrer"><MapPin className="h-4 w-4"/>Voir sur la carte</a>}
                       </div>
                     </div>
                   ))}
@@ -485,6 +652,10 @@ export default function FitQuotePublic() {
             )}
           </section>
         )}
+
+        <section className="container-app pb-10" data-analytics-event="price_viewed">
+          <Card className="overflow-hidden bg-foreground text-background"><div className="grid lg:grid-cols-[1fr_1.15fr]"><div className="p-6 md:p-8"><p className="text-xs font-semibold uppercase tracking-[.18em] text-white/60">Prix et échéancier</p><h2 className="mt-3 font-display text-3xl">Une lecture simple, sans surprise</h2><p className="mt-3 max-w-md text-sm leading-6 text-white/70">Le montant ci-dessous intègre les expériences optionnelles sélectionnées. Les disponibilités restent soumises à confirmation.</p></div><div className="grid grid-cols-2 gap-px bg-white/15"><PriceMetric label="Total de la proposition" value={fmtMAD(proposalTotal)} featured/><PriceMetric label="Acompte" value={fmtMAD(deposit)}/><PriceMetric label="Solde" value={fmtMAD(balance)}/><PriceMetric label="Échéance acompte" value={fmtDate(quote.public_payment_deadline)||"Avec votre conseiller"}/></div></div></Card>
+        </section>
 
         <section className="container-app grid gap-6 pb-10 lg:grid-cols-[1.1fr_0.9fr]">
           <Card className="p-6">
@@ -530,21 +701,10 @@ export default function FitQuotePublic() {
                 </p>
               </div>
               <div>
-                <Textarea className="min-h-28" value={clientNotes} onChange={(event) => setClientNotes(event.target.value)} placeholder="Questions, préférences, demandes de modification…" />
-                <label className="mt-4 flex items-start gap-3 rounded-lg border border-border bg-secondary/40 p-3 text-sm">
-                  <input
-                    type="checkbox"
-                    className="mt-1 h-4 w-4"
-                    checked={acceptedConditions}
-                    onChange={(event) => setAcceptedConditions(event.target.checked)}
-                  />
-                  <span>
-                    J’accepte cette proposition sous réserve de disponibilité et de validation finale par LeJapon.ma, ainsi que les conditions de réservation et d’annulation.
-                  </span>
-                </label>
                 <div className="mt-4 flex flex-wrap gap-3">
-                  <Button onClick={() => respond("accepted")} disabled={saving}><CheckCircle2 className="h-4 w-4" /> Accepter la proposition</Button>
-                  <Button variant="outline" onClick={() => respond("sent")} disabled={saving}><MessageCircle className="h-4 w-4" /> Demander une modification</Button>
+                  <Button onClick={() => setAcceptanceOpen(true)} disabled={saving || proposalLocked}><CheckCircle2 className="h-4 w-4" /> Accepter ce devis</Button>
+                  <Button variant="outline" onClick={() => setRevisionOpen(true)} disabled={saving || ["accepted", "lost", "declined"].includes(quote.status)}><MessageCircle className="h-4 w-4" /> Demander une modification</Button>
+                  <Button variant="outline" onClick={() => respond("declined")} disabled={saving || ["accepted", "lost", "declined"].includes(quote.status)}><XCircle className="h-4 w-4" /> Décliner</Button>
                   <Button variant="outline" asChild>
                     <a href={`https://wa.me/${brandWhatsapp}?text=${encodeURIComponent(`Bonjour, je souhaite parler du devis ${quote.quote_number}.`)}`} target="_blank" rel="noreferrer">
                       <Headphones className="h-4 w-4" /> Parler à un conseiller
@@ -556,7 +716,11 @@ export default function FitQuotePublic() {
           </Card>
         </section>
       </main>
-    </>
+      <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-[1fr_auto] gap-2 border-t border-border bg-background/95 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))] shadow-lg backdrop-blur md:hidden">
+        <Button className="min-h-12" onClick={() => setAcceptanceOpen(true)} disabled={saving||proposalLocked}><CheckCircle2 className="h-4 w-4"/>{quote.status==="accepted"?"Proposition acceptée":"Accepter"}</Button>
+        <Button className="min-h-12" variant="outline" asChild><a href={`https://wa.me/${brandWhatsapp}?text=${encodeURIComponent(`Bonjour, je souhaite parler du devis ${quote.quote_number}.`)}`} target="_blank" rel="noreferrer" aria-label="Contacter votre conseiller sur WhatsApp"><MessageCircle className="h-5 w-5"/></a></Button>
+      </div>
+    </div>
   );
 }
 
@@ -579,6 +743,8 @@ function SummaryCard({ icon: Icon, label, value }: { icon: any; label: string; v
     </div>
   );
 }
+
+function PriceMetric({label,value,featured=false}:{label:string;value:string;featured?:boolean}){return <div className={`min-h-28 bg-foreground p-5 md:p-6 ${featured?"col-span-2":""}`}><p className="text-xs text-white/60">{label}</p><p className={`${featured?"text-3xl":"text-xl"} mt-2 font-semibold tabular-nums text-white`}>{value}</p></div>}
 
 function DayCard({ day, index, travelers, visibleLines, fallbackImage }: { day: any; index: number; travelers: number; visibleLines: any[]; fallbackImage: string }) {
   const [expanded, setExpanded] = useState(false);

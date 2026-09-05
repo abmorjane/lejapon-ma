@@ -11,6 +11,34 @@ import {
 /** Pen-blue ink color used to mimic a hand-filled form. */
 const PEN_BLUE = rgb(0.07, 0.13, 0.55);
 
+/**
+ * Sanitize dynamic text before passing it to pdf-lib StandardFonts (WinAnsi).
+ * Removes invisible bidi/zero-width controls and normalizes common Unicode punctuation.
+ */
+const winAnsiSafe = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+
+  return String(value)
+    .normalize("NFKC")
+    // Invisible bidi / embedding / isolate controls (includes U+202A).
+    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
+    // Zero-width characters / BOM / word joiner.
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    // Non-breaking spaces.
+    .replace(/[\u00A0\u202F]/g, " ")
+    // Common punctuation outside WinAnsi.
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/\u3012/g, "T")
+    // Keep only characters encodable by the StandardFonts WinAnsi encoder.
+    .replace(/[^\x00-\xFF]/g, "")
+    // Strip remaining non-printing C0/C1 controls.
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "")
+    .trim();
+};
+
 export type VisaApplicationData = {
   // Identity
   category?: string | null;
@@ -201,7 +229,7 @@ export async function generateVisaPdf(
     size = 9,
     opts: { bold?: boolean; maxWidth?: number; minSize?: number } = {}
   ) => {
-    const str = cleanVisaText(text);
+    const str = winAnsiSafe(cleanVisaText(text));
     if (!str) return;
     const font = opts.bold ? helvBold : helv;
     let fontSize = size;
@@ -224,7 +252,7 @@ export async function generateVisaPdf(
     size = 9,
     lineGap = 11
   ) => {
-    const str = cleanVisaText(text);
+    const str = winAnsiSafe(cleanVisaText(text));
     if (!str) return;
     const lines = wrapToWidth(str, maxWidth, helv, size);
     lines.slice(0, 2).forEach((ln, i) => {
@@ -400,7 +428,7 @@ export async function generateVisaPdf(
 
   // Free-text "if Yes" details
   if (application.declarations_details) {
-    const lines = wrapToWidth(application.declarations_details, 480, helv, 9).slice(0, 5);
+    const lines = wrapToWidth(winAnsiSafe(cleanVisaText(application.declarations_details)), 480, helv, 9).slice(0, 5);
     lines.forEach((ln, i) => draw(p2, ln, 78, 280 - i * 12));
   }
 
@@ -418,7 +446,8 @@ function wrapToWidth(
   size: number
 ): string[] {
   const out: string[] = [];
-  for (const paragraph of text.split(/\r?\n/)) {
+  const safeText = winAnsiSafe(text);
+  for (const paragraph of safeText.split(/\r?\n/)) {
     const words = paragraph.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
     let cur = "";
     for (const w of words) {

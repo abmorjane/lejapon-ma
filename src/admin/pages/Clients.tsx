@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,6 +37,28 @@ const empty = {
   full_name: "", email: "", phone: "", city: "", country: "Maroc", source: "",
   passport_number: "", passport_expiry: "", passport_issue_date: "", birthdate: "",
   nationality: "", sex: "", passport_file_path: "", profession: "", marital_status: "", address: "", metadata: {},
+};
+
+type ClientEditPayload = {
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+  city: string | null;
+  country: string | null;
+  source: string | null;
+  passport_number: string | null;
+  passport_no: string | null;
+  passport_expiry: string | null;
+  passport_issue_date: string | null;
+  birthdate: string | null;
+  date_of_birth: string | null;
+  nationality: string | null;
+  sex: string | null;
+  passport_file_path: string | null;
+  profession: string | null;
+  marital_status: string | null;
+  address: string | null;
+  metadata: Record<string, any>;
 };
 const ClientsImportDialog = lazy(() =>
   import("../components/ClientsImportDialog").then((module) => ({ default: module.ClientsImportDialog }))
@@ -125,6 +148,38 @@ const normalizeClientDateFields = (client: any) => ({
 
 const asRecord = (value: unknown): Record<string, any> =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+
+const nullableText = (value: unknown) => {
+  const text = String(value ?? "").trim();
+  return text || null;
+};
+
+const clientEditPayloadFromForm = (form: any): ClientEditPayload => {
+  const normalized = normalizeClientDateFields(form);
+  const passportNumber = nullableText(normalized.passport_number ?? normalized.passport_no);
+  const birthdate = normalized.birthdate ?? normalized.date_of_birth ?? null;
+  return {
+    full_name: nullableText(normalized.full_name) ?? "",
+    email: nullableText(normalized.email),
+    phone: nullableText(normalized.phone),
+    city: nullableText(normalized.city),
+    country: nullableText(normalized.country) ?? "Maroc",
+    source: nullableText(normalized.source),
+    passport_number: passportNumber,
+    passport_no: passportNumber,
+    passport_expiry: normalized.passport_expiry ?? null,
+    passport_issue_date: normalized.passport_issue_date ?? null,
+    birthdate,
+    date_of_birth: birthdate,
+    nationality: nullableText(normalized.nationality),
+    sex: nullableText(normalized.sex),
+    passport_file_path: nullableText(normalized.passport_file_path),
+    profession: nullableText(normalized.profession),
+    marital_status: nullableText(normalized.marital_status),
+    address: nullableText(normalized.address),
+    metadata: asRecord(normalized.metadata),
+  };
+};
 
 const passportOcrMetadata = (fields: PassportOcrFields) => ({
   passport_number: fields.passport_no || null,
@@ -411,12 +466,9 @@ export default function Clients() {
   }, [searchParams, setSearchParams]);
 
   const save = async () => {
-    const payload = normalizeClientDateFields({
-      ...edit,
-      metadata: asRecord(edit.metadata),
-    });
-    const result = payload.id
-      ? await supabase.from("clients").update(payload).eq("id", payload.id).select("*").single()
+    const payload = clientEditPayloadFromForm(edit);
+    const result = edit.id
+      ? await supabase.from("clients").update(payload).eq("id", edit.id).select(CLIENT_SELECT).single()
       : await supabase.from("clients").insert(payload).select("*").single();
     if (result.error) {
       toast.error(result.error.message);
@@ -483,7 +535,7 @@ export default function Clients() {
     openClient(selected);
   };
 
-  const useReward = async (id: string) => {
+  const markRewardUsed = async (id: string) => {
     const { error } = await supabase.from("client_rewards" as any)
       .update({ status: "used", used_at: new Date().toISOString() }).eq("id", id);
     if (error) return toast.error(error.message);
@@ -626,7 +678,7 @@ export default function Clients() {
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Passeport</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div><Label>N° Passeport</Label><Input autoCapitalize="characters" value={edit.passport_number ?? ""} onChange={(e) => setEdit({ ...edit, passport_number: e.target.value })} /></div>
+                <div><Label>N° Passeport</Label><Input autoCapitalize="characters" value={edit.passport_number ?? edit.passport_no ?? ""} onChange={(e) => setEdit({ ...edit, passport_number: e.target.value, passport_no: e.target.value })} /></div>
                 <div><Label>Date d'émission</Label><Input type="date" value={edit.passport_issue_date ?? ""} onChange={(e) => setEdit({ ...edit, passport_issue_date: e.target.value })} /></div>
                 <div><Label>Date d'expiration</Label><Input type="date" value={edit.passport_expiry ?? ""} onChange={(e) => setEdit({ ...edit, passport_expiry: e.target.value })} /></div>
                   </div>
@@ -1144,7 +1196,7 @@ export default function Clients() {
                         <p className="text-muted-foreground capitalize">{r.status}</p>
                       </div>
                       {r.status === "available" && (
-                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => useReward(r.id)}>Utiliser</Button>
+                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => markRewardUsed(r.id)}>Utiliser</Button>
                       )}
                     </div>
                   ))}

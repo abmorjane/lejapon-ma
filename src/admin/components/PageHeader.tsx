@@ -22,11 +22,14 @@ const segmentLabels: Record<string, string> = {
   "fit-quotes": "Devis FIT",
   "agency-fit-requests": "Demandes FIT",
   "travel-agreements": "Accords de voyage",
+  "flight-tickets": "Billets d’avion",
+  "operation-task-templates": "Tâches standards",
   "email-templates": "Templates email",
   "email-logs": "Logs email",
   "email-settings": "Paramètres email",
   "visa-checklists": "Documents visa",
   "visa-settings": "Bureau Japon",
+  "visa-group-submissions": "Dépôts groupés",
   "user-guide": "FAQ & User Guide",
 };
 

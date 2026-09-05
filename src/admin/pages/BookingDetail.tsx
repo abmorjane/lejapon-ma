@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { StatusBadge } from "../components/StatusBadge";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck, Save, Upload, Mail, Plane, TicketCheck } from "lucide-react";
+import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck, Save, Upload, Mail, Plane, TicketCheck, FileSearch } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { generateQuotePdf, generateReceiptPdf, generateInvoicePdf, downloadBytes } from "@/lib/booking-pdfs";
 import { PdfPreviewDialog } from "../components/PdfPreviewDialog";
@@ -23,6 +24,14 @@ import { QuickActions } from "../components/QuickActions";
 import { OperationChecklistPanel } from "../components/OperationChecklistPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, useReducedMotion } from "framer-motion";
+import {
+  getFlightTicketStatus,
+  missingFlightReservationRequirements,
+  normalizeFlightWorkflowStatus,
+  normalizePnr as normalizeFlightPnr,
+  participantFullName,
+} from "@/admin/lib/flight-tickets";
+import { extractFlightTicketText, parseFlightTicketText, type DetectedFlightTicket } from "@/admin/lib/flight-ticket-import";
 import { fetchAgencySettings, type AgencySettings } from "@/lib/agency-settings";
 import { PAYMENT_METHOD_OPTIONS, normalisePaymentMethod, paymentMethodLabel } from "@/lib/payment-methods";
 import {
@@ -51,21 +60,37 @@ const visibilityScopeLabel = (scope?: string | null) =>
   scope === "booking_owner_only" ? "Contact principal uniquement" : "Tous les voyageurs de la réservation";
 
 const FLIGHT_STATUS_LABELS: Record<string, string> = {
-  not_booked: "Non réservé",
-  booked: "Réservé",
-  ticket_sent: "Billet envoyé",
+  not_booked: "En attente de réservation",
+  booked: "Vol réservé",
+  ticket_sent: "Billets envoyés",
+  pending_booking: "En attente de réservation",
+  reserved: "Vol réservé",
+  partially_ticketed: "Billets partiellement émis",
+  ticketed: "Billets émis",
+  delivered: "Billets envoyés",
+  incomplete: "Informations incomplètes",
 };
 
 const FLIGHT_STATUS_CLASSES: Record<string, string> = {
-  not_booked: "bg-amber-100 text-amber-900 border-amber-200",
-  booked: "bg-blue-100 text-blue-900 border-blue-200",
-  ticket_sent: "bg-emerald-100 text-emerald-900 border-emerald-200",
+  not_booked: "bg-red-50 text-red-900 border-red-200",
+  booked: "bg-blue-50 text-blue-900 border-blue-200",
+  ticket_sent: "bg-emerald-100 text-emerald-950 border-emerald-300",
+  pending_booking: "bg-red-50 text-red-900 border-red-200",
+  reserved: "bg-blue-50 text-blue-900 border-blue-200",
+  partially_ticketed: "bg-orange-50 text-orange-900 border-orange-200",
+  ticketed: "bg-emerald-50 text-emerald-900 border-emerald-200",
+  delivered: "bg-emerald-100 text-emerald-950 border-emerald-300",
+  incomplete: "bg-orange-50 text-orange-900 border-orange-200",
 };
 
 const emptyFlightDraft = {
-  status: "not_booked",
+  status: "pending_booking",
+  booking_platform: "APG",
+  booking_platform_other: "",
   pnr: "",
   e_ticket_number: "",
+  fare_amount: "",
+  fare_currency: "MAD",
   fare_mad: "",
   booking_class: "",
   baggage: "",
@@ -106,13 +131,28 @@ const textToSegments = (value: string) =>
     .filter(Boolean)
     .map((label) => ({ label }));
 
-const normalizePnr = (value: string) => value.replace(/\s+/g, "").trim().toUpperCase();
+const normalizePnr = (value: string) => normalizeFlightPnr(value);
+
+const normalizePersonName = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+const participantName = (participant: any) => participantFullName(participant);
 
 const flightDraftFromRow = (row?: any) => ({
   ...emptyFlightDraft,
-  status: row?.status || "not_booked",
+  status: normalizeFlightWorkflowStatus(row?.status),
+  booking_platform: row?.booking_platform || "APG",
+  booking_platform_other: row?.booking_platform_other || "",
   pnr: row?.pnr || "",
   e_ticket_number: row?.e_ticket_number || "",
+  fare_amount: row?.fare_amount != null ? String(row.fare_amount) : row?.fare_mad != null ? String(row.fare_mad) : "",
+  fare_currency: row?.fare_currency || "MAD",
   fare_mad: row?.fare_mad != null ? String(row.fare_mad) : "",
   booking_class: row?.booking_class || "",
   baggage: row?.baggage || "",
@@ -129,21 +169,18 @@ const flightDraftFromRow = (row?: any) => ({
 });
 
 const missingFlightBookingFields = (draft: typeof emptyFlightDraft, participants: any[] = []) => {
-  const missing: string[] = [];
-  if (!draft.pnr.trim()) missing.push("PNR");
-  if (!draft.airline.trim()) missing.push("Compagnie");
-  if (!draft.flight_number.trim()) missing.push("Numéro de vol");
-  if (!draft.departure_at) missing.push("Départ");
-  if (!draft.return_at) missing.push("Retour");
-  if (textToSegments(draft.segments_text).length === 0) missing.push("Segments");
-  if (participants.length === 0) missing.push("Voyageurs");
-  if (participants.length > 0 && draft.traveler_ids.length < participants.length) missing.push("Tous les voyageurs liés");
+  const missing = missingFlightReservationRequirements({
+    ...draft,
+    fare_amount: draft.fare_amount,
+    linked_traveler_count: draft.traveler_ids.length,
+  }, draft.traveler_ids.length);
+  if (draft.booking_platform === "Autre" && !draft.booking_platform_other.trim()) missing.push("Nom de la plateforme");
+  if (participants.length === 0 && !missing.includes("Voyageurs")) missing.push("Voyageurs");
   return missing;
 };
 
 const missingFlightFields = (draft: typeof emptyFlightDraft, participants: any[] = []) => {
   const missing = missingFlightBookingFields(draft, participants);
-  if (!draft.ticket_storage_path && !draft.ticket_document_id) missing.push("Billet PDF");
   if (!draft.ticket_sent_to_customer) missing.push("Billet envoyé au client");
   return missing;
 };
@@ -160,10 +197,20 @@ export default function BookingDetail() {
   const [flightReservation, setFlightReservation] = useState<any>(null);
   const [flightDraft, setFlightDraft] = useState(emptyFlightDraft);
   const [flightTravelers, setFlightTravelers] = useState<any[]>([]);
+  const [flightTicketDocuments, setFlightTicketDocuments] = useState<any[]>([]);
+  const [flightTicketDocumentTravelers, setFlightTicketDocumentTravelers] = useState<any[]>([]);
+  const [flightTravelerTicketNumbers, setFlightTravelerTicketNumbers] = useState<any[]>([]);
   const [flightHistory, setFlightHistory] = useState<any[]>([]);
   const [flightDuplicateWarning, setFlightDuplicateWarning] = useState<string | null>(null);
   const [flightTicketFile, setFlightTicketFile] = useState<File | null>(null);
+  const [flightTicketTravelerIds, setFlightTicketTravelerIds] = useState<string[]>([]);
+  const [flightTicketReplacingDocId, setFlightTicketReplacingDocId] = useState<string | null>(null);
+  const [ticketNumberDrafts, setTicketNumberDrafts] = useState<Record<string, string>>({});
+  const [flightImportPreview, setFlightImportPreview] = useState<DetectedFlightTicket | null>(null);
+  const [flightImportDialogOpen, setFlightImportDialogOpen] = useState(false);
   const [flightBusy, setFlightBusy] = useState(false);
+  const [flightEditMode, setFlightEditMode] = useState(false);
+  const [flightDraftBeforeEdit, setFlightDraftBeforeEdit] = useState<typeof emptyFlightDraft | null>(null);
   const [newPay, setNewPay] = useState({ amount_mad: "", method: "bank_transfer", status: "received", reference: "" });
   const [quoteAdjustments, setQuoteAdjustments] = useState<QuoteAdjustment[]>([]);
   const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
@@ -235,16 +282,43 @@ export default function BookingDetail() {
       setFlightReservation(null);
       setFlightDraft(emptyFlightDraft);
       setFlightTravelers([]);
+      setFlightTicketDocuments([]);
+      setFlightTicketDocumentTravelers([]);
+      setFlightTravelerTicketNumbers([]);
       setFlightHistory([]);
     } else {
       const flightRow = flightRows?.[0] ?? null;
       setFlightReservation(flightRow ?? null);
       let travelerRows: any[] = [];
+      let ticketDocumentRows: any[] = [];
+      let ticketDocumentTravelerRows: any[] = [];
+      let ticketNumberRows: any[] = [];
       let historyRows: any[] = [];
       if (flightRow?.id) {
-        const [{ data: loadedTravelers, error: travelersError }, { data: loadedHistory, error: historyError }] = await Promise.all([
+        const [
+          { data: loadedTravelers, error: travelersError },
+          { data: loadedTicketDocuments, error: ticketDocumentsError },
+          { data: loadedTicketDocumentTravelers, error: ticketDocumentTravelersError },
+          { data: loadedTicketNumbers, error: ticketNumbersError },
+          { data: loadedHistory, error: historyError },
+        ] = await Promise.all([
           (supabase as any)
             .from("booking_flight_travelers")
+            .select("*")
+            .eq("flight_reservation_id", flightRow.id)
+            .order("created_at", { ascending: true }),
+          (supabase as any)
+            .from("booking_flight_ticket_documents")
+            .select("*")
+            .eq("flight_reservation_id", flightRow.id)
+            .is("deleted_at", null)
+            .order("created_at", { ascending: false }),
+          (supabase as any)
+            .from("booking_flight_ticket_document_travelers")
+            .select("*")
+            .eq("flight_reservation_id", flightRow.id),
+          (supabase as any)
+            .from("booking_flight_traveler_ticket_numbers")
             .select("*")
             .eq("flight_reservation_id", flightRow.id)
             .order("created_at", { ascending: true }),
@@ -258,13 +332,29 @@ export default function BookingDetail() {
         if (travelersError && !/booking_flight_travelers|schema cache|Could not find the table/i.test(travelersError.message ?? "")) {
           console.warn("[booking-detail] flight travelers unavailable", travelersError);
         }
+        if (ticketDocumentsError && !/booking_flight_ticket_documents|schema cache|Could not find the table/i.test(ticketDocumentsError.message ?? "")) {
+          console.warn("[booking-detail] flight ticket documents unavailable", ticketDocumentsError);
+        }
+        if (ticketDocumentTravelersError && !/booking_flight_ticket_document_travelers|schema cache|Could not find the table/i.test(ticketDocumentTravelersError.message ?? "")) {
+          console.warn("[booking-detail] flight ticket document travelers unavailable", ticketDocumentTravelersError);
+        }
+        if (ticketNumbersError && !/booking_flight_traveler_ticket_numbers|schema cache|Could not find the table/i.test(ticketNumbersError.message ?? "")) {
+          console.warn("[booking-detail] traveler ticket numbers unavailable", ticketNumbersError);
+        }
         if (historyError && !/booking_flight_reservation_history|schema cache|Could not find the table/i.test(historyError.message ?? "")) {
           console.warn("[booking-detail] flight history unavailable", historyError);
         }
         travelerRows = loadedTravelers ?? [];
+        ticketDocumentRows = loadedTicketDocuments ?? [];
+        ticketDocumentTravelerRows = loadedTicketDocumentTravelers ?? [];
+        ticketNumberRows = loadedTicketNumbers ?? [];
         historyRows = loadedHistory ?? [];
       }
       setFlightTravelers(travelerRows);
+      setFlightTicketDocuments(ticketDocumentRows);
+      setFlightTicketDocumentTravelers(ticketDocumentTravelerRows);
+      setFlightTravelerTicketNumbers(ticketNumberRows);
+      setFlightTicketTravelerIds(travelerRows.filter((row) => row.traveler_status !== "cancelled").map((row) => row.participant_id).filter(Boolean));
       setFlightHistory(historyRows);
       setFlightDraft({
         ...flightDraftFromRow(flightRow),
@@ -288,6 +378,7 @@ export default function BookingDetail() {
     }
     fetchAgencySettings().then(setAgency);
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [id]);
 
   const loadAgencyMembers = useCallback(async (organizationId: string) => {
@@ -701,32 +792,34 @@ export default function BookingDetail() {
       .filter((row: any) => selectedSet.has(row.participant_id))
       .map((row: any) => row.id);
     if (toUpdate.length > 0) {
+      const travelerPatch: any = {
+        traveler_status: draft.ticket_sent_to_customer ? "ticketed" : "linked",
+        updated_by: user?.id ?? null,
+      };
+      if (draft.e_ticket_number.trim()) travelerPatch.e_ticket_number = draft.e_ticket_number.trim();
       const { error } = await (supabase as any)
         .from("booking_flight_travelers")
-        .update({
-          e_ticket_number: draft.e_ticket_number.trim() || null,
-          traveler_status: draft.ticket_sent_to_customer ? "ticketed" : "linked",
-          updated_by: user?.id ?? null,
-        })
+        .update(travelerPatch)
         .in("id", toUpdate);
       if (error) throw error;
     }
   };
 
-  const saveFlightReservation = async (statusOverride?: "not_booked" | "booked" | "ticket_sent", overrides: Partial<typeof emptyFlightDraft> = {}) => {
+  const saveFlightReservation = async (statusOverride?: "pending_booking" | "reserved" | "partially_ticketed" | "ticketed" | "delivered" | "not_booked" | "booked" | "ticket_sent", overrides: Partial<typeof emptyFlightDraft> = {}) => {
     if (!b?.id) return false;
-    const nextDraft = { ...flightDraft, ...overrides, status: statusOverride || flightDraft.status };
-    if (nextDraft.status === "booked") {
+    const finalStatus = statusOverride ? normalizeFlightWorkflowStatus(statusOverride) : normalizeFlightWorkflowStatus(overrides.status || flightDraft.status);
+    const nextDraft = { ...flightDraft, ...overrides, status: finalStatus };
+    if (finalStatus === "reserved" || finalStatus === "partially_ticketed" || finalStatus === "ticketed" || finalStatus === "delivered") {
       const missing = missingFlightBookingFields(nextDraft, participants);
       if (missing.length > 0) {
         toast.error(`Impossible de marquer le vol réservé. Champs manquants : ${missing.join(", ")}.`);
         return false;
       }
     }
-    if (nextDraft.status === "ticket_sent") {
+    if (finalStatus === "delivered") {
       const missing = missingFlightFields(nextDraft, participants);
       if (missing.length > 0) {
-        toast.error(`Impossible de finaliser le vol. Champs manquants : ${missing.join(", ")}.`);
+        toast.error(`Impossible de marquer les billets envoyés. Champs manquants : ${missing.join(", ")}.`);
         return false;
       }
     }
@@ -740,14 +833,20 @@ export default function BookingDetail() {
         return false;
       }
 
-      const finalStatus = nextDraft.status;
-      const saveStatus = finalStatus === "ticket_sent" && !flightReservation?.id ? "booked" : finalStatus;
+      const requiresTravelerSyncBeforeStatus = ["reserved", "partially_ticketed", "ticketed", "delivered"].includes(finalStatus);
+      const saveStatus = requiresTravelerSyncBeforeStatus ? "pending_booking" : finalStatus;
+      const fareAmount = nextDraft.fare_amount === "" ? null : Number(nextDraft.fare_amount);
+      const fareCurrency = nextDraft.fare_currency.trim().toUpperCase() || "MAD";
       const payload: any = {
         booking_id: b.id,
         status: saveStatus,
         pnr: normalizePnr(nextDraft.pnr) || null,
+        booking_platform: nextDraft.booking_platform.trim() || null,
+        booking_platform_other: nextDraft.booking_platform === "Autre" ? nextDraft.booking_platform_other.trim() || null : null,
         e_ticket_number: nextDraft.e_ticket_number.trim() || null,
-        fare_mad: nextDraft.fare_mad === "" ? null : Number(nextDraft.fare_mad),
+        fare_amount: fareAmount,
+        fare_currency: fareCurrency,
+        fare_mad: fareCurrency === "MAD" ? fareAmount : nextDraft.fare_mad === "" ? null : Number(nextDraft.fare_mad),
         booking_class: nextDraft.booking_class.trim() || null,
         baggage: nextDraft.baggage.trim() || null,
         airline: nextDraft.airline.trim() || null,
@@ -759,7 +858,7 @@ export default function BookingDetail() {
         ticket_storage_path: nextDraft.ticket_storage_path || null,
         ticket_sent_to_customer: nextDraft.ticket_sent_to_customer,
         email_sent: nextDraft.email_sent,
-        flight_completed_by: saveStatus === "ticket_sent" ? user?.id ?? null : null,
+        flight_completed_by: saveStatus === "delivered" ? user?.id ?? null : flightReservation?.flight_completed_by ?? null,
         updated_by: user?.id ?? null,
         created_by: flightReservation?.created_by ?? user?.id ?? null,
       };
@@ -772,10 +871,16 @@ export default function BookingDetail() {
       await syncFlightTravelerLinks(data.id, nextDraft);
 
       let savedRow = data;
-      if (finalStatus === "ticket_sent" && saveStatus !== "ticket_sent") {
+      if (saveStatus !== finalStatus) {
         const { data: finalizedRow, error: finalizeError } = await (supabase as any)
           .from("booking_flight_reservations")
-          .update({ status: "ticket_sent", ticket_sent_to_customer: true, email_sent: nextDraft.email_sent, flight_completed_by: user?.id ?? null, updated_by: user?.id ?? null })
+          .update({
+            status: finalStatus,
+            ticket_sent_to_customer: finalStatus === "delivered" ? true : nextDraft.ticket_sent_to_customer,
+            email_sent: finalStatus === "delivered" ? true : nextDraft.email_sent,
+            flight_completed_by: finalStatus === "delivered" ? user?.id ?? null : flightReservation?.flight_completed_by ?? null,
+            updated_by: user?.id ?? null,
+          })
           .eq("id", data.id)
           .select("*")
           .single();
@@ -785,7 +890,9 @@ export default function BookingDetail() {
 
       setFlightReservation(savedRow);
       setFlightDraft({ ...flightDraftFromRow(savedRow), traveler_ids: nextDraft.traveler_ids });
-      toast.success(nextDraft.status === "ticket_sent" ? "Vol marqué comme billet envoyé." : "Informations vol enregistrées.");
+      setFlightEditMode(false);
+      setFlightDraftBeforeEdit(null);
+      toast.success(finalStatus === "delivered" ? "Billets marqués comme envoyés." : finalStatus === "reserved" ? "Vol réservé enregistré." : "Informations vol enregistrées.");
       load();
       return true;
     } catch (error: any) {
@@ -815,6 +922,9 @@ export default function BookingDetail() {
     if (!b?.id) return toast.error("Réservation introuvable.");
     if (!flightTicketFile) return toast.error("Choisissez le PDF du billet.");
     if (flightTicketFile.type && flightTicketFile.type !== "application/pdf") return toast.error("Le billet doit être un PDF.");
+    if (!flightReservation?.id) return toast.error("Enregistrez d’abord le vol réservé avant d’ajouter un billet.");
+    const associatedTravelerIds = Array.from(new Set(flightTicketTravelerIds.filter(Boolean)));
+    if (associatedTravelerIds.length === 0) return toast.error("Associez ce billet à au moins un voyageur.");
     setFlightBusy(true);
     try {
       const safeName = flightTicketFile.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.]+/g, "-");
@@ -844,24 +954,90 @@ export default function BookingDetail() {
         .select("id, storage_path")
         .single();
       if (docError) throw docError;
+      const { data: ticketDocument, error: ticketDocumentError } = await (supabase as any)
+        .from("booking_flight_ticket_documents")
+        .insert({
+          flight_reservation_id: flightReservation.id,
+          booking_id: b.id,
+          booking_document_id: insertedDoc?.id ?? null,
+          storage_path: insertedDoc?.storage_path || path,
+          file_name: flightTicketFile.name,
+          mime_type: flightTicketFile.type || "application/pdf",
+          size_bytes: flightTicketFile.size,
+          source: "manual_upload",
+          created_by: user?.id ?? null,
+          updated_by: user?.id ?? null,
+        })
+        .select("*")
+        .single();
+      if (ticketDocumentError) throw ticketDocumentError;
+
+      const replacingDoc = flightTicketReplacingDocId
+        ? flightTicketDocuments.find((doc) => doc.id === flightTicketReplacingDocId)
+        : null;
+      if (replacingDoc) {
+        const { error: replaceError } = await (supabase as any)
+          .from("booking_flight_ticket_documents")
+          .update({
+            deleted_at: new Date().toISOString(),
+            replaced_by_id: ticketDocument.id,
+            updated_by: user?.id ?? null,
+          })
+          .eq("id", replacingDoc.id)
+          .is("deleted_at", null);
+        if (replaceError) throw replaceError;
+
+        if (replacingDoc.booking_document_id) {
+          const { error: hideOldDocError } = await (supabase as any)
+            .from("booking_documents")
+            .update({ visible_to_client: false, client_visible_at: null })
+            .eq("id", replacingDoc.booking_document_id);
+          if (hideOldDocError) throw hideOldDocError;
+        }
+      }
+
+      const travelerRows = associatedTravelerIds.map((participantId) => ({
+        flight_ticket_document_id: ticketDocument.id,
+        flight_reservation_id: flightReservation.id,
+        booking_id: b.id,
+        participant_id: participantId,
+        created_by: user?.id ?? null,
+      }));
+      const { error: travelerDocError } = await (supabase as any)
+        .from("booking_flight_ticket_document_travelers")
+        .insert(travelerRows);
+      if (travelerDocError) throw travelerDocError;
+
+      const legacyPatch: any = {};
+      if (!flightDraft.ticket_document_id || replacingDoc?.booking_document_id === flightDraft.ticket_document_id) {
+        legacyPatch.ticket_document_id = insertedDoc?.id ?? null;
+      }
+      if (!flightDraft.ticket_storage_path || replacingDoc?.storage_path === flightDraft.ticket_storage_path) {
+        legacyPatch.ticket_storage_path = insertedDoc?.storage_path || path;
+      }
+      if (Object.keys(legacyPatch).length > 0) {
+        const { error: legacyError } = await (supabase as any)
+          .from("booking_flight_reservations")
+          .update({ ...legacyPatch, updated_by: user?.id ?? null })
+          .eq("id", flightReservation.id);
+        if (legacyError) throw legacyError;
+      }
+      await (supabase as any).rpc("recalculate_booking_flight_status", { p_flight_reservation_id: flightReservation.id });
       setFlightTicketFile(null);
-      const nextDraft = {
-        ...flightDraft,
-        ticket_document_id: insertedDoc?.id || "",
-        ticket_storage_path: insertedDoc?.storage_path || path,
-      };
-      setFlightDraft(nextDraft);
-      await saveFlightReservation(undefined, nextDraft);
-      toast.success("Billet PDF ajouté.");
+      setFlightTicketReplacingDocId(null);
+      toast.success(replacingDoc ? "Billet PDF remplacé." : "Billet PDF ajouté.");
+      load();
     } catch (error: any) {
-      toast.error(error?.message ?? "Upload du billet impossible.");
+      const missingTable = /booking_flight_ticket_documents|booking_flight_ticket_document_travelers|schema cache|Could not find the table/i.test(error?.message ?? "");
+      toast.error(missingTable ? "Migration Flight Booking V2 requise pour associer plusieurs billets aux voyageurs." : error?.message ?? "Upload du billet impossible.");
     } finally {
       setFlightBusy(false);
     }
   };
 
-  const openFlightTicket = async () => {
-    const path = flightDraft.ticket_storage_path
+  const openFlightTicket = async (storagePath?: string | null) => {
+    const path = storagePath
+      || flightDraft.ticket_storage_path
       || docs.find((doc) => ["flight_ticket", "billet_avion"].includes(doc.kind || doc.document_type))?.storage_path;
     if (!path) return toast.error("Aucun billet PDF lié.");
     const { data, error } = await supabase.storage.from("booking-docs").createSignedUrl(path, 60);
@@ -869,11 +1045,161 @@ export default function BookingDetail() {
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
+  const startReplaceFlightTicket = (doc: any) => {
+    if (flightInputDisabled) return;
+    setFlightTicketReplacingDocId(doc.id);
+    setFlightTicketTravelerIds(doc.participant_ids ?? []);
+    setFlightTicketFile(null);
+    toast.info("Choisissez le nouveau PDF, puis cliquez sur Remplacer billet.");
+  };
+
+  const deleteFlightTicketDocument = async (doc: any) => {
+    if (!canEdit) return toast.error("Modification non autorisée.");
+    if (!confirm(`Supprimer l’association du billet "${doc.file_name}" ? Le fichier historique ne sera pas effacé du Storage.`)) return;
+    setFlightBusy(true);
+    try {
+      const { error } = await (supabase as any)
+        .from("booking_flight_ticket_documents")
+        .update({
+          deleted_at: new Date().toISOString(),
+          updated_by: user?.id ?? null,
+        })
+        .eq("id", doc.id)
+        .is("deleted_at", null);
+      if (error) throw error;
+
+      if (doc.booking_document_id) {
+        const { error: hideDocError } = await (supabase as any)
+          .from("booking_documents")
+          .update({ visible_to_client: false, client_visible_at: null })
+          .eq("id", doc.booking_document_id);
+        if (hideDocError) throw hideDocError;
+      }
+
+      if (flightReservation?.id && (doc.booking_document_id === flightDraft.ticket_document_id || doc.storage_path === flightDraft.ticket_storage_path)) {
+        const { error: legacyError } = await (supabase as any)
+          .from("booking_flight_reservations")
+          .update({ ticket_document_id: null, ticket_storage_path: null, updated_by: user?.id ?? null })
+          .eq("id", flightReservation.id);
+        if (legacyError) throw legacyError;
+      }
+
+      await (supabase as any).rpc("recalculate_booking_flight_status", { p_flight_reservation_id: flightReservation.id });
+      if (flightTicketReplacingDocId === doc.id) setFlightTicketReplacingDocId(null);
+      toast.success("Billet retiré. Aucun montant de réservation n’a été modifié.");
+      load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Suppression du billet impossible.");
+    } finally {
+      setFlightBusy(false);
+    }
+  };
+
   const markFlightTicketSent = async () => {
-    await saveFlightReservation("ticket_sent", {
+    await saveFlightReservation("delivered", {
       ticket_sent_to_customer: true,
       email_sent: true,
     });
+  };
+
+  const addTravelerTicketNumber = async (participantId: string) => {
+    if (!b?.id || !flightReservation?.id) return toast.error("Enregistrez d’abord le vol réservé.");
+    const values = (ticketNumberDrafts[participantId] || "")
+      .split(/[,\n;]+/)
+      .map((value) => value.replace(/\s+/g, "").trim())
+      .filter(Boolean);
+    if (values.length === 0) return toast.error("Numéro e-ticket manquant.");
+    const travelerRow = flightTravelers.find((row) => row.participant_id === participantId);
+    if (!travelerRow) return toast.error("Ce voyageur doit d’abord être associé au PNR.");
+    setFlightBusy(true);
+    try {
+      const { error } = await (supabase as any)
+        .from("booking_flight_traveler_ticket_numbers")
+        .insert(values.map((value) => ({
+          flight_traveler_id: travelerRow.id,
+          flight_reservation_id: flightReservation.id,
+          booking_id: b.id,
+          participant_id: participantId,
+          e_ticket_number: value,
+          created_by: user?.id ?? null,
+          updated_by: user?.id ?? null,
+        })));
+      if (error) throw error;
+      setTicketNumberDrafts((current) => ({ ...current, [participantId]: "" }));
+      await (supabase as any).rpc("recalculate_booking_flight_status", { p_flight_reservation_id: flightReservation.id });
+      toast.success(values.length > 1 ? "Numéros e-ticket ajoutés." : "Numéro e-ticket ajouté.");
+      load();
+    } catch (error: any) {
+      const duplicate = error?.code === "23505";
+      toast.error(duplicate ? "Ce numéro e-ticket existe déjà pour ce voyageur." : error?.message ?? "Impossible d’ajouter le numéro e-ticket.");
+    } finally {
+      setFlightBusy(false);
+    }
+  };
+
+  const analyzeFlightTicketPdf = async () => {
+    if (!flightTicketFile) return toast.error("Choisissez d’abord un PDF.");
+    setFlightBusy(true);
+    try {
+      const extraction = await extractFlightTicketText(flightTicketFile);
+      if (extraction.status !== "ready") {
+        toast.error(extraction.warning ?? "Import automatique indisponible pour ce PDF.");
+        return;
+      }
+      const parsed = parseFlightTicketText(extraction.text);
+      setFlightImportPreview(parsed);
+      setFlightImportDialogOpen(true);
+    } catch (error: any) {
+      toast.error(error?.message ?? "Impossible d’analyser le PDF.");
+    } finally {
+      setFlightBusy(false);
+    }
+  };
+
+  const applyFlightImportPreview = async () => {
+    if (!flightImportPreview) return;
+    const detectedSegments = flightImportPreview.segments.length > 0
+      ? flightImportPreview.segments.map((segment) => `${segment.from} → ${segment.to}${segment.flight_number ? ` · ${segment.flight_number}` : ""}`).join("\n")
+      : flightImportPreview.flightNumbers.join("\n");
+    setFlightDraft((current) => ({
+      ...current,
+      pnr: flightImportPreview.pnr || current.pnr,
+      booking_platform: flightImportPreview.platform || current.booking_platform,
+      airline: flightImportPreview.airline || current.airline,
+      booking_class: flightImportPreview.bookingClass || current.booking_class,
+      flight_number: flightImportPreview.flightNumbers.join(" / ") || current.flight_number,
+      segments_text: detectedSegments || current.segments_text,
+    }));
+
+    const nextTicketDrafts: Record<string, string> = {};
+    flightImportPreview.travelers.forEach((traveler) => {
+      const detectedName = normalizePersonName(traveler.rawName);
+      const match = participants.find((participant) => {
+        const currentName = normalizePersonName(participantName(participant));
+        return currentName === detectedName || currentName.replace(/\s+/g, "") === detectedName.replace(/\s+/g, "");
+      });
+      if (match && traveler.ticketNumbers.length > 0) {
+        nextTicketDrafts[match.id] = traveler.ticketNumbers.join(", ");
+      }
+    });
+    setTicketNumberDrafts((current) => ({ ...current, ...nextTicketDrafts }));
+    setFlightImportDialogOpen(false);
+    toast.success("Informations détectées préparées. Vérifiez puis enregistrez.");
+  };
+
+  const startFlightEdit = () => {
+    if (!canEdit) return;
+    if (!confirm("Modifier les informations du vol peut affecter les documents visa et les tâches opérationnelles. Continuer ?")) return;
+    setFlightDraftBeforeEdit(flightDraft);
+    setFlightEditMode(true);
+  };
+
+  const cancelFlightEdit = () => {
+    if (flightDraftBeforeEdit) setFlightDraft(flightDraftBeforeEdit);
+    setFlightTicketFile(null);
+    setFlightDuplicateWarning(null);
+    setFlightDraftBeforeEdit(null);
+    setFlightEditMode(false);
   };
 
   const clientPortalInvitationMailto = () => {
@@ -1013,11 +1339,39 @@ export default function BookingDetail() {
     : 0;
   const longMessage = String(b.message || "");
   const visibleMessage = !messageExpanded && longMessage.length > 150 ? `${longMessage.slice(0, 150)}…` : longMessage;
-  const flightStatus = flightDraft.status || "not_booked";
-  const flightMissing = missingFlightFields(flightDraft, participants);
-  const flightMissingForBookedAction = missingFlightBookingFields(flightDraft, participants);
-  const flightMissingForFinalAction = missingFlightFields({ ...flightDraft, ticket_sent_to_customer: true }, participants);
+  const flightTicketDocumentsWithTravelers = flightTicketDocuments.map((doc) => ({
+    ...doc,
+    participant_ids: flightTicketDocumentTravelers
+      .filter((row) => row.flight_ticket_document_id === doc.id)
+      .map((row) => row.participant_id)
+      .filter(Boolean),
+  }));
+  const flightEvidenceContext = {
+    ...flightReservation,
+    ...flightDraft,
+    status: flightDraft.status,
+    linked_traveler_count: flightDraft.traveler_ids.length,
+    associated_ticket_document_count: flightTicketDocuments.length,
+  };
+  const flightStatus = getFlightTicketStatus(flightEvidenceContext);
   const selectedFlightTravelerSet = new Set(flightDraft.traveler_ids);
+  const selectedFlightTravelers = flightTravelers.filter((row) => selectedFlightTravelerSet.has(row.participant_id));
+  const selectedTravelersMissingTickets = flightDraft.traveler_ids.filter((participantId) => {
+    const travelerRow = selectedFlightTravelers.find((row) => row.participant_id === participantId);
+    const hasLegacyTicket = Boolean(String(travelerRow?.e_ticket_number ?? flightDraft.e_ticket_number ?? "").trim());
+    const hasTicketNumber = flightTravelerTicketNumbers.some((row) => row.participant_id === participantId && String(row.e_ticket_number ?? "").trim());
+    const hasDocument = flightTicketDocumentsWithTravelers.some((doc) => doc.participant_ids.includes(participantId));
+    return !hasLegacyTicket && !hasTicketNumber && !hasDocument;
+  });
+  const flightMissingForBookedAction = missingFlightBookingFields(flightDraft, participants);
+  const flightMissing = flightMissingForBookedAction;
+  const flightMissingForFinalAction = [
+    ...missingFlightFields({ ...flightDraft, ticket_sent_to_customer: true }, participants),
+    ...selectedTravelersMissingTickets.map((participantId) => `Billet de ${participantName(participants.find((participant) => participant.id === participantId))}`),
+  ];
+  const flightIsFinalized = ["reserved", "partially_ticketed", "ticketed", "delivered"].includes(flightStatus);
+  const flightFieldsReadOnly = flightStatus === "delivered" && !flightEditMode;
+  const flightInputDisabled = flightBusy || !canEdit || flightFieldsReadOnly;
 
   return (
     <motion.div
@@ -1033,6 +1387,7 @@ export default function BookingDetail() {
           <p className="text-xs text-muted-foreground font-mono">{b.reference}</p>
           <h1 className="mt-1 truncate font-display text-xl leading-tight sm:text-2xl">{b.contact_name}</h1>
           <p className="truncate text-sm text-muted-foreground">{b.contact_email} · {b.contact_phone || "—"}</p>
+          {b.originating_fit_quote_id && <Link to="/admin/fit-quotes" className="mt-2 inline-flex text-sm font-medium text-accent hover:underline">Issue d’un devis FIT · Ouvrir le module FIT</Link>}
           <QuickActions
             phone={b.contact_phone}
             email={b.contact_email}
@@ -1280,8 +1635,8 @@ export default function BookingDetail() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-950">
-                Après paiement confirmé, une tâche haute priorité est créée automatiquement. Le vol ne peut être finalisé qu’après PNR, compagnie, numéro de vol, dates, billet PDF et confirmation d’envoi au client.
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs leading-relaxed text-blue-950">
+                Enregistrez le vol dès que le PNR est réservé. Les numéros e-ticket, les PDF, les segments, les bagages et les détails de vol peuvent être complétés ensuite ou importés depuis le billet.
               </div>
               {flightDuplicateWarning && (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-900">
@@ -1289,45 +1644,85 @@ export default function BookingDetail() {
                 </div>
               )}
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <Label className="text-xs">PNR</Label>
-                  <Input value={flightDraft.pnr} onChange={(event) => {
-                    setFlightDuplicateWarning(null);
-                    setFlightDraft((current) => ({ ...current, pnr: normalizePnr(event.target.value) }));
-                  }} placeholder="Ex: ABC123" />
+              <div className="rounded-xl border border-border p-3">
+                <p className="mb-3 text-sm font-semibold">Informations essentielles</p>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <Label className="text-xs">Plateforme</Label>
+                    <Select
+                      value={flightDraft.booking_platform}
+                      onValueChange={(value) => setFlightDraft((current) => ({ ...current, booking_platform: value }))}
+                      disabled={flightInputDisabled}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="APG">APG</SelectItem>
+                        <SelectItem value="Amadeus">Amadeus</SelectItem>
+                        <SelectItem value="TopTravel">TopTravel</SelectItem>
+                        <SelectItem value="Autre">Autre</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {flightDraft.booking_platform === "Autre" && (
+                    <div>
+                      <Label className="text-xs">Nom de la plateforme</Label>
+                      <Input value={flightDraft.booking_platform_other} onChange={(event) => setFlightDraft((current) => ({ ...current, booking_platform_other: event.target.value }))} disabled={flightInputDisabled} />
+                    </div>
+                  )}
+                  <div>
+                    <Label className="text-xs">PNR</Label>
+                    <Input value={flightDraft.pnr} onChange={(event) => {
+                      setFlightDuplicateWarning(null);
+                      setFlightDraft((current) => ({ ...current, pnr: normalizePnr(event.target.value) }));
+                    }} placeholder="Ex: SVXYZA" disabled={flightInputDisabled} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Prix total</Label>
+                    <Input type="number" inputMode="decimal" value={flightDraft.fare_amount} onChange={(event) => setFlightDraft((current) => ({ ...current, fare_amount: event.target.value, fare_mad: current.fare_currency === "MAD" ? event.target.value : current.fare_mad }))} disabled={flightInputDisabled} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Devise</Label>
+                    <Input value={flightDraft.fare_currency} onChange={(event) => setFlightDraft((current) => ({ ...current, fare_currency: event.target.value.toUpperCase() }))} placeholder="MAD" disabled={flightInputDisabled} />
+                  </div>
                 </div>
+              </div>
+
+              <details className="rounded-xl border border-border p-3">
+                <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold">
+                  Détails du vol – facultatifs
+                  <ChevronDown className="h-4 w-4" />
+                </summary>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground sm:col-span-2">
+                    Vous pouvez compléter ces informations manuellement ou les importer depuis le billet PDF.
+                  </div>
                 <div>
-                  <Label className="text-xs">N° e-ticket</Label>
-                  <Input value={flightDraft.e_ticket_number} onChange={(event) => setFlightDraft((current) => ({ ...current, e_ticket_number: event.target.value }))} />
+                  <Label className="text-xs">N° e-ticket global hérité</Label>
+                  <Input value={flightDraft.e_ticket_number} onChange={(event) => setFlightDraft((current) => ({ ...current, e_ticket_number: event.target.value }))} disabled={flightInputDisabled} />
                 </div>
                 <div>
                   <Label className="text-xs">Compagnie aérienne</Label>
-                  <Input value={flightDraft.airline} onChange={(event) => setFlightDraft((current) => ({ ...current, airline: event.target.value }))} placeholder="Ex: Emirates" />
+                  <Input value={flightDraft.airline} onChange={(event) => setFlightDraft((current) => ({ ...current, airline: event.target.value }))} placeholder="Ex: Emirates" disabled={flightInputDisabled} />
                 </div>
                 <div>
                   <Label className="text-xs">Numéro de vol principal</Label>
-                  <Input value={flightDraft.flight_number} onChange={(event) => setFlightDraft((current) => ({ ...current, flight_number: event.target.value }))} placeholder="Ex: EK752 / EK312" />
+                  <Input value={flightDraft.flight_number} onChange={(event) => setFlightDraft((current) => ({ ...current, flight_number: event.target.value }))} placeholder="Ex: EK752 / EK312" disabled={flightInputDisabled} />
                 </div>
                 <div>
                   <Label className="text-xs">Départ</Label>
-                  <Input type="datetime-local" value={flightDraft.departure_at} onChange={(event) => setFlightDraft((current) => ({ ...current, departure_at: event.target.value }))} />
+                  <Input type="datetime-local" value={flightDraft.departure_at} onChange={(event) => setFlightDraft((current) => ({ ...current, departure_at: event.target.value }))} disabled={flightInputDisabled} />
                 </div>
                 <div>
                   <Label className="text-xs">Retour</Label>
-                  <Input type="datetime-local" value={flightDraft.return_at} onChange={(event) => setFlightDraft((current) => ({ ...current, return_at: event.target.value }))} />
-                </div>
-                <div>
-                  <Label className="text-xs">Tarif vol (MAD)</Label>
-                  <Input type="number" inputMode="decimal" value={flightDraft.fare_mad} onChange={(event) => setFlightDraft((current) => ({ ...current, fare_mad: event.target.value }))} />
+                  <Input type="datetime-local" value={flightDraft.return_at} onChange={(event) => setFlightDraft((current) => ({ ...current, return_at: event.target.value }))} disabled={flightInputDisabled} />
                 </div>
                 <div>
                   <Label className="text-xs">Classe de réservation</Label>
-                  <Input value={flightDraft.booking_class} onChange={(event) => setFlightDraft((current) => ({ ...current, booking_class: event.target.value }))} placeholder="Ex: Economy / V" />
+                  <Input value={flightDraft.booking_class} onChange={(event) => setFlightDraft((current) => ({ ...current, booking_class: event.target.value }))} placeholder="Ex: Economy / V" disabled={flightInputDisabled} />
                 </div>
                 <div className="sm:col-span-2">
                   <Label className="text-xs">Bagages</Label>
-                  <Input value={flightDraft.baggage} onChange={(event) => setFlightDraft((current) => ({ ...current, baggage: event.target.value }))} placeholder="Ex: 2 bagages de 23 kg" />
+                  <Input value={flightDraft.baggage} onChange={(event) => setFlightDraft((current) => ({ ...current, baggage: event.target.value }))} placeholder="Ex: 2 bagages de 23 kg" disabled={flightInputDisabled} />
                 </div>
                 <div className="sm:col-span-2">
                   <Label className="text-xs">Segments</Label>
@@ -1336,22 +1731,28 @@ export default function BookingDetail() {
                     value={flightDraft.segments_text}
                     onChange={(event) => setFlightDraft((current) => ({ ...current, segments_text: event.target.value }))}
                     placeholder={"Un segment par ligne, ex:\nCMN → DXB · EK752 · 10/08 14:45\nDXB → HND · EK312 · 11/08 08:30"}
+                    disabled={flightInputDisabled}
                   />
                 </div>
-              </div>
+                </div>
+              </details>
 
               <div className="rounded-xl border border-border p-3">
                 <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-semibold">Voyageurs couverts par ce PNR</p>
-                    <p className="text-xs text-muted-foreground">Tous les participants doivent être liés avant de finaliser le billet.</p>
+                    <p className="text-xs text-muted-foreground">Au moins un voyageur est nécessaire pour enregistrer le vol réservé. Les billets sont ensuite associés par voyageur.</p>
                   </div>
                   <Button
                     type="button"
                     size="sm"
                     variant="ghost"
-                    onClick={() => setFlightDraft((current) => ({ ...current, traveler_ids: participants.map((participant) => participant.id).filter(Boolean) }))}
-                    disabled={participants.length === 0}
+                    onClick={() => {
+                      const ids = participants.map((participant) => participant.id).filter(Boolean);
+                      setFlightDraft((current) => ({ ...current, traveler_ids: ids }));
+                      setFlightTicketTravelerIds(ids);
+                    }}
+                    disabled={participants.length === 0 || flightInputDisabled}
                   >
                     Tout sélectionner
                   </Button>
@@ -1361,29 +1762,70 @@ export default function BookingDetail() {
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2">
                     {participants.map((participant) => {
-                      const name = [participant.first_name, participant.last_name].filter(Boolean).join(" ") || "Voyageur";
+                      const name = participantName(participant);
                       const checked = selectedFlightTravelerSet.has(participant.id);
                       const travelerRow = flightTravelers.find((row) => row.participant_id === participant.id);
+                      const numbers = [
+                        travelerRow?.e_ticket_number,
+                        ...flightTravelerTicketNumbers.filter((row) => row.participant_id === participant.id).map((row) => row.e_ticket_number),
+                      ].filter(Boolean);
+                      const linkedDocs = flightTicketDocumentsWithTravelers.filter((doc) => doc.participant_ids.includes(participant.id));
+                      const travelerStatus = checked
+                        ? numbers.length > 0 || linkedDocs.length > 0
+                          ? "Billet renseigné"
+                          : "Billet manquant"
+                        : "Non associé au PNR";
                       return (
-                        <label key={participant.id} className="flex items-start gap-2 rounded-lg border border-border p-2 text-sm">
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(value) => {
-                              setFlightDraft((current) => {
-                                const currentIds = new Set(current.traveler_ids);
-                                if (value === true) currentIds.add(participant.id);
-                                else currentIds.delete(participant.id);
-                                return { ...current, traveler_ids: Array.from(currentIds) };
-                              });
-                            }}
-                          />
-                          <span>
-                            <span className="block font-medium">{name}</span>
-                            <span className="block text-xs text-muted-foreground">
-                              {[participant.client_type, participant.passport_no, travelerRow?.traveler_status].filter(Boolean).join(" · ") || "Participant"}
+                        <div key={participant.id} className="rounded-lg border border-border p-2 text-sm">
+                          <label className="flex items-start gap-2">
+                            <Checkbox
+                              checked={checked}
+                              disabled={flightInputDisabled}
+                              onCheckedChange={(value) => {
+                                setFlightDraft((current) => {
+                                  const currentIds = new Set(current.traveler_ids);
+                                  if (value === true) currentIds.add(participant.id);
+                                  else currentIds.delete(participant.id);
+                                  return { ...current, traveler_ids: Array.from(currentIds) };
+                                });
+                                setFlightTicketTravelerIds((current) => {
+                                  const next = new Set(current);
+                                  if (value === true) next.add(participant.id);
+                                  else next.delete(participant.id);
+                                  return Array.from(next);
+                                });
+                              }}
+                            />
+                            <span>
+                              <span className="block font-medium">{name}</span>
+                              <span className="block text-xs text-muted-foreground">
+                                {[participant.client_type, participant.passport_no, travelerStatus].filter(Boolean).join(" · ") || "Participant"}
+                              </span>
                             </span>
-                          </span>
-                        </label>
+                          </label>
+                          {checked && (
+                            <div className="mt-2 space-y-2 pl-6">
+                              {numbers.length > 0 && (
+                                <p className="text-xs text-emerald-700">E-ticket : {numbers.join(" · ")}</p>
+                              )}
+                              {linkedDocs.length > 0 && (
+                                <p className="text-xs text-blue-700">PDF associé : {linkedDocs.map((doc) => doc.file_name).join(" · ")}</p>
+                              )}
+                              <div className="flex flex-col gap-2 sm:flex-row">
+                                <Input
+                                  value={ticketNumberDrafts[participant.id] || ""}
+                                  onChange={(event) => setTicketNumberDrafts((current) => ({ ...current, [participant.id]: event.target.value }))}
+                                  placeholder="Ajouter un ou plusieurs e-tickets"
+                                  disabled={flightInputDisabled || !flightReservation?.id}
+                                  className="h-9 text-xs"
+                                />
+                                <Button type="button" size="sm" variant="outline" onClick={() => addTravelerTicketNumber(participant.id)} disabled={flightBusy || flightInputDisabled || !ticketNumberDrafts[participant.id]?.trim()}>
+                                  Ajouter
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -1391,29 +1833,98 @@ export default function BookingDetail() {
               </div>
 
               <div className="rounded-xl border border-border bg-muted/30 p-3">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                  <div className="flex-1">
-                    <Label className="text-xs">Billet PDF</Label>
-                    <Input type="file" accept="application/pdf" onChange={(event) => setFlightTicketFile(event.target.files?.[0] ?? null)} />
-                  </div>
-                  <Button type="button" variant="outline" onClick={uploadFlightTicket} disabled={flightBusy || !flightTicketFile} className="min-h-10">
-                    <Upload className="h-4 w-4" />
-                    Ajouter billet
-                  </Button>
-                  <Button type="button" variant="outline" onClick={openFlightTicket} disabled={!flightDraft.ticket_storage_path && !flightDraft.ticket_document_id} className="min-h-10">
-                    <Download className="h-4 w-4" />
-                    Ouvrir PDF
-                  </Button>
+                <div className="mb-3">
+                  <p className="text-sm font-semibold">Billets PDF</p>
+                  <p className="text-xs text-muted-foreground">Un fichier peut être associé à un ou plusieurs voyageurs. L’original reste inchangé.</p>
                 </div>
-                {(flightDraft.ticket_storage_path || flightDraft.ticket_document_id) && (
-                  <p className="mt-2 text-xs text-emerald-700">Billet PDF lié à cette réservation.</p>
+                {flightTicketDocumentsWithTravelers.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    {flightTicketDocumentsWithTravelers.map((doc) => {
+                      const names = doc.participant_ids
+                        .map((participantId: string) => participantName(participants.find((participant) => participant.id === participantId)))
+                        .filter(Boolean);
+                      return (
+                        <div key={doc.id} className="flex flex-col gap-2 rounded-lg border border-border bg-background p-2 text-xs sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="font-medium text-foreground">{doc.file_name}</p>
+                            <p className="text-muted-foreground">{names.join(" · ") || "Aucun voyageur associé"} · {fmtDateTime(doc.created_at)}</p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button type="button" size="sm" variant="outline" onClick={() => openFlightTicket(doc.storage_path)}>
+                              <Download className="h-4 w-4" />
+                              Ouvrir
+                            </Button>
+                            <Button type="button" size="sm" variant="outline" onClick={() => startReplaceFlightTicket(doc)} disabled={flightBusy || flightInputDisabled}>
+                              <Upload className="h-4 w-4" />
+                              Remplacer
+                            </Button>
+                            <Button type="button" size="sm" variant="ghost" onClick={() => deleteFlightTicketDocument(doc)} disabled={flightBusy || flightInputDisabled}>
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                              Supprimer
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
+                <div className="space-y-3">
+                  {flightTicketReplacingDocId && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                      Remplacement en cours. Le nouveau PDF reprendra les voyageurs sélectionnés ci-dessous.
+                      <Button type="button" variant="link" size="sm" className="h-auto px-2 py-0 text-amber-900" onClick={() => setFlightTicketReplacingDocId(null)}>
+                        Annuler
+                      </Button>
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <Label className="text-xs">{flightTicketReplacingDocId ? "Nouveau billet PDF" : "Ajouter un autre billet"}</Label>
+                    <Input type="file" accept="application/pdf" onChange={(event) => setFlightTicketFile(event.target.files?.[0] ?? null)} disabled={flightInputDisabled} />
+                  </div>
+                  <div>
+                    <p className="mb-2 text-xs font-medium">Voyageurs associés à ce fichier</p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {participants.map((participant) => (
+                        <label key={participant.id} className="flex items-center gap-2 rounded-lg border border-border bg-background p-2 text-xs">
+                          <Checkbox
+                            checked={flightTicketTravelerIds.includes(participant.id)}
+                            disabled={flightInputDisabled || !selectedFlightTravelerSet.has(participant.id)}
+                            onCheckedChange={(value) => {
+                              setFlightTicketTravelerIds((current) => {
+                                const next = new Set(current);
+                                if (value === true) next.add(participant.id);
+                                else next.delete(participant.id);
+                                return Array.from(next);
+                              });
+                            }}
+                          />
+                          {participantName(participant)}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <Button type="button" variant="outline" onClick={analyzeFlightTicketPdf} disabled={flightBusy || flightInputDisabled || !flightTicketFile} className="min-h-10">
+                      <FileSearch className="h-4 w-4" />
+                      Importer les informations depuis le PDF
+                    </Button>
+                    <Button type="button" variant="outline" onClick={uploadFlightTicket} disabled={flightBusy || flightInputDisabled || !flightTicketFile || flightTicketTravelerIds.length === 0} className="min-h-10">
+                      <Upload className="h-4 w-4" />
+                      {flightTicketReplacingDocId ? "Remplacer billet" : "Ajouter billet"}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => openFlightTicket()} disabled={!flightDraft.ticket_storage_path && !flightDraft.ticket_document_id && flightTicketDocumentsWithTravelers.length === 0} className="min-h-10">
+                      <Download className="h-4 w-4" />
+                      Ouvrir PDF historique
+                    </Button>
+                  </div>
+                </div>
               </div>
 
               <div className="grid gap-2 rounded-xl bg-secondary/40 p-3 text-sm sm:grid-cols-3">
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={flightDraft.ticket_sent_to_customer}
+                    disabled={flightInputDisabled}
                     onCheckedChange={(checked) => setFlightDraft((current) => ({ ...current, ticket_sent_to_customer: checked === true }))}
                   />
                   Billet envoyé au client
@@ -1421,12 +1932,13 @@ export default function BookingDetail() {
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={flightDraft.email_sent}
+                    disabled={flightInputDisabled}
                     onCheckedChange={(checked) => setFlightDraft((current) => ({ ...current, email_sent: checked === true }))}
                   />
                   Email envoyé
                 </label>
                 <div className="text-xs text-muted-foreground">
-                  {flightMissing.length > 0 ? `${flightMissing.length} élément(s) requis avant finalisation.` : "Tous les prérequis sont complétés."}
+                  {flightMissing.length > 0 ? `${flightMissing.length} élément(s) requis pour l’étape demandée.` : "Le vol peut être enregistré avec les informations essentielles."}
                 </div>
               </div>
 
@@ -1435,18 +1947,32 @@ export default function BookingDetail() {
                   <Mail className="h-4 w-4" />
                   Relancer maintenant
                 </Button>
-                <Button type="button" variant="outline" onClick={() => saveFlightReservation()} disabled={flightBusy || !canEdit} className="min-h-10">
-                  <Save className="h-4 w-4" />
-                  Enregistrer
-                </Button>
-                <Button type="button" variant="outline" onClick={() => saveFlightReservation("booked")} disabled={flightBusy || !canEdit || flightMissingForBookedAction.length > 0} className="min-h-10">
-                  <Plane className="h-4 w-4" />
-                  Marquer réservé
-                </Button>
-                <Button type="button" onClick={markFlightTicketSent} disabled={flightBusy || !canEdit || flightMissingForFinalAction.length > 0} className="min-h-10">
-                  <TicketCheck className="h-4 w-4" />
-                  Marquer billet envoyé
-                </Button>
+                {flightFieldsReadOnly ? (
+                  <Button type="button" variant="outline" onClick={startFlightEdit} disabled={flightBusy || !canEdit} className="min-h-10">
+                    <Pencil className="h-4 w-4" />
+                    Modifier
+                  </Button>
+                ) : (
+                  <>
+                    {flightEditMode && (
+                      <Button type="button" variant="ghost" onClick={cancelFlightEdit} disabled={flightBusy} className="min-h-10">
+                        Annuler
+                      </Button>
+                    )}
+                    <Button type="button" variant="outline" onClick={() => saveFlightReservation()} disabled={flightBusy || !canEdit} className="min-h-10">
+                      <Save className="h-4 w-4" />
+                      Enregistrer
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => saveFlightReservation("reserved")} disabled={flightBusy || !canEdit || flightMissingForBookedAction.length > 0} className="min-h-10">
+                      <Plane className="h-4 w-4" />
+                      Enregistrer le vol réservé
+                    </Button>
+                    <Button type="button" onClick={markFlightTicketSent} disabled={flightBusy || !canEdit || flightMissingForFinalAction.length > 0} className="min-h-10">
+                      <TicketCheck className="h-4 w-4" />
+                      Marquer billet envoyé
+                    </Button>
+                  </>
+                )}
               </div>
               {flightHistory.length > 0 && (
                 <div className="rounded-xl border border-border bg-secondary/20 p-3">
@@ -1465,6 +1991,78 @@ export default function BookingDetail() {
               )}
             </CardContent>
           </Card>
+
+          <Dialog open={flightImportDialogOpen} onOpenChange={setFlightImportDialogOpen}>
+            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Vérifier les informations détectées</DialogTitle>
+              </DialogHeader>
+              {flightImportPreview ? (
+                <div className="space-y-4 text-sm">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">PNR détecté</p>
+                      <p className="font-semibold">{flightImportPreview.pnr || "Non détecté"}</p>
+                    </div>
+                    <div className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">Compagnie</p>
+                      <p className="font-semibold">{flightImportPreview.airline || "Non détectée"}</p>
+                    </div>
+                    <div className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">Plateforme</p>
+                      <p className="font-semibold">{flightImportPreview.platform || "Non détectée"}</p>
+                    </div>
+                    <div className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">Classe</p>
+                      <p className="font-semibold">{flightImportPreview.bookingClass || "Non détectée"}</p>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Segments / vols</p>
+                    {flightImportPreview.segments.length > 0 ? (
+                      <div className="space-y-1">
+                        {flightImportPreview.segments.map((segment, index) => (
+                          <p key={`${segment.from}-${segment.to}-${index}`} className="font-medium">
+                            {segment.from} → {segment.to}{segment.flight_number ? ` · ${segment.flight_number}` : ""}
+                          </p>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground">{flightImportPreview.flightNumbers.join(" · ") || "Aucun segment structuré détecté"}</p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voyageurs et e-tickets proposés</p>
+                    {flightImportPreview.travelers.length > 0 ? (
+                      <div className="space-y-2">
+                        {flightImportPreview.travelers.map((traveler) => (
+                          <div key={traveler.rawName} className="rounded-md bg-muted/40 p-2">
+                            <p className="font-medium">{traveler.rawName}</p>
+                            <p className="text-xs text-muted-foreground">{traveler.ticketNumbers.join(" · ") || "Aucun numéro détecté"}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground">Aucun voyageur reconnu automatiquement. La correspondance reste manuelle.</p>
+                    )}
+                  </div>
+                  {flightImportPreview.warnings.length > 0 && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                      {flightImportPreview.warnings.map((warning) => (
+                        <p key={warning}>{warning}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Aucune information détectée.</p>
+              )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setFlightImportDialogOpen(false)}>Annuler</Button>
+                <Button type="button" onClick={applyFlightImportPreview} disabled={!flightImportPreview}>Appliquer au brouillon</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <Card className="rounded-2xl shadow-sm">
             <CardHeader className="pb-3">

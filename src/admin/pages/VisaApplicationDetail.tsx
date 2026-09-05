@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ArrowLeft, Download, Eye, FileText, Mail, Pencil, Save } from "lucide-react";
+import { ArrowLeft, Download, Eye, FileText, Mail, Pencil, Save, Search, Unlink } from "lucide-react";
 import { toast } from "sonner";
 import { generateVisaPdf, downloadBlob } from "@/lib/visa-pdf";
 import { generateInvitationLetter, generateGuaranteeLetter } from "@/lib/visa-letters";
@@ -48,6 +49,31 @@ import {
   RETIRED_NOT_APPLICABLE,
 } from "@/lib/visa-format";
 import { visaTripDatesFromTrip } from "@/lib/visa-trip-dates";
+import {
+  createStampedFlightTicketPdf,
+  downloadBytes,
+  flightTicketVisaFilename,
+  getFlightTicketStatus,
+  participantFullName,
+} from "@/admin/lib/flight-tickets";
+import { loadOperationalRoomingForTrip } from "@/admin/lib/operational-rooming";
+import {
+  buildGuestFromParticipant,
+  buildHotelConfirmationRoom,
+  buildHotelDocumentReference,
+  buildHotelGroupReference,
+  generateHotelReservationConfirmationPdf,
+  getHotelConfirmationRooms,
+  HOTEL_GROUP_RESERVATION_NAME,
+  hotelConfirmationDataHash,
+  isHotelProvisional,
+  nightsBetween,
+  sanitizeHotelReservationFilename,
+  sanitizeHotelReservationsZipFilename,
+  validateHotelConfirmationDraft,
+  VISA_HOTEL_CONFIRMATION_DOCUMENT_TYPE,
+  type HotelConfirmationDraft,
+} from "@/lib/visa-hotel-reservation-pdf";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -61,6 +87,14 @@ const STATUS_LABEL: Record<string, string> = {
   approved: "Approuvée",
   rejected: "Rejetée",
   completed: "Terminée",
+};
+
+const VISA_SUBMISSION_BATCH_STATUS_LABEL: Record<string, string> = {
+  draft: "Brouillon",
+  generated: "Généré",
+  submitted: "Déposé",
+  needs_completion: "À compléter",
+  cancelled: "Annulé",
 };
 
 const normalizeMatchText = (value: unknown) =>
@@ -87,6 +121,139 @@ type TravelContext = {
   participants?: any[];
   agency?: AgencySettings | null;
 };
+
+type VisaFlightTicket = {
+  flight: any;
+  traveler: any | null;
+  participant: any | null;
+  bookingReference: string | null;
+  participantName: string;
+  storagePath: string;
+  fileName?: string | null;
+  createdAt: string | null;
+};
+
+type VisaBookingAssociation = {
+  booking: any | null;
+  participant: any | null;
+};
+
+type VisaAssociationSuggestion = {
+  booking: any;
+  participant: any;
+  confidence: "exact" | "probable" | "check";
+  reason: string;
+};
+
+type VisaHotelConfirmationItem = {
+  hotel: any;
+  stayIndex: number;
+  stayLabel: string;
+  isRepeatedHotelStayName: boolean;
+  groupReservation: any | null;
+  document: any | null;
+  draft: HotelConfirmationDraft;
+  dataHash: string;
+  errors: string[];
+  status: "missing" | "ready" | "generated" | "needs_regeneration";
+  diagnostics: {
+    totalTripParticipants: number;
+    assignedParticipants: number;
+    roomCount: number;
+    completeRoomCount: number;
+    freePlaces: number;
+    emptyRoomCount: number;
+    applicantRoomLabel: string | null;
+  };
+};
+
+const maskPassportNo = (value: unknown) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "—";
+  if (raw.length <= 4) return "••••";
+  return `${raw.slice(0, 2)}••••${raw.slice(-2)}`;
+};
+
+const bookingTrip = (booking: any) => {
+  if (Array.isArray(booking?.trips)) return booking.trips[0] ?? null;
+  return booking?.trips ?? booking?.trip ?? null;
+};
+
+const bookingLabel = (booking: any) => {
+  const trip = bookingTrip(booking);
+  return [booking?.reference, trip?.title].filter(Boolean).join(" · ") || booking?.id || "Réservation";
+};
+
+const isUuid = (value: unknown) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? ""));
+
+const isMissingTableError = (error: any, tableName: string) =>
+  Boolean(error?.message && new RegExp(`${tableName}|schema cache|Could not find the table`, "i").test(error.message));
+
+const isActiveTravelParticipant = (participant: any) => {
+  const status = String(participant?.status ?? participant?.booking_status ?? "").toLowerCase();
+  return !["cancelled", "canceled", "deleted", "archived", "removed", "retired"].includes(status);
+};
+
+const normalizedHotelStayName = (hotel: any) =>
+  String(hotel?.official_name ?? hotel?.name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const hotelConfirmationStatusLabel: Record<VisaHotelConfirmationItem["status"], string> = {
+  missing: "Données manquantes",
+  ready: "Prête à générer",
+  generated: "Générée",
+  needs_regeneration: "À régénérer",
+};
+
+const hotelConfirmationStatusClass: Record<VisaHotelConfirmationItem["status"], string> = {
+  missing: "border-red-200 bg-red-50 text-red-900",
+  ready: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  generated: "border-sky-200 bg-sky-50 text-sky-900",
+  needs_regeneration: "border-orange-200 bg-orange-50 text-orange-900",
+};
+
+const associationParticipantStatusLabel = (participant: any) =>
+  participant?.status ||
+  participant?.client_type ||
+  (participant?.is_lead ? "Responsable" : "Participant");
+
+const logAssociationParticipantsError = (error: any, bookingId: unknown) => {
+  if (!import.meta.env.DEV) return;
+  console.warn("[visa-association] participants load failed", {
+    booking_id: bookingId || null,
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  });
+};
+
+async function loadVisaSubmissionHistory(visaApplicationId: string) {
+  const { data: items, error } = await (supabase as any)
+    .from("visa_group_submission_items")
+    .select("*")
+    .eq("visa_application_id", visaApplicationId)
+    .order("created_at", { ascending: false });
+  if (isMissingTableError(error, "visa_group_submission_items")) return [];
+  if (error) throw error;
+  const itemRows = items ?? [];
+  const batchIds = Array.from(new Set(itemRows.map((item: any) => item.batch_id).filter(Boolean)));
+  if (!batchIds.length) return [];
+  const { data: batches, error: batchError } = await (supabase as any)
+    .from("visa_group_submission_batches")
+    .select("*")
+    .in("id", batchIds);
+  if (isMissingTableError(batchError, "visa_group_submission_batches")) return [];
+  if (batchError) throw batchError;
+  const batchById = new Map((batches ?? []).map((batch: any) => [batch.id, batch]));
+  return itemRows.map((item: any) => ({
+    item,
+    batch: batchById.get(item.batch_id) ?? null,
+  })).filter((row: any) => row.batch);
+}
 
 type DraftInputProps = {
   draft: any;
@@ -221,11 +388,429 @@ async function loadTravelContextForTrip(tripId: string | null | undefined, parti
   return ctx;
 }
 
+async function loadVisaBookingAssociation(appRow: any): Promise<VisaBookingAssociation> {
+  const [bookingRes, participantRes] = await Promise.all([
+    appRow?.booking_id
+      ? supabase
+        .from("bookings")
+        .select("id,reference,status,contact_name,contact_email,trip_id,trips(id,title,start_date,end_date)")
+        .eq("id", appRow.booking_id)
+        .maybeSingle()
+      : Promise.resolve({ data: null } as any),
+    appRow?.booking_participant_id
+      ? supabase
+        .from("booking_participants")
+        .select("*")
+        .eq("id", appRow.booking_participant_id)
+        .maybeSingle()
+      : Promise.resolve({ data: null } as any),
+  ]);
+
+  return {
+    booking: bookingRes.data ?? null,
+    participant: participantRes.data ?? null,
+  };
+}
+
+async function resolveFlightTicketStoragePaths(flight: any, bookingId: string, participantId?: string | null) {
+  if (flight?.id && participantId) {
+    const { data: links, error: linkError } = await (supabase as any)
+      .from("booking_flight_ticket_document_travelers")
+      .select("flight_ticket_document_id")
+      .eq("flight_reservation_id", flight.id)
+      .eq("participant_id", participantId);
+
+    if (linkError && !/booking_flight_ticket_document_travelers|schema cache|Could not find the table/i.test(linkError.message ?? "")) {
+      console.warn("[visa-flight-ticket] participant ticket links unavailable", linkError);
+    }
+
+    const documentIds = Array.from(new Set((links ?? []).map((row: any) => row.flight_ticket_document_id).filter(Boolean)));
+    if (documentIds.length > 0) {
+      const { data: ticketDocs, error: docsError } = await (supabase as any)
+        .from("booking_flight_ticket_documents")
+        .select("id,storage_path,file_name,created_at,updated_at")
+        .in("id", documentIds)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false });
+
+      if (docsError && !/booking_flight_ticket_documents|schema cache|Could not find the table/i.test(docsError.message ?? "")) {
+        console.warn("[visa-flight-ticket] participant ticket docs unavailable", docsError);
+      }
+
+      const resolved = (ticketDocs ?? [])
+        .filter((doc: any) => doc.storage_path)
+        .map((doc: any) => ({
+          storagePath: doc.storage_path,
+          fileName: doc.file_name ?? null,
+          createdAt: doc.created_at ?? doc.updated_at ?? flight?.updated_at ?? null,
+        }));
+      if (resolved.length > 0) return resolved;
+    }
+  }
+
+  if (flight?.ticket_storage_path) {
+    return [{
+      storagePath: flight.ticket_storage_path,
+      fileName: null,
+      createdAt: flight.ticket_uploaded_at ?? flight.updated_at ?? null,
+    }];
+  }
+
+  if (flight?.ticket_document_id) {
+    const { data } = await supabase
+      .from("booking_documents" as any)
+      .select("id,storage_path,created_at,updated_at")
+      .eq("id", flight.ticket_document_id)
+      .maybeSingle();
+    if ((data as any)?.storage_path) {
+      return [{
+        storagePath: (data as any).storage_path,
+        fileName: null,
+        createdAt: (data as any).created_at ?? (data as any).updated_at ?? flight.updated_at ?? null,
+      }];
+    }
+  }
+
+  const { data: docs } = await supabase
+    .from("booking_documents" as any)
+    .select("id,storage_path,created_at,updated_at,document_type,kind")
+    .eq("booking_id", bookingId)
+    .or("document_type.eq.flight_ticket,kind.eq.billet_avion")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  const doc = docs?.[0] as any;
+  if (doc?.storage_path) {
+    return [{
+      storagePath: doc.storage_path,
+      fileName: null,
+      createdAt: doc.created_at ?? doc.updated_at ?? flight?.updated_at ?? null,
+    }];
+  }
+
+  return [];
+}
+
+async function loadVisaFlightTickets(appRow: any, participants: any[] = [], explicitParticipant?: any | null): Promise<VisaFlightTicket[]> {
+  if (!appRow?.booking_id) {
+    return [];
+  }
+
+  const subjectParticipant =
+    explicitParticipant ??
+    (appRow.booking_participant_id
+      ? participants.find((participant: any) => participant.id === appRow.booking_participant_id)
+      : null) ??
+    participants.find((participant: any) => participant.booking_id === appRow.booking_id && participant.is_subject) ??
+    participants.find((participant: any) =>
+      participant.booking_id === appRow.booking_id &&
+      appRow.passport_no &&
+      participant.passport_no &&
+      normalizePassportNo(participant.passport_no) === normalizePassportNo(appRow.passport_no)
+    ) ??
+    participants.find((participant: any) =>
+      participant.booking_id === appRow.booking_id &&
+      appRow.residential_email &&
+      participant.email &&
+      String(participant.email).trim().toLowerCase() === String(appRow.residential_email).trim().toLowerCase()
+    ) ??
+    null;
+
+  const [{ data: booking }, { data: flights, error: flightError }] = await Promise.all([
+    supabase.from("bookings").select("id,reference").eq("id", appRow.booking_id).maybeSingle(),
+    (supabase as any)
+      .from("booking_flight_reservations")
+      .select("*")
+      .eq("booking_id", appRow.booking_id)
+      .neq("status", "cancelled")
+      .order("updated_at", { ascending: false }),
+  ]);
+
+  if (flightError || !flights?.length) {
+    return [];
+  }
+  const flightIds = flights.map((flight: any) => flight.id).filter(Boolean);
+  let traveler: any | null = null;
+
+  if (subjectParticipant?.id && flightIds.length > 0) {
+    const { data: travelerRows } = await (supabase as any)
+      .from("booking_flight_travelers")
+      .select("*")
+      .in("flight_reservation_id", flightIds)
+      .eq("participant_id", subjectParticipant.id)
+      .neq("traveler_status", "cancelled")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    traveler = travelerRows?.[0] ?? null;
+  }
+
+  if (!subjectParticipant?.id) {
+    return [];
+  }
+
+  const flight = traveler
+    ? flights.find((row: any) => row.id === traveler.flight_reservation_id)
+    : flights[0];
+  const resolvedTickets = await resolveFlightTicketStoragePaths(flight, appRow.booking_id, subjectParticipant.id);
+  if (!flight || resolvedTickets.length === 0) {
+    return [];
+  }
+
+  return resolvedTickets.map((ticket) => ({
+    flight,
+    traveler,
+    participant: subjectParticipant,
+    bookingReference: (booking as any)?.reference ?? null,
+    participantName: subjectParticipant ? participantFullName(subjectParticipant) : [appRow.given_names, appRow.surname].filter(Boolean).join(" ") || "Participant",
+    storagePath: ticket.storagePath,
+    fileName: ticket.fileName,
+    createdAt: ticket.createdAt,
+  }));
+}
+
+const ilikeTerm = (value: unknown) =>
+  `%${String(value ?? "").replace(/[%_,]/g, " ").trim()}%`;
+
+async function loadVisaAssociationSuggestions(appRow: any): Promise<VisaAssociationSuggestion[]> {
+  const candidates = new Map<string, VisaAssociationSuggestion>();
+  const addRows = (rows: any[] | null | undefined, confidence: VisaAssociationSuggestion["confidence"], reason: string) => {
+    for (const row of rows ?? []) {
+      if (!row?.id || !row?.booking_id) continue;
+      const current = candidates.get(row.id);
+      if (current && current.confidence === "exact") continue;
+      candidates.set(row.id, {
+        booking: null,
+        participant: row,
+        confidence,
+        reason,
+      } as any);
+    }
+  };
+
+  const passport = String(appRow?.passport_no ?? "").trim();
+  const email = String(appRow?.residential_email ?? "").trim();
+  const surname = String(appRow?.surname ?? "").trim();
+  const givenNames = String(appRow?.given_names ?? "").trim();
+
+  if (passport) {
+    const { data } = await supabase
+      .from("booking_participants")
+      .select("*")
+      .ilike("passport_no", passport);
+    addRows(data as any[], "exact", "Passeport exact");
+  }
+
+  if (email) {
+    const { data } = await supabase
+      .from("booking_participants")
+      .select("*")
+      .ilike("email", email);
+    addRows(data as any[], "exact", "Email exact");
+  }
+
+  if (surname || givenNames) {
+    const query = [surname, givenNames].filter(Boolean).join(" ");
+    const { data } = await supabase
+      .from("booking_participants")
+      .select("*")
+      .or(`first_name.ilike.${ilikeTerm(query)},last_name.ilike.${ilikeTerm(query)}`)
+      .limit(10);
+    addRows(data as any[], "check", "Nom à vérifier");
+  }
+
+  const bookingIds = Array.from(new Set(Array.from(candidates.values()).map((candidate) => candidate.participant.booking_id).filter(Boolean)));
+  if (!bookingIds.length) return [];
+
+  const { data: bookings } = await supabase
+    .from("bookings")
+    .select("id,reference,status,contact_name,contact_email,trip_id,trips(id,title,start_date,end_date)")
+    .in("id", bookingIds);
+  const bookingById = new Map((bookings ?? []).map((booking: any) => [booking.id, booking]));
+
+  return Array.from(candidates.values())
+    .map((candidate) => ({
+      ...candidate,
+      booking: bookingById.get(candidate.participant.booking_id) ?? null,
+    }))
+    .filter((candidate) => candidate.booking)
+    .slice(0, 5);
+}
+
+async function loadBookingParticipantsForAssociation(bookingId: string) {
+  return supabase
+    .from("booking_participants")
+    .select("*")
+    .eq("booking_id", bookingId)
+    .order("is_lead", { ascending: false })
+    .order("created_at", { ascending: true });
+}
+
+async function buildVisaHotelConfirmationItems(
+  appRow: any,
+  ctx: TravelContext,
+  association: VisaBookingAssociation,
+): Promise<VisaHotelConfirmationItem[]> {
+  const trip = ctx.trip;
+  const hotels = (ctx.hotels ?? []).filter((hotel: any) => hotel?.id);
+  if (!appRow?.id || !trip?.id || !association.booking?.id || !association.participant?.id || hotels.length === 0) {
+    return [];
+  }
+
+  const hotelIds = hotels.map((hotel: any) => hotel.id);
+  const [{ data: groupRows, error: groupError }, { data: docRows, error: docError }, roomingData] = await Promise.all([
+    (supabase as any)
+      .from("visa_hotel_group_reservations")
+      .select("*")
+      .eq("trip_id", trip.id)
+      .in("trip_hotel_id", hotelIds)
+      .neq("reservation_status", "cancelled"),
+    (supabase as any)
+      .from("visa_hotel_confirmation_documents")
+      .select("*")
+      .eq("visa_application_id", appRow.id)
+      .eq("is_current", true)
+      .neq("status", "cancelled"),
+    loadOperationalRoomingForTrip(trip.id),
+  ]);
+
+  if (isMissingTableError(groupError, "visa_hotel_group_reservations") || isMissingTableError(docError, "visa_hotel_confirmation_documents")) {
+    throw new Error("Les tables de confirmations hôtel ne sont pas encore disponibles. Appliquez la migration visa_hotel_reservation_confirmations dans Lovable.");
+  }
+  if (groupError) throw groupError;
+  if (docError) throw docError;
+
+  const groupsByHotel = new Map((groupRows ?? []).map((row: any) => [`${row.trip_hotel_id}:${row.check_in}:${row.check_out}`, row]));
+  const docsByHotel = new Map((docRows ?? []).map((row: any) => [row.trip_hotel_id, row]));
+  const stayByHotelId = new Map((roomingData.stays ?? []).map((stay: any) => [stay.hotel.id, stay]));
+  const hotelNameCounts = hotels.reduce((counts, hotel: any) => {
+    const key = normalizedHotelStayName(hotel) || String(hotel.id);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    return counts;
+  }, new Map<string, number>());
+  const hotelNameSequences = new Map<string, number>();
+
+  return hotels.map((hotel: any, index: number) => {
+    const stayNameKey = normalizedHotelStayName(hotel) || String(hotel.id);
+    const sameNameCount = hotelNameCounts.get(stayNameKey) ?? 1;
+    const stayNameSequence = (hotelNameSequences.get(stayNameKey) ?? 0) + 1;
+    hotelNameSequences.set(stayNameKey, stayNameSequence);
+    const stayLabel = `Séjour ${sameNameCount > 1 ? stayNameSequence : index + 1}`;
+    const stay = stayByHotelId.get(hotel.id) ?? null;
+    const groupReference = buildHotelGroupReference(trip, hotel, index);
+    const group = groupsByHotel.get(`${hotel.id}:${hotel.check_in}:${hotel.check_out}`) ?? null;
+    const documentReference = buildHotelDocumentReference(group?.group_reservation_reference ?? groupReference, appRow.id, hotel.id);
+    const rooms = stay?.rooms ?? [];
+    const confirmationRooms = rooms.map((roomModel: any) => {
+      const roomGuests = roomModel.occupants.map((occupant: any) => buildGuestFromParticipant(occupant.participant, association.participant.id, {
+        ...roomModel.room,
+        room_number: `Room ${roomModel.roomOrder}`,
+      }));
+    return buildHotelConfirmationRoom(
+        roomModel.room.id,
+        `Room ${roomModel.roomOrder}`,
+        roomModel.room,
+        roomGuests,
+      );
+    });
+    const guests = confirmationRooms.flatMap((room) => room.guests);
+    const applicantRoom = rooms.find((roomModel: any) =>
+      roomModel.occupants.some((occupant: any) => occupant.participant?.id === association.participant.id)
+    ) ?? null;
+    const draft: HotelConfirmationDraft = {
+      documentReference,
+      groupReservationReference: group?.group_reservation_reference ?? groupReference,
+      groupReservationName: group?.group_reservation_name ?? HOTEL_GROUP_RESERVATION_NAME,
+      issueDate: new Date().toISOString().slice(0, 10),
+      reservationStatus: group?.reservation_status ?? hotel.confirmation_status ?? "confirmed",
+      hotelName: hotel.official_name ?? hotel.name ?? "",
+      hotelAddress: hotel.address ?? "",
+      hotelCity: hotel.city ?? null,
+      hotelPrefecture: hotel.prefecture ?? hotel.metadata?.prefecture ?? null,
+      hotelPhone: hotel.phone ?? "",
+      hotelEmail: hotel.email ?? hotel.metadata?.email ?? null,
+      hotelWebsite: hotel.website ?? hotel.metadata?.website ?? null,
+      japanesePartner: group?.partner_name ?? hotel.partner_name ?? hotel.metadata?.partner_name ?? null,
+      japanesePartnerAddress: group?.metadata?.partner_address ?? hotel.partner_address ?? hotel.metadata?.partner_address ?? null,
+      japanesePartnerPhone: group?.metadata?.partner_phone ?? hotel.partner_phone ?? hotel.metadata?.partner_phone ?? null,
+      supplierReference: group?.supplier_reference ?? hotel.supplier_reference ?? hotel.metadata?.supplier_reference ?? null,
+      checkIn: hotel.check_in ?? "",
+      checkOut: hotel.check_out ?? "",
+      nights: nightsBetween(hotel.check_in, hotel.check_out),
+      numberOfRooms: rooms.length || hotel.room_count || null,
+      roomTypes: Array.from(new Set(rooms.map((roomModel: any) => roomModel.room.room_type).filter(Boolean))).join(", ") || hotel.room_type || null,
+      mealPlan: hotel.board_basis ?? hotel.meal_plan ?? hotel.metadata?.meal_plan ?? null,
+      paymentStatus: hotel.payment_status ?? hotel.metadata?.payment_status ?? null,
+      applicantParticipantId: association.participant.id,
+      applicantName: participantFullName(association.participant),
+      bookingReference: association.booking?.reference ?? null,
+      tripTitle: trip.title ?? null,
+      guests,
+      rooms: confirmationRooms,
+      roomingMissing: rooms.length === 0,
+      agency: ctx.agency ?? null,
+    };
+    let errors = validateHotelConfirmationDraft(draft);
+    if (!stay) {
+      errors = ["Mauvaise correspondance d’hôtel: ce séjour n’existe pas dans la rooming list opérationnelle.", ...errors];
+    } else if (rooms.length === 0) {
+      errors = ["Rooming list absente pour cet hôtel.", ...errors];
+    } else {
+      const emptyRooms = rooms.filter((roomModel: any) => roomModel.occupiedCount === 0);
+      if (emptyRooms.length) {
+        errors = [
+          ...emptyRooms.map((roomModel: any) => `Chambre ${roomModel.roomOrder} sans occupant.`),
+          ...errors,
+        ];
+      }
+      if (!guests.length) {
+        errors = ["Rooming list créée mais vide pour cet hôtel.", ...errors];
+      }
+      if (!applicantRoom) {
+        errors = ["Le demandeur du visa n’est affecté à aucune chambre pour ce séjour.", ...errors];
+      }
+    }
+    if (isHotelProvisional(hotel)) {
+      errors = [`Hôtel provisoire ou similaire non accepté pour ${hotel.name}. Confirmez l'hôtel définitif avant génération.`, ...errors];
+    }
+    const dataHash = hotelConfirmationDataHash(draft);
+    const document = docsByHotel.get(hotel.id) ?? null;
+    const status: VisaHotelConfirmationItem["status"] = errors.length
+      ? "missing"
+      : document
+        ? document.data_hash && document.data_hash !== dataHash
+          ? "needs_regeneration"
+          : "generated"
+        : "ready";
+    return {
+      hotel,
+      stayIndex: index,
+      stayLabel,
+      isRepeatedHotelStayName: sameNameCount > 1,
+      groupReservation: group,
+      document,
+      draft,
+      dataHash,
+      errors: Array.from(new Set(errors)),
+      status,
+      diagnostics: {
+        totalTripParticipants: stay?.diagnostics.totalTripParticipants ?? roomingData.participants.length,
+        assignedParticipants: stay?.diagnostics.assignedParticipants ?? 0,
+        roomCount: stay?.diagnostics.roomCount ?? 0,
+        completeRoomCount: stay?.diagnostics.completeRoomCount ?? 0,
+        freePlaces: stay?.diagnostics.freePlaces ?? 0,
+        emptyRoomCount: stay?.diagnostics.emptyRoomCount ?? 0,
+        applicantRoomLabel: applicantRoom ? `Chambre ${applicantRoom.roomOrder}` : null,
+      },
+    };
+  });
+}
+
 export default function VisaApplicationDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const [app, setApp] = useState<any | null>(null);
   const [docs, setDocs] = useState<any[]>([]);
+  const [visaFlightTickets, setVisaFlightTickets] = useState<VisaFlightTicket[]>([]);
   const [settings, setSettings] = useState<any | null>(null);
   const [checklists, setChecklists] = useState<any[]>([]);
   const [trips, setTrips] = useState<any[]>([]);
@@ -238,6 +823,22 @@ export default function VisaApplicationDetail() {
   const [preview, setPreview] = useState<null | "visa" | "invitation" | "guarantee" | "programme" | "confirmation">(null);
   const [visaProgramV2Open, setVisaProgramV2Open] = useState(false);
   const [visaProgramV2Draft, setVisaProgramV2Draft] = useState<VisaProgramV2Draft | null>(null);
+  const [visaAssociation, setVisaAssociation] = useState<VisaBookingAssociation>({ booking: null, participant: null });
+  const [hotelConfirmations, setHotelConfirmations] = useState<VisaHotelConfirmationItem[]>([]);
+  const [hotelConfirmationsWarning, setHotelConfirmationsWarning] = useState<string | null>(null);
+  const [hotelPreview, setHotelPreview] = useState<VisaHotelConfirmationItem | null>(null);
+  const [submissionHistory, setSubmissionHistory] = useState<any[]>([]);
+  const [associationDialogOpen, setAssociationDialogOpen] = useState(false);
+  const [associationSearch, setAssociationSearch] = useState("");
+  const [associationSearchBusy, setAssociationSearchBusy] = useState(false);
+  const [associationResults, setAssociationResults] = useState<any[]>([]);
+  const [associationParticipants, setAssociationParticipants] = useState<any[]>([]);
+  const [associationParticipantsLoading, setAssociationParticipantsLoading] = useState(false);
+  const [associationParticipantsError, setAssociationParticipantsError] = useState<string | null>(null);
+  const [selectedAssociationBooking, setSelectedAssociationBooking] = useState<any | null>(null);
+  const [selectedAssociationParticipantId, setSelectedAssociationParticipantId] = useState<string>("");
+  const [associationSaving, setAssociationSaving] = useState(false);
+  const [associationSuggestions, setAssociationSuggestions] = useState<VisaAssociationSuggestion[]>([]);
 
   useEffect(() => {
     Promise.all([
@@ -260,17 +861,60 @@ export default function VisaApplicationDetail() {
           .select("id, trip_id")
           .eq("id", appRow.booking_id)
           .maybeSingle();
-        const { data: participantRows } = await supabase
-          .from("booking_participants")
-          .select("first_name,last_name,passport_no")
-          .eq("booking_id", appRow.booking_id)
-          .order("created_at");
         nextBookingTripId = (booking as any)?.trip_id ?? null;
-        participants = participantRows ?? [];
+        if (nextBookingTripId) {
+          const { data: activeBookings } = await supabase
+            .from("bookings")
+            .select("id,status,created_at")
+            .eq("trip_id", nextBookingTripId)
+            .in("status", ["lead", "confirmed", "paid", "completed"])
+            .order("created_at");
+          const bookingIds = (activeBookings ?? []).map((row: any) => row.id);
+          if (bookingIds.length) {
+            const bookingOrder = new Map(bookingIds.map((bookingId: string, index: number) => [bookingId, index]));
+            const { data: participantRows } = await supabase
+              .from("booking_participants")
+              .select("*")
+              .in("booking_id", bookingIds)
+              .order("created_at");
+            const seen = new Set<string>();
+            participants = (participantRows ?? [])
+              .map((participant: any) => {
+                const isSubject = Boolean(
+                  (appRow.client_id && participant.client_id === appRow.client_id) ||
+                  (appRow.passport_no && participant.passport_no && normalizePassportNo(participant.passport_no) === normalizePassportNo(appRow.passport_no)) ||
+                  (appRow.residential_email && participant.email && String(participant.email).trim().toLowerCase() === String(appRow.residential_email).trim().toLowerCase())
+                );
+                return {
+                  ...participant,
+                  is_subject: isSubject,
+                  source_order: bookingOrder.get(participant.booking_id) ?? 9999,
+                };
+              })
+              .filter((participant: any) => {
+                const key = participant.id || (participant.client_id ? `client:${participant.client_id}` : null) || `${participant.booking_id}:${participant.first_name}:${participant.last_name}:${participant.passport_no}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              })
+              .sort((a: any, b: any) => (a.source_order - b.source_order) || String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")) || `${a.last_name} ${a.first_name}`.localeCompare(`${b.last_name} ${b.first_name}`));
+          }
+        }
       }
 
+      const association = await loadVisaBookingAssociation(appRow);
+      const submissions = await loadVisaSubmissionHistory(appRow.id);
       const effectiveTravelTripId = documentTripId || nextBookingTripId;
       const ctx = await loadTravelContextForTrip(effectiveTravelTripId, participants, agency);
+      const flightTickets = await loadVisaFlightTickets(appRow, participants, association.participant);
+      const suggestions = appRow.booking_participant_id ? [] : await loadVisaAssociationSuggestions(appRow);
+      let hotels: VisaHotelConfirmationItem[] = [];
+      let hotelWarning: string | null = null;
+      try {
+        hotels = await buildVisaHotelConfirmationItems(appRow, ctx, association);
+      } catch (error: any) {
+        hotelWarning = error?.message ?? "Impossible de charger les confirmations d’hôtel.";
+      }
 
       if (ctx.trip) {
           const visaTripDates = visaTripDatesFromTrip(ctx.trip);
@@ -290,6 +934,12 @@ export default function VisaApplicationDetail() {
 
       setApp(appRow);
       setDocs(d.data ?? []);
+      setVisaFlightTickets(flightTickets);
+      setVisaAssociation(association);
+      setHotelConfirmations(hotels);
+      setHotelConfirmationsWarning(hotelWarning);
+      setAssociationSuggestions(suggestions);
+      setSubmissionHistory(submissions);
       setSettings(s.data);
       setChecklists(c.data ?? []);
       setTrips(t.data ?? []);
@@ -298,6 +948,183 @@ export default function VisaApplicationDetail() {
       setTravelCtx(ctx);
     });
   }, [id, nav]);
+
+  const refreshVisaAssociation = async (nextApp: any, participants: any[] = travelCtx.participants ?? []) => {
+    const association = await loadVisaBookingAssociation(nextApp);
+    const flightTickets = await loadVisaFlightTickets(nextApp, participants, association.participant);
+    const suggestions = nextApp.booking_participant_id ? [] : await loadVisaAssociationSuggestions(nextApp);
+    let hotels: VisaHotelConfirmationItem[] = [];
+    let hotelWarning: string | null = null;
+    try {
+      hotels = await buildVisaHotelConfirmationItems(nextApp, travelCtx, association);
+    } catch (error: any) {
+      hotelWarning = error?.message ?? "Impossible de charger les confirmations d’hôtel.";
+    }
+    setVisaAssociation(association);
+    setVisaFlightTickets(flightTickets);
+    setHotelConfirmations(hotels);
+    setHotelConfirmationsWarning(hotelWarning);
+    setAssociationSuggestions(suggestions);
+  };
+
+  const loadAssociationParticipants = async (booking: any) => {
+    setSelectedAssociationBooking(booking);
+    setSelectedAssociationParticipantId("");
+    setAssociationParticipants([]);
+    setAssociationParticipantsError(null);
+    const bookingId = booking?.id;
+    if (!bookingId || !isUuid(bookingId)) {
+      setAssociationParticipantsError("Identifiant interne de réservation manquant ou invalide.");
+      return false;
+    }
+
+    setAssociationParticipantsLoading(true);
+    const { data, error } = await loadBookingParticipantsForAssociation(bookingId);
+    setAssociationParticipantsLoading(false);
+    if (error) {
+      logAssociationParticipantsError(error, bookingId);
+      setAssociationParticipantsError("Les participants n’ont pas pu être chargés.");
+      setAssociationParticipants([]);
+      return false;
+    }
+    const seen = new Set<string>();
+    const participants = (data ?? []).filter((participant: any) => {
+      if (!participant?.id || seen.has(participant.id)) return false;
+      seen.add(participant.id);
+      return isActiveTravelParticipant(participant);
+    });
+    setAssociationParticipants(participants);
+    return true;
+  };
+
+  const searchAssociationBookings = async (searchValue = associationSearch) => {
+    const term = searchValue.trim();
+    setAssociationSearchBusy(true);
+    try {
+      const bookingMap = new Map<string, any>();
+      const addBookings = (rows: any[] | null | undefined) => {
+        for (const row of rows ?? []) {
+          if (row?.id) bookingMap.set(row.id, row);
+        }
+      };
+      const bookingSelect = "id,reference,status,contact_name,contact_email,trip_id,created_at,trips(id,title,start_date,end_date)";
+
+      let recentQuery = supabase
+        .from("bookings")
+        .select(bookingSelect)
+        .order("created_at", { ascending: false })
+        .limit(25);
+      if (term) {
+        recentQuery = recentQuery.or(`reference.ilike.${ilikeTerm(term)},contact_name.ilike.${ilikeTerm(term)},contact_email.ilike.${ilikeTerm(term)}`);
+      }
+      const { data: bookingRows, error: bookingError } = await recentQuery;
+      if (bookingError) throw bookingError;
+      addBookings(bookingRows as any[]);
+
+      if (term) {
+        const { data: participantRows } = await supabase
+          .from("booking_participants")
+          .select("booking_id")
+          .or(`first_name.ilike.${ilikeTerm(term)},last_name.ilike.${ilikeTerm(term)},email.ilike.${ilikeTerm(term)},passport_no.ilike.${ilikeTerm(term)}`)
+          .limit(50);
+        const participantBookingIds = Array.from(new Set((participantRows ?? []).map((row: any) => row.booking_id).filter(Boolean)));
+        if (participantBookingIds.length) {
+          const { data } = await supabase
+            .from("bookings")
+            .select(bookingSelect)
+            .in("id", participantBookingIds);
+          addBookings(data as any[]);
+        }
+
+        const { data: tripRows } = await supabase
+          .from("trips")
+          .select("id")
+          .ilike("title", ilikeTerm(term))
+          .limit(25);
+        const tripIds = (tripRows ?? []).map((row: any) => row.id).filter(Boolean);
+        if (tripIds.length) {
+          const { data } = await supabase
+            .from("bookings")
+            .select(bookingSelect)
+            .in("trip_id", tripIds)
+            .limit(50);
+          addBookings(data as any[]);
+        }
+      }
+
+      const results = Array.from(bookingMap.values())
+        .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
+        .slice(0, 30);
+      setAssociationResults(results);
+    } catch (error: any) {
+      toast.error(`Recherche impossible: ${error?.message ?? "erreur inconnue"}`);
+    } finally {
+      setAssociationSearchBusy(false);
+    }
+  };
+
+  const openAssociationDialog = async () => {
+    setAssociationDialogOpen(true);
+    const defaultSearch = app?.reference || app?.passport_no || app?.residential_email || [app?.surname, app?.given_names].filter(Boolean).join(" ");
+    setAssociationSearch(defaultSearch ?? "");
+    setAssociationResults([]);
+    setAssociationParticipants([]);
+    setAssociationParticipantsError(null);
+    setAssociationParticipantsLoading(false);
+    setSelectedAssociationBooking(null);
+    setSelectedAssociationParticipantId("");
+    await searchAssociationBookings(defaultSearch ?? "");
+  };
+
+  const confirmAssociation = async () => {
+    if (!app?.id || !selectedAssociationBooking?.id || !selectedAssociationParticipantId) {
+      toast.error("Sélectionnez une réservation puis le participant exact.");
+      return;
+    }
+    const selectedParticipant = associationParticipants.find((participant) => participant.id === selectedAssociationParticipantId);
+    if (!selectedParticipant || selectedParticipant.booking_id !== selectedAssociationBooking.id) {
+      toast.error("Le participant sélectionné n’appartient pas à cette réservation.");
+      return;
+    }
+
+    setAssociationSaving(true);
+    const patch = {
+      booking_id: selectedAssociationBooking.id,
+      booking_participant_id: selectedAssociationParticipantId,
+    };
+    const { data, error } = await supabase
+      .from("visa_applications")
+      .update(patch as any)
+      .eq("id", app.id)
+      .select("*")
+      .maybeSingle();
+    setAssociationSaving(false);
+    if (error) return toast.error(error.message);
+    const nextApp = data ?? { ...app, ...patch };
+    setApp(nextApp);
+    setBookingTripId(selectedAssociationBooking.trip_id ?? null);
+    await refreshVisaAssociation(nextApp);
+    setAssociationDialogOpen(false);
+    toast.success("Réservation associée au dossier visa.");
+  };
+
+  const clearAssociation = async () => {
+    if (!app?.id) return;
+    if (!window.confirm("Retirer l’association ? Le dossier visa, la réservation et le participant seront conservés.")) return;
+    setAssociationSaving(true);
+    const { data, error } = await supabase
+      .from("visa_applications")
+      .update({ booking_id: null, booking_participant_id: null } as any)
+      .eq("id", app.id)
+      .select("*")
+      .maybeSingle();
+    setAssociationSaving(false);
+    if (error) return toast.error(error.message);
+    const nextApp = data ?? { ...app, booking_id: null, booking_participant_id: null };
+    setApp(nextApp);
+    await refreshVisaAssociation(nextApp, []);
+    toast.success("Association retirée.");
+  };
 
   const updateStatus = async (status: string) => {
     setBusy(true);
@@ -557,6 +1384,7 @@ export default function VisaApplicationDetail() {
     setApp((current: any) => current ? { ...current, document_trip_id: tripId } : current);
     setSelectedTravelTripId(effectiveTravelTripId);
     setTravelCtx(nextCtx);
+    await refreshHotelConfirmations(app, nextCtx, visaAssociation);
     toast.success("Voyage utilisé pour les documents enregistré.");
   };
 
@@ -603,6 +1431,241 @@ export default function VisaApplicationDetail() {
     window.open(data.signedUrl, "_blank");
   };
 
+  const downloadStampedFlightTicket = async (ticket: VisaFlightTicket) => {
+    if (!ticket) return toast.error("Aucun billet d’avion lié à ce dossier visa.");
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.storage.from("booking-docs").download(ticket.storagePath);
+      if (error || !data) throw error ?? new Error("Billet PDF introuvable.");
+      if (data.type && data.type !== "application/pdf") throw new Error("Le billet doit être un PDF pour générer une copie cachetée.");
+      const bytes = await createStampedFlightTicketPdf(await data.arrayBuffer(), {
+        participantName: ticket.participantName,
+        bookingReference: ticket.bookingReference,
+      });
+      downloadBytes(bytes, flightTicketVisaFilename(ticket.participantName));
+    } catch (error: any) {
+      toast.error(error?.message ?? "Téléchargement du billet cacheté impossible.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refreshHotelConfirmations = async (nextApp: any = app, nextCtx: TravelContext = travelCtx, nextAssociation: VisaBookingAssociation = visaAssociation) => {
+    try {
+      const items = await buildVisaHotelConfirmationItems(nextApp, nextCtx, nextAssociation);
+      setHotelConfirmations(items);
+      setHotelConfirmationsWarning(null);
+      return items;
+    } catch (error: any) {
+      const message = error?.message ?? "Impossible de charger les confirmations d’hôtel.";
+      setHotelConfirmationsWarning(message);
+      return [];
+    }
+  };
+
+  const findExistingHotelGroupReservation = async (item: VisaHotelConfirmationItem) => {
+    const { data, error } = await (supabase as any)
+      .from("visa_hotel_group_reservations")
+      .select("*")
+      .eq("trip_id", travelCtx.trip?.id)
+      .eq("trip_hotel_id", item.hotel.id)
+      .eq("check_in", item.draft.checkIn)
+      .eq("check_out", item.draft.checkOut)
+      .neq("reservation_status", "cancelled")
+      .maybeSingle();
+    if (error) throw error;
+    return data ?? null;
+  };
+
+  const draftWithResolvedHotelGroup = (
+    item: VisaHotelConfirmationItem,
+    group: any,
+  ): HotelConfirmationDraft => {
+    const groupReference = group?.group_reservation_reference ?? item.draft.groupReservationReference;
+    return {
+      ...item.draft,
+      groupReservationReference: groupReference,
+      groupReservationName: (group?.group_reservation_name ?? item.draft.groupReservationName) || HOTEL_GROUP_RESERVATION_NAME,
+      supplierReference: group?.supplier_reference ?? item.draft.supplierReference,
+      japanesePartner: group?.partner_name ?? item.draft.japanesePartner,
+      reservationStatus: group?.reservation_status ?? item.draft.reservationStatus,
+      documentReference: buildHotelDocumentReference(groupReference, app?.id ?? "", item.hotel.id),
+    };
+  };
+
+  const ensureHotelGroupReservation = async (item: VisaHotelConfirmationItem) => {
+    if (item.groupReservation?.id) return item.groupReservation;
+    const existing = await findExistingHotelGroupReservation(item);
+    if (existing?.id) return existing;
+
+    const { data: userData } = await supabase.auth.getUser();
+    const candidateReferences = Array.from(new Set([
+      item.draft.groupReservationReference,
+      travelCtx.trip ? buildHotelGroupReference(travelCtx.trip, item.hotel, item.stayIndex, 10) : null,
+      travelCtx.trip ? buildHotelGroupReference(travelCtx.trip, item.hotel, item.stayIndex, 16) : null,
+    ].filter(Boolean))) as string[];
+
+    for (const reference of candidateReferences) {
+      const payload = {
+        trip_id: travelCtx.trip?.id,
+        trip_hotel_id: item.hotel.id,
+        check_in: item.draft.checkIn,
+        check_out: item.draft.checkOut,
+        group_reservation_reference: reference,
+        group_reservation_name: item.draft.groupReservationName || HOTEL_GROUP_RESERVATION_NAME,
+        supplier_reference: item.draft.supplierReference || null,
+        partner_name: item.draft.japanesePartner || null,
+        reservation_status: item.draft.reservationStatus || "confirmed",
+        confirmed_at: item.draft.reservationStatus === "confirmed" ? new Date().toISOString() : null,
+        created_by: userData.user?.id ?? null,
+        updated_by: userData.user?.id ?? null,
+        metadata: {
+          source: "visa_hotel_confirmation",
+          hotel_name: item.draft.hotelName,
+          reference_format: "trip_scoped_v2",
+        },
+      };
+      const insert = await (supabase as any)
+        .from("visa_hotel_group_reservations")
+        .insert(payload)
+        .select("*")
+        .single();
+      if (!insert.error) return insert.data;
+      const duplicate = insert.error.code === "23505" || /duplicate|unique/i.test(insert.error.message ?? "");
+      if (!duplicate) throw insert.error;
+
+      const group = await findExistingHotelGroupReservation(item);
+      if (group?.id) return group;
+
+      if (import.meta.env.DEV) {
+        console.warn("[visa-hotel-group-reference-collision]", {
+          reference,
+          trip_id: travelCtx.trip?.id,
+          trip_hotel_id: item.hotel.id,
+          check_in: item.draft.checkIn,
+          check_out: item.draft.checkOut,
+          error_code: insert.error.code,
+          error_message: insert.error.message,
+        });
+      }
+    }
+
+    throw new Error("Une référence de réservation existe déjà pour un autre voyage. La confirmation n’a pas été générée.");
+  };
+
+  const downloadHotelConfirmationDocument = async (item: VisaHotelConfirmationItem) => {
+    if (!item.document?.storage_path) return toast.error("Aucun PDF généré pour cet hôtel.");
+    const { data, error } = await supabase.storage.from("visa-docs").createSignedUrl(item.document.storage_path, 60);
+    if (error || !data) return toast.error("Lien de téléchargement indisponible.");
+    window.open(data.signedUrl, "_blank");
+  };
+
+  const downloadVisaSubmissionBatch = async (batch: any) => {
+    if (!batch?.file_path) return toast.error("Aucun PDF officiel enregistré pour ce lot.");
+    const { data, error } = await supabase.storage.from("visa-docs").createSignedUrl(batch.file_path, 60);
+    if (error || !data) return toast.error("Lien de téléchargement indisponible.");
+    window.open(data.signedUrl, "_blank");
+  };
+
+  const generateHotelConfirmation = async (item: VisaHotelConfirmationItem) => {
+    if (!app?.id || !app?.user_id || !app?.booking_id || !app?.booking_participant_id || !travelCtx.trip?.id) {
+      return toast.error("Dossier visa non relié à une réservation et un participant.");
+    }
+    if (item.errors.length) return toast.error(item.errors[0]);
+    setBusy(true);
+    try {
+      const group = await ensureHotelGroupReservation(item);
+      const resolvedDraft = draftWithResolvedHotelGroup(item, group);
+      const bytes = await generateHotelReservationConfirmationPdf(resolvedDraft);
+      const filename = sanitizeHotelReservationFilename(resolvedDraft);
+      const version = Number(item.document?.version ?? 0) + 1 || 1;
+      const path = `${app.user_id}/${app.id}/${VISA_HOTEL_CONFIRMATION_DOCUMENT_TYPE}/${item.hotel.id}/v${version}-${Date.now()}-${filename}`;
+      const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)], { type: "application/pdf" });
+      const upload = await supabase.storage.from("visa-docs").upload(path, blob, {
+        contentType: "application/pdf",
+        upsert: false,
+      });
+      if (upload.error) throw upload.error;
+      const visaDocInsert = await supabase.from("visa_documents").insert({
+        application_id: app.id,
+        user_id: app.user_id,
+        doc_type: "other",
+        storage_path: path,
+        file_name: filename,
+        mime_type: "application/pdf",
+        size_bytes: bytes.byteLength,
+      }).select("*").single();
+      if (visaDocInsert.error) throw visaDocInsert.error;
+      const { data: userData } = await supabase.auth.getUser();
+      const ledgerInsert = await (supabase as any)
+        .from("visa_hotel_confirmation_documents")
+        .insert({
+          visa_application_id: app.id,
+          booking_id: app.booking_id,
+          booking_participant_id: app.booking_participant_id,
+          trip_id: travelCtx.trip.id,
+          trip_hotel_id: item.hotel.id,
+          group_reservation_id: group.id,
+          visa_document_id: visaDocInsert.data.id,
+          document_reference: resolvedDraft.documentReference,
+          file_name: filename,
+          storage_path: path,
+          status: "generated",
+          version,
+          is_current: true,
+          data_hash: hotelConfirmationDataHash(resolvedDraft),
+          generated_by: userData.user?.id ?? null,
+          metadata: {
+            hotel_name: resolvedDraft.hotelName,
+            group_reservation_reference: resolvedDraft.groupReservationReference,
+            rooming_missing: Boolean(resolvedDraft.roomingMissing),
+          },
+        })
+        .select("*")
+        .single();
+      if (ledgerInsert.error) throw ledgerInsert.error;
+      setDocs((current) => [visaDocInsert.data, ...current]);
+      await refreshHotelConfirmations();
+      toast.success("Confirmation d’hôtel générée.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Erreur génération confirmation hôtel.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const generateAllHotelConfirmations = async () => {
+    const readyItems = hotelConfirmations.filter((item) => item.status === "ready" || item.status === "needs_regeneration");
+    if (!readyItems.length) return toast.info("Aucune confirmation d’hôtel prête à générer.");
+    for (const item of readyItems) {
+      // Sequential generation avoids duplicate group-reference races and keeps toast/errors readable.
+      await generateHotelConfirmation(item);
+    }
+  };
+
+  const downloadAllHotelConfirmationsZip = async () => {
+    const generatedItems = hotelConfirmations.filter((item) => item.document?.storage_path);
+    if (!generatedItems.length) return toast.error("Aucune confirmation d’hôtel générée.");
+    setBusy(true);
+    try {
+      const zip = new JSZip();
+      await Promise.all(generatedItems.map(async (item) => {
+        const { data } = await supabase.storage.from("visa-docs").download(item.document.storage_path);
+        if (data) zip.file(item.document.file_name || sanitizeHotelReservationFilename(item.draft), await data.arrayBuffer());
+      }));
+      const bytes = await zip.generateAsync({ type: "uint8array" });
+      const applicantName = visaAssociation.participant
+        ? participantFullName(visaAssociation.participant)
+        : [app?.given_names, app?.surname].filter(Boolean).join(" ") || "Participant";
+      downloadBlob(bytes, sanitizeHotelReservationsZipFilename(applicantName, travelCtx.trip?.title ?? "Voyage"));
+      toast.success("Archive hôtels téléchargée.");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Téléchargement ZIP impossible.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const downloadAll = async () => {
     if (!app || !settings) return;
     if (!ensureTravelTripSelected()) return;
@@ -645,10 +1708,19 @@ export default function VisaApplicationDetail() {
     return generateTravelProgrammePdf(app ?? {}, travelCtx);
   }, [app, travelCtx]);
 
+  const confirmTravelConfirmationParticipant = useCallback(() => {
+    const participants = travelCtx.participants ?? [];
+    if (!app?.booking_id || participants.length === 0 || participants.some((participant: any) => participant.is_subject)) return true;
+    return window.confirm(
+      "Le participant concerné n’a pas été retrouvé dans la liste des participants associés à ce voyage. Générer quand même la confirmation ?"
+    );
+  }, [app?.booking_id, travelCtx.participants]);
+
   const generateConfirmation = useCallback(async () => {
     if (!travelCtx.trip?.id) throw new Error("Aucun voyage n'est sélectionné pour les documents de voyage.");
+    if (!confirmTravelConfirmationParticipant()) throw new Error("Génération annulée: participant concerné non retrouvé dans la liste.");
     return generateTravelConfirmationPdf(app ?? {}, settings ?? {}, travelCtx);
-  }, [app, settings, travelCtx]);
+  }, [app, confirmTravelConfirmationParticipant, settings, travelCtx]);
 
   const generators = {
     visa: useCallback(() => generateVisaPdf(app ?? {}, settings ?? {}), [app, settings]),
@@ -660,6 +1732,7 @@ export default function VisaApplicationDetail() {
 
   const openPreview = (kind: "visa" | "invitation" | "guarantee" | "programme" | "confirmation") => {
     if ((kind === "programme" || kind === "confirmation") && !ensureTravelTripSelected()) return;
+    if (kind === "confirmation" && !confirmTravelConfirmationParticipant()) return;
     if (kind === "confirmation") warnIfConfirmationIncomplete();
     setPreview(kind);
   };
@@ -671,6 +1744,7 @@ export default function VisaApplicationDetail() {
     try {
       if (kind === "confirmation") {
         warnIfConfirmationIncomplete();
+        if (!confirmTravelConfirmationParticipant()) return;
       }
       const bytes = kind === "visa"
         ? await generateVisaPdf(app, settings)
@@ -816,6 +1890,15 @@ export default function VisaApplicationDetail() {
   const checklistDoc = docs.find(isVisaChecklistDocument);
   const selectedChecklist = findChecklistForSituation(checklists, app.category);
   const selectedChecklistItems = selectedChecklist?.items ?? [];
+  const associatedBooking = visaAssociation.booking;
+  const associatedParticipant = visaAssociation.participant;
+  const associatedTrip = bookingTrip(associatedBooking);
+  const associationIsLinked = Boolean(associatedBooking?.id && associatedParticipant?.id);
+  const confidenceLabel: Record<VisaAssociationSuggestion["confidence"], string> = {
+    exact: "Correspondance exacte",
+    probable: "Correspondance probable",
+    check: "À vérifier",
+  };
 
   const Row = ({ label, value }: any) => (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2 py-2 text-sm border-b border-border/40 last:border-0">
@@ -1072,6 +2155,92 @@ export default function VisaApplicationDetail() {
           </Card>
 
           <Card className="p-4 sm:p-5">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="font-display text-lg">Réservation associée</h2>
+                <p className="text-sm text-muted-foreground">
+                  Lien administratif utilisé pour retrouver le billet, les vols et les documents de réservation.
+                </p>
+              </div>
+              <Badge variant={associationIsLinked ? "secondary" : "outline"} className={associationIsLinked ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}>
+                {associationIsLinked ? "Relié" : "Non relié"}
+              </Badge>
+            </div>
+
+            {associationIsLinked ? (
+              <div className="space-y-3">
+                <div className="grid gap-3 rounded-lg border border-border bg-muted/20 p-3 text-sm md:grid-cols-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Réservation</p>
+                    <p className="font-semibold">{associatedBooking?.reference ?? associatedBooking?.id}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Voyage</p>
+                    <p className="font-semibold">{associatedTrip?.title ?? "—"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {[formatVisaDate(associatedTrip?.start_date), formatVisaDate(associatedTrip?.end_date)].filter(Boolean).join(" → ") || "Dates non renseignées"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Participant associé</p>
+                    <p className="font-semibold">{participantFullName(associatedParticipant)}</p>
+                    <p className="text-xs text-muted-foreground">{associatedParticipant?.email || "Email non renseigné"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Passeport</p>
+                    <p className="font-semibold">{maskPassportNo(associatedParticipant?.passport_no)}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => nav(`/admin/bookings/${associatedBooking.id}`)}>
+                    Ouvrir la réservation
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={openAssociationDialog}>
+                    Changer l’association
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={clearAssociation} disabled={associationSaving}>
+                    <Unlink className="h-4 w-4" /> Retirer l’association
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                  Ce dossier visa n’est relié à aucune réservation.
+                </div>
+                {associationSuggestions.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Suggestions de correspondance</p>
+                    {associationSuggestions.map((suggestion) => (
+                      <button
+                        type="button"
+                        key={`${suggestion.booking.id}:${suggestion.participant.id}`}
+                        className="w-full rounded-lg border border-border p-3 text-left text-sm transition-colors hover:bg-muted/40"
+                        onClick={async () => {
+                          const loaded = await loadAssociationParticipants(suggestion.booking);
+                          if (loaded) setSelectedAssociationParticipantId(suggestion.participant.id);
+                          setAssociationDialogOpen(true);
+                        }}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold">{bookingLabel(suggestion.booking)}</span>
+                          <Badge variant="outline">{confidenceLabel[suggestion.confidence]}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {participantFullName(suggestion.participant)} · {suggestion.reason} · passeport {maskPassportNo(suggestion.participant.passport_no)}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <Button type="button" onClick={openAssociationDialog}>
+                  Associer une réservation
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-4 sm:p-5">
             <h2 className="font-display text-lg mb-3">Passeport</h2>
             <QuickActions passport={app.passport_no} compact className="mb-3" />
             <Row label="Type / N°" value={`${app.passport_type ?? ""} · ${app.passport_no ?? ""}`} />
@@ -1286,6 +2455,220 @@ export default function VisaApplicationDetail() {
           </Card>
 
           <Card className="p-4 sm:p-5">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="font-display text-lg">Documents de transport et d’hébergement</h2>
+                <p className="text-sm text-muted-foreground">
+                  Documents destinés au dossier ambassade, reliés à la réservation et au participant exact.
+                </p>
+              </div>
+              {associationIsLinked ? (
+                <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-900">Relié</Badge>
+              ) : (
+                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-900">Association requise</Badge>
+              )}
+            </div>
+
+            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold">Billet d’avion</p>
+                {visaFlightTickets.length > 0 && (
+                  <Badge variant="outline" className="bg-white">
+                    {visaFlightTickets.every((ticket) => ["reserved", "ticketed", "delivered"].includes(getFlightTicketStatus(ticket.flight, ticket.traveler)))
+                      ? "Billet disponible"
+                      : "Billet disponible – Informations de vol incomplètes"}
+                  </Badge>
+                )}
+              </div>
+              {visaFlightTickets.length > 0 ? (
+                <div className="space-y-2 text-sm">
+                  {visaFlightTickets.map((ticket) => (
+                    <div key={ticket.storagePath} className="rounded-lg border border-border bg-white p-3">
+                      <p className="font-medium">Billet d’avion – {ticket.participantName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {ticket.fileName ? `${ticket.fileName} · ` : ""}
+                        Source réservation {ticket.bookingReference ?? app?.booking_id}
+                        {ticket.createdAt ? ` · ajouté le ${formatVisaDate(ticket.createdAt)}` : ""}
+                      </p>
+                      <Button size="sm" variant="outline" className="mt-2 min-h-10" onClick={() => downloadStampedFlightTicket(ticket)} disabled={busy}>
+                        <Download className="w-4 h-4" /> Télécharger copie cachetée
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : app?.booking_id ? (
+                <p className="text-sm text-muted-foreground">
+                  Billet d’avion manquant pour ce participant ou non assigné au dossier de réservation.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Associez d’abord une réservation pour retrouver le billet du participant.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold">Réservations d’hébergement</p>
+                  <p className="text-xs text-muted-foreground">
+                    Une confirmation PDF distincte est générée pour chaque hôtel confirmé du voyage.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={generateAllHotelConfirmations} disabled={busy || !associationIsLinked}>
+                    Générer toutes
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={downloadAllHotelConfirmationsZip} disabled={busy || !hotelConfirmations.some((item) => item.document?.storage_path)}>
+                    ZIP hôtels
+                  </Button>
+                </div>
+              </div>
+
+              {hotelConfirmationsWarning && (
+                <Alert className="mb-3 border-amber-300 bg-amber-50 text-amber-950">
+                  <AlertTriangle className="h-4 w-4 text-amber-700" />
+                  <AlertTitle>Confirmations hôtel indisponibles</AlertTitle>
+                  <AlertDescription>{hotelConfirmationsWarning}</AlertDescription>
+                </Alert>
+              )}
+
+              {!associationIsLinked ? (
+                <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                  Ce dossier doit être relié à une réservation et au participant exact avant de générer les confirmations d’hôtel.
+                </div>
+              ) : hotelConfirmations.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-700">
+                  Aucun hôtel détaillé n’est lié au voyage de cette réservation.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {hotelConfirmations.map((item) => (
+                    <div key={item.hotel.id} className="rounded-lg border border-border p-3 text-sm">
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-semibold">
+                            {item.draft.hotelName}
+                            {item.isRepeatedHotelStayName && <span className="text-muted-foreground"> — {item.stayLabel}</span>}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {[item.draft.hotelCity, formatVisaDate(item.draft.checkIn), formatVisaDate(item.draft.checkOut)]
+                              .filter(Boolean)
+                              .join(" · ")}
+                            {item.draft.nights ? ` · ${item.draft.nights} nuit${item.draft.nights > 1 ? "s" : ""}` : ""}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Réf. groupe: {item.draft.groupReservationReference} · {item.draft.groupReservationName}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {item.diagnostics.roomCount} chambre{item.diagnostics.roomCount > 1 ? "s" : ""} · {item.diagnostics.assignedParticipants} participant{item.diagnostics.assignedParticipants > 1 ? "s" : ""} affecté{item.diagnostics.assignedParticipants > 1 ? "s" : ""} · source: Rooming list opérationnelle
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Demandeur visa: {item.diagnostics.applicantRoomLabel ?? "non affecté"} · {item.diagnostics.assignedParticipants}/{item.diagnostics.totalTripParticipants} participants affectés
+                          </p>
+                        </div>
+                        <Badge variant="outline" className={hotelConfirmationStatusClass[item.status]}>
+                          {hotelConfirmationStatusLabel[item.status]}
+                        </Badge>
+                      </div>
+                      {item.errors.length > 0 && (
+                        <ul className="mb-3 list-disc space-y-1 pl-4 text-xs text-red-800">
+                          {item.errors.slice(0, 3).map((error) => (
+                            <li key={error}>{error}</li>
+                          ))}
+                          {item.errors.length > 3 && <li>{item.errors.length - 3} autre(s) erreur(s)…</li>}
+                        </ul>
+                      )}
+                      {item.draft.roomingMissing && (
+                        <p className="mb-3 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                          Rooming list absente pour cet hôtel: créez les chambres et affectations dans Operations → Voyages → B. Chambres.
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => setHotelPreview(item)}>
+                          <Eye className="h-4 w-4" /> Aperçu
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => nav(`/admin/trips?tab=management&trip=${travelCtx.trip?.id ?? ""}&ops=rooms&hotel=${item.hotel.id}`)}
+                        >
+                          Ouvrir la rooming list
+                        </Button>
+                        {item.document?.storage_path && (
+                          <Button size="sm" variant="outline" onClick={() => downloadHotelConfirmationDocument(item)}>
+                            <Download className="h-4 w-4" /> Télécharger
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          onClick={() => generateHotelConfirmation(item)}
+                          disabled={busy || item.errors.length > 0}
+                        >
+                          <FileText className="h-4 w-4" />
+                          {item.document ? "Régénérer" : "Générer"}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card className="p-4 sm:p-5">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="font-display text-lg">Dépôts groupés visa</h2>
+                <p className="text-sm text-muted-foreground">
+                  Historique des lots officiels dans lesquels ce dossier a été inclus.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => nav(`/admin/visa-group-submissions${selectedTravelTripId || bookingTripId || travelCtx.trip?.id ? `?trip=${selectedTravelTripId || bookingTripId || travelCtx.trip?.id}` : ""}`)}
+              >
+                Ouvrir les dépôts
+              </Button>
+            </div>
+            {submissionHistory.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-muted-foreground">
+                Aucun lot de dépôt enregistré pour ce dossier visa.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {submissionHistory.map(({ item, batch }) => (
+                  <div key={item.id} className="rounded-lg border border-border p-3 text-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{batch.reference}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Dépôt prévu: {formatVisaDate(batch.submission_date)}
+                          {batch.actual_submission_date ? ` · Déposé le ${formatVisaDate(batch.actual_submission_date)}` : ""}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Nom officiel: {item.official_name} · Passeport {maskPassportNo(item.passport_no)}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">
+                          {VISA_SUBMISSION_BATCH_STATUS_LABEL[batch.status] ?? batch.status}
+                        </Badge>
+                        {batch.file_path && (
+                          <Button size="sm" variant="outline" onClick={() => downloadVisaSubmissionBatch(batch)}>
+                            <Download className="h-4 w-4" /> PDF officiel
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-4 sm:p-5">
             <h2 className="font-display text-lg mb-3">Documents ({docs.length})</h2>
             <div className="mb-3 rounded-lg border border-accent/30 bg-accent/5 p-3 text-sm">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1373,6 +2756,246 @@ export default function VisaApplicationDetail() {
           </Card>
         </div>
       </div>
+
+      <Dialog open={associationDialogOpen} onOpenChange={setAssociationDialogOpen}>
+        <DialogContent className="flex max-h-[90dvh] max-w-4xl flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Associer une réservation</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Recherchez la réservation, puis choisissez le participant exact. Aucun lien n’est créé automatiquement.
+            </p>
+          </DialogHeader>
+          <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto md:grid-cols-2">
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    placeholder="Référence, voyage, client, email, passeport…"
+                    value={associationSearch}
+                    onChange={(event) => setAssociationSearch(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void searchAssociationBookings();
+                    }}
+                  />
+                </div>
+                <Button type="button" variant="outline" onClick={() => searchAssociationBookings()} disabled={associationSearchBusy}>
+                  Rechercher
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                {associationResults.length === 0 && (
+                  <p className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+                    {associationSearchBusy ? "Recherche en cours…" : "Aucune réservation sélectionnée."}
+                  </p>
+                )}
+                {associationResults.map((booking) => {
+                  const trip = bookingTrip(booking);
+                  const selected = selectedAssociationBooking?.id === booking.id;
+                  return (
+                    <button
+                      type="button"
+                      key={booking.id}
+                      className={`w-full rounded-lg border p-3 text-left text-sm transition-colors ${selected ? "border-accent bg-accent/10" : "border-border hover:bg-muted/40"}`}
+                      onClick={() => loadAssociationParticipants(booking)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold">{booking.reference}</span>
+                        <Badge variant="outline">{booking.status}</Badge>
+                      </div>
+                      <p className="mt-1 text-muted-foreground">{trip?.title ?? "Voyage non renseigné"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {[formatVisaDate(trip?.start_date), formatVisaDate(trip?.end_date)].filter(Boolean).join(" → ") || "Dates non renseignées"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{booking.contact_name} · {booking.contact_email}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold">Participant de la réservation</h3>
+                <p className="text-sm text-muted-foreground">
+                  Sélection obligatoire. Le participant doit appartenir à la réservation choisie.
+                </p>
+              </div>
+              {!selectedAssociationBooking ? (
+                <p className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+                  Choisissez d’abord une réservation.
+                </p>
+              ) : associationParticipantsLoading ? (
+                <p className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+                  Chargement des participants…
+                </p>
+              ) : associationParticipantsError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-950">
+                  <p>{associationParticipantsError}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 bg-white"
+                    onClick={() => loadAssociationParticipants(selectedAssociationBooking)}
+                  >
+                    Réessayer
+                  </Button>
+                </div>
+              ) : associationParticipants.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+                  Aucun participant n’est enregistré dans cette réservation.
+                </p>
+              ) : (
+                <RadioGroup value={selectedAssociationParticipantId} onValueChange={setSelectedAssociationParticipantId}>
+                  <div className="space-y-2">
+                    {associationParticipants.map((participant) => (
+                      <label
+                        key={participant.id}
+                        className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-sm transition-colors hover:bg-muted/40"
+                      >
+                        <RadioGroupItem value={participant.id} className="mt-1" />
+                        <span className="min-w-0">
+                          <span className="block font-semibold">{participantFullName(participant)}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            Passeport {maskPassportNo(participant.passport_no)} · {participant.email || "email non renseigné"}
+                          </span>
+                          <span className="mt-1 inline-flex text-xs text-muted-foreground">
+                            Statut: {associationParticipantStatusLabel(participant)}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </RadioGroup>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssociationDialogOpen(false)} disabled={associationSaving}>Annuler</Button>
+            <Button onClick={confirmAssociation} disabled={associationSaving || !selectedAssociationBooking || !selectedAssociationParticipantId}>
+              {associationSaving ? "Association…" : "Confirmer l’association"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(hotelPreview)} onOpenChange={(open) => !open && setHotelPreview(null)}>
+        <DialogContent className="flex max-h-[90dvh] max-w-4xl flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Confirmation de réservation hôtelière</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Aperçu des données utilisées pour le PDF ambassade. Les corrections principales doivent être faites dans le voyage ou la rooming list.
+            </p>
+          </DialogHeader>
+          {hotelPreview && (
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+              {hotelPreview.errors.length > 0 && (
+                <Alert className="border-red-300 bg-red-50 text-red-950">
+                  <AlertTriangle className="h-4 w-4 text-red-700" />
+                  <AlertTitle>Génération bloquée</AlertTitle>
+                  <AlertDescription>
+                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                      {hotelPreview.errors.map((error) => <li key={error}>{error}</li>)}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs text-muted-foreground">Document reference</p>
+                  <p className="font-semibold">{hotelPreview.draft.documentReference}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs text-muted-foreground">Agency group reservation reference</p>
+                  <p className="font-semibold">{hotelPreview.draft.groupReservationReference} ({hotelPreview.draft.groupReservationName})</p>
+                </div>
+                        <div className="rounded-lg border border-border p-3">
+                          <p className="text-xs text-muted-foreground">Hôtel</p>
+                  <p className="font-semibold">
+                    {hotelPreview.draft.hotelName}
+                    {hotelPreview.isRepeatedHotelStayName && <span className="text-muted-foreground"> — {hotelPreview.stayLabel}</span>}
+                  </p>
+                  <p className="text-sm text-muted-foreground">{hotelPreview.draft.hotelAddress || "Adresse manquante"}</p>
+                  <p className="text-sm text-muted-foreground">{hotelPreview.draft.hotelPhone || "Téléphone manquant"}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs text-muted-foreground">Séjour</p>
+                  <p className="font-semibold">{formatVisaDate(hotelPreview.draft.checkIn)} → {formatVisaDate(hotelPreview.draft.checkOut)}</p>
+                  <p className="text-sm text-muted-foreground">{hotelPreview.draft.nights} nuit{hotelPreview.draft.nights > 1 ? "s" : ""}</p>
+                  <p className="text-sm text-muted-foreground">Statut: {hotelPreview.draft.reservationStatus}</p>
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-lg border border-border bg-slate-50 p-3">
+                  <p className="text-xs text-muted-foreground">Participants affectés</p>
+                  <p className="font-semibold">{hotelPreview.diagnostics.assignedParticipants}/{hotelPreview.diagnostics.totalTripParticipants}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-slate-50 p-3">
+                  <p className="text-xs text-muted-foreground">Chambres créées</p>
+                  <p className="font-semibold">{hotelPreview.diagnostics.roomCount}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-slate-50 p-3">
+                  <p className="text-xs text-muted-foreground">Chambres complètes</p>
+                  <p className="font-semibold">{hotelPreview.diagnostics.completeRoomCount}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-slate-50 p-3">
+                  <p className="text-xs text-muted-foreground">Demandeur visa</p>
+                  <p className="font-semibold">{hotelPreview.diagnostics.applicantRoomLabel ?? "Non affecté"}</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="min-w-[720px] w-full text-sm">
+                  <thead className="bg-slate-100 text-left text-xs text-slate-700">
+                    <tr>
+                      <th className="p-2">Room No.</th>
+                      <th className="p-2">Room Type / Board</th>
+                      <th className="p-2">Guest Name</th>
+                      <th className="p-2">Adults</th>
+                      <th className="p-2">Children</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getHotelConfirmationRooms(hotelPreview.draft).map((room) => (
+                      <tr key={room.roomId} className={room.guests.some((guest) => guest.isVisaApplicant) ? "bg-slate-100" : ""}>
+                        <td className="border-t p-2">{room.roomNo || "Group allocation pending"}</td>
+                        <td className="border-t p-2">{[room.roomType, room.board].filter(Boolean).join(" - ") || "Group allocation pending"}</td>
+                        <td className="border-t p-2">
+                          <div className="space-y-1">
+                            {room.guests.map((guest) => (
+                              <div key={guest.participantId} className={guest.isVisaApplicant ? "font-semibold" : ""}>
+                                {guest.name}
+                                {guest.isVisaApplicant && <span className="ml-2 text-xs text-muted-foreground">Visa applicant</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="border-t p-2">{room.adults}</td>
+                        <td className="border-t p-2">{room.children}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHotelPreview(null)}>Fermer</Button>
+            {hotelPreview && hotelPreview.document?.storage_path && (
+              <Button variant="outline" onClick={() => downloadHotelConfirmationDocument(hotelPreview)}>
+                <Download className="h-4 w-4" /> Télécharger
+              </Button>
+            )}
+            {hotelPreview && (
+              <Button onClick={() => generateHotelConfirmation(hotelPreview)} disabled={busy || hotelPreview.errors.length > 0}>
+                <FileText className="h-4 w-4" /> {hotelPreview.document ? "Régénérer" : "Générer"}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={visaProgramV2Open} onOpenChange={setVisaProgramV2Open}>
         <DialogContent className="flex max-h-[92dvh] w-[96vw] max-w-6xl flex-col overflow-hidden p-0">

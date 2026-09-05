@@ -3163,10 +3163,24 @@ const buildExtraGroups = ({ participants, bookings, bookingExtras, extrasList, p
   })).sort((a, b) => a.name.localeCompare(b.name));
 };
 
-const isParticipantExtraSelected = (participant: any, extraId: string, bookingExtras: any[], participantActivitySelections: any[]) => {
+type SupplierParticipantActivitySelection = {
+  participant_id?: string | null;
+  extra_id?: string | null;
+  is_selected?: boolean | null;
+};
+
+type SupplierParticipantActivityRef = {
+  id?: string | null;
+};
+
+const isParticipantExtraSelected = (
+  participant: SupplierParticipantActivityRef,
+  extraId: string,
+  _bookingExtras: unknown[],
+  participantActivitySelections: SupplierParticipantActivitySelection[],
+) => {
   const explicit = participantActivitySelections.find((selection) => selection.participant_id === participant.id && selection.extra_id === extraId);
-  if (explicit) return Boolean(explicit.is_selected);
-  return bookingExtras.some((extra) => extra.booking_id === participant.booking_id && extra.extra_id === extraId);
+  return Boolean(explicit?.is_selected);
 };
 
 const normalizeRow = (section: QuoteSection, row: any, index: number): QuoteRow => {
