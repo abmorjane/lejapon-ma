@@ -62,6 +62,7 @@ export const MODULE_PERMISSIONS = {
   flight_tickets: ["super_admin", "admin", "manager", "agent"],
   operation_task_templates: ["super_admin", "admin"],
   fit_quotes: ["super_admin", "admin"],
+  fit_control_tower: ["super_admin", "admin"],
   partner_fit_quotes: ["manager", "sales", "sales_user", "sales_manager", "partner_agency_admin", "partner_agent"],
   international_payments: ["super_admin", "admin"],
   articles: ["super_admin", "content_manager"],

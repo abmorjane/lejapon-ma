@@ -33,6 +33,7 @@ const navGroups: AdminNavGroup[] = [
     icon: LayoutDashboard,
     items: [
       { to: "/admin", icon: LayoutDashboard, label: "Vue d'ensemble", end: true, module: "dashboard" },
+      { to: "/admin/fit-control-tower", icon: FolderKanban, label: "FIT Control Tower", module: "fit_control_tower" },
     ],
   },
   {

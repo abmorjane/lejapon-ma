@@ -18,9 +18,10 @@ import { toast } from "sonner";
 import { fmtMAD } from "@/lib/format";
 import { downloadFitPdf, generateFitClientPdf, generateFitInternalPdf } from "@/lib/fit-pdfs";
 import { useAuth } from "@/hooks/useAuth";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { fitCommercialLabel, fitCommercialStatus, fitCommercialTone, fitNextAction } from "@/lib/fit-commercial";
 import { FitFinancialPanel } from "@/components/fit/FitFinancialPanel";
+import { FitFinancialClosurePanel } from "@/components/fit/FitFinancialClosurePanel";
 
 const db = supabase as any;
 
@@ -798,6 +799,7 @@ const partnerTemplateIssues = (template: any) => {
 export default function FitQuotes() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [templates, setTemplates] = useState<any[]>([]);
   const [quotes, setQuotes] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
@@ -947,6 +949,13 @@ export default function FitQuotes() {
     setHotelLines((hotels ?? []).map((line: any) => ({ ...line, local_id: line.id ?? crypto.randomUUID() })));
     setFlightLines((flights ?? []).map((line: any) => ({ ...line, local_id: line.id ?? crypto.randomUUID() })));
   };
+
+  const requestedQuoteId = searchParams.get("quote");
+  useEffect(() => {
+    if (!requestedQuoteId || selectedQuote?.id === requestedQuoteId || quotes.length === 0) return;
+    const requestedQuote = quotes.find((quote) => quote.id === requestedQuoteId);
+    if (requestedQuote) void loadQuote(requestedQuote);
+  }, [quotes, requestedQuoteId, selectedQuote?.id]);
 
   const saveTemplate = async () => {
     if (!templateForm.title.trim()) return toast.error("Titre requis.");
@@ -2067,6 +2076,7 @@ export default function FitQuotes() {
                   )}
 
                   <FitFinancialPanel quoteId={selectedQuote.id} readOnly={isHistoricalVersion} />
+                  <FitFinancialClosurePanel quoteId={selectedQuote.id} readOnly={isHistoricalVersion} />
 
                   {shareUrl && (
                     <div className="grid gap-4 rounded-lg border border-dashed border-accent/50 bg-accent/5 p-4 text-sm md:grid-cols-[minmax(0,1fr)_280px]">

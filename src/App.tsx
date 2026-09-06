@@ -86,6 +86,7 @@ const AdminExtras = lazy(() => import("@/admin/pages/Extras"));
 const AdminSuppliers = lazy(() => import("@/admin/pages/Suppliers"));
 const AdminSupplierCosts = lazy(() => import("@/admin/pages/SupplierCosts"));
 const AdminFitQuotes = lazy(() => import("@/admin/pages/FitQuotes"));
+const AdminFitControlTower = lazy(() => import("@/admin/pages/FitControlTower"));
 const AdminInternationalPayments = lazy(() => import("@/admin/pages/InternationalPayments"));
 const AdminArticles = lazy(() => import("@/admin/pages/Articles"));
 const AdminPages = lazy(() => import("@/admin/pages/Pages"));
@@ -365,6 +366,7 @@ const AppRoutes = () => {
         <Route path="supplier-costs" element={<RequireRole module="supplier_costs"><AdminSupplierCosts /></RequireRole>} />
         <Route path="fit-supplier-control" element={<RequireRole module="supplier_costs"><AdminFitSupplierControl /></RequireRole>} />
         <Route path="fit-quotes" element={<RequireRole module="fit_quotes"><AdminFitQuotes /></RequireRole>} />
+        <Route path="fit-control-tower" element={<RequireRole module="fit_control_tower"><AdminFitControlTower /></RequireRole>} />
         <Route path="international-payments" element={<RequireRole module="international_payments"><AdminInternationalPayments /></RequireRole>} />
         <Route path="articles" element={<RequireRole module="articles"><AdminArticles /></RequireRole>} />
         <Route path="pages" element={<RequireRole module="pages"><AdminPages /></RequireRole>} />
