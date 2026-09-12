@@ -58,6 +58,9 @@ export default function TripsCatalog() {
   const [destInput, setDestInput] = useState("");
   const [programmes, setProgrammes] = useState<any[]>([]);
   const [tripHotels, setTripHotels] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [supplierId, setSupplierId] = useState<string>("");
+  const [initialSupplierId, setInitialSupplierId] = useState<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
   const reduceMotion = useReducedMotion();
   const isManagerOnly = roles.includes("manager") && !roles.some((r) => ["super_admin", "admin"].includes(r));
@@ -82,12 +85,20 @@ export default function TripsCatalog() {
       .select("id,title,duration,slug,is_published")
       .order("sort_order")
       .then(({ data }) => setProgrammes(data ?? []));
+    (supabase as any)
+      .from("suppliers")
+      .select("id,name,status")
+      .eq("status", "active")
+      .order("name")
+      .then(({ data }: any) => setSuppliers(data ?? []));
   }, []);
 
   const resetDialogState = () => {
     setEdit(empty);
     setDestInput("");
     setTripHotels([]);
+    setSupplierId("");
+    setInitialSupplierId("");
   };
 
   const openTrip = async (trip: Trip) => {
@@ -101,14 +112,37 @@ export default function TripsCatalog() {
       destinations: trip.destinations ?? [],
     });
     setOpen(true);
-    const { data, error } = await supabase
-      .from("trip_hotels")
-      .select("*")
-      .eq("trip_id", trip.id)
-      .order("sort_order", { ascending: true })
-      .order("check_in", { ascending: true });
+    const [{ data, error }, { data: assignments }] = await Promise.all([
+      supabase.from("trip_hotels").select("*").eq("trip_id", trip.id).order("sort_order", { ascending: true }).order("check_in", { ascending: true }),
+      (supabase as any).from("trip_suppliers").select("supplier_id").eq("trip_id", trip.id).eq("assignment_type", "quote_request").neq("status", "cancelled").limit(1),
+    ]);
     if (error) toast.error(error.message);
     setTripHotels(data ?? []);
+    const assignedSupplierId = assignments?.[0]?.supplier_id ?? "";
+    setSupplierId(assignedSupplierId);
+    setInitialSupplierId(assignedSupplierId);
+  };
+
+  const saveSupplierAssignment = async (tripId: string) => {
+    if (supplierId) {
+      if (supplierId === initialSupplierId) return;
+      const { error } = await (supabase as any).rpc("assign_supplier_trip_quote_v2", {
+        p_trip_id: tripId,
+        p_supplier_id: supplierId,
+      });
+      if (error) throw new Error(`Assignation fournisseur impossible: ${error.message}`);
+      const { data: emailData, error: emailError } = await supabase.functions.invoke("send-admin-notification", {
+        body: { event_type: "supplier_trip_assigned", trip_id: tripId, supplier_id: supplierId },
+      });
+      if (emailError || emailData?.ok === false) {
+        toast.warning("Voyage assigné, mais l’email fournisseur reste en échec dans la file de notifications.");
+      }
+      return;
+    }
+    if (initialSupplierId) {
+      const { error } = await (supabase as any).rpc("unassign_supplier_trip_quote_v2", { p_trip_id: tripId });
+      if (error) throw new Error(`Retrait de l’assignation impossible: ${error.message}`);
+    }
   };
 
   const addTripHotel = () => {
@@ -202,6 +236,7 @@ export default function TripsCatalog() {
             promo_percent: edit.promo_percent === "" || edit.promo_percent == null ? null : Number(edit.promo_percent),
             ...visaDefaultsPayload,
           };
+      let savedTripId = edit.id as string | undefined;
       if (edit.id) {
         const { error } = await supabase.from("trips").update(payload).eq("id", edit.id);
         if (error) throw error;
@@ -211,8 +246,10 @@ export default function TripsCatalog() {
       } else {
         const { data, error } = await supabase.from("trips").insert(payload).select("id").single();
         if (error) throw error;
-        if (data?.id) await saveTripHotels(data.id);
+        savedTripId = data?.id;
+        if (savedTripId) await saveTripHotels(savedTripId);
       }
+      if (savedTripId && !isManagerOnly) await saveSupplierAssignment(savedTripId);
       toast.success(isManagerOnly ? "Valeurs visa enregistrées" : "Voyage enregistré");
       setOpen(false);
       resetDialogState();
@@ -424,6 +461,17 @@ export default function TripsCatalog() {
                 <div><Label>Prix actuel / promotionnel (MAD)</Label><Input disabled={publicFieldDisabled} type="number" value={edit.base_price_mad} onChange={(e) => setEdit({ ...edit, base_price_mad: +e.target.value })} /></div>
                 <div><Label>Places totales</Label><Input disabled={publicFieldDisabled} type="number" value={edit.total_slots} onChange={(e) => setEdit({ ...edit, total_slots: +e.target.value })} /></div>
                 <div><Label>Places restantes</Label><Input disabled={publicFieldDisabled} type="number" value={edit.slots_left} onChange={(e) => setEdit({ ...edit, slots_left: +e.target.value })} /></div>
+                {!isManagerOnly && <div className="col-span-2">
+                  <Label>Fournisseur</Label>
+                  <Select value={supplierId || "none"} onValueChange={(value) => setSupplierId(value === "none" ? "" : value)}>
+                    <SelectTrigger><SelectValue placeholder="Choisir un fournisseur actif" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucun fournisseur assigné</SelectItem>
+                      {suppliers.map((supplier) => <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">L’assignation crée immédiatement la demande de devis et la notification fournisseur.</p>
+                </div>}
                 <div>
                   <Label>Promotion active (%)</Label>
                   <Input disabled={publicFieldDisabled} type="number" value={edit.promo_percent ?? ""} onChange={(e) => setEdit({ ...edit, promo_percent: e.target.value === "" ? null : +e.target.value })} placeholder="ex: 10" />

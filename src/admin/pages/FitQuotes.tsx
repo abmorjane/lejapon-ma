@@ -471,6 +471,24 @@ const fitQuotePayload = (form: any, totals?: Record<string, unknown>, extra?: Re
 const cleanPayload = (payload: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
 
+// Quote rows are recreated on save. Preserve the V4/V5 financial overlay so a
+// commercial edit cannot silently reset supplier costing fields to their defaults.
+const financialOverlayPayload = (line: Record<string, unknown>, estimatedMad: number, sellingMad = 0) => ({
+  supplier_id: line.supplier_id || null,
+  supplier_quote_id: line.supplier_quote_id || null,
+  supplier_confirmation_document_id: line.supplier_confirmation_document_id || null,
+  supplier_invoice_id: line.supplier_invoice_id || null,
+  supplier_payment_id: line.supplier_payment_id || null,
+  estimated_cost: numberValue(line.estimated_cost) > 0 || estimatedMad === 0 ? numberValue(line.estimated_cost) : estimatedMad,
+  supplier_quoted_cost: line.supplier_quoted_cost === "" || line.supplier_quoted_cost == null ? null : numberValue(line.supplier_quoted_cost),
+  confirmed_cost: line.confirmed_cost === "" || line.confirmed_cost == null ? null : numberValue(line.confirmed_cost),
+  final_cost: line.final_cost === "" || line.final_cost == null ? null : numberValue(line.final_cost),
+  component_selling_price: numberValue(line.component_selling_price ?? sellingMad),
+  cost_currency: line.cost_currency || "MAD",
+  exchange_rate_to_mad: Math.max(0.000001, numberValue(line.exchange_rate_to_mad || 1)),
+  supplier_payment_status: line.supplier_payment_status || "not_due",
+});
+
 const throwIfSupabaseError = (result: { error?: any }, label: string) => {
   if (result.error) {
     throw new Error(`${label}: ${result.error.message ?? "erreur Supabase"}`);
@@ -1433,6 +1451,7 @@ export default function FitQuotes() {
         is_client_visible: Boolean(line.is_client_visible),
         included_in_calculation: line.included_in_calculation !== false,
         cost_role: line.cost_role || (line.category === "agency_fee" ? "japan_agency_fee_auto" : "supplier_cost"),
+        ...financialOverlayPayload(line, numberValue(line.subtotal_mad), numberValue(line.subtotal_mad)),
       })).filter((line: any) => line.day_id));
       if (dayLineRows.length) {
         const { error } = await db.from("fit_quote_day_cost_lines").insert(dayLineRows);
@@ -1454,6 +1473,7 @@ export default function FitQuotes() {
           optional: Boolean(line.optional),
           included_in_calculation: line.included_in_calculation !== false,
           cost_role: line.cost_role || (line.category === "agency_fee" ? "japan_agency_fee_auto" : "supplier_cost"),
+          ...financialOverlayPayload(line, numberValue(line.total_mad ?? line.subtotal_mad), numberValue(line.selling_price_mad)),
         })));
         if (error) throw error;
       }
@@ -1474,6 +1494,7 @@ export default function FitQuotes() {
           subtotal_mad: numberValue(line.subtotal_mad),
           notes: line.notes || null,
           public_notes: line.public_notes || null,
+          ...financialOverlayPayload(line, numberValue(line.subtotal_mad), numberValue(line.subtotal_mad)),
         })));
         if (error) throw error;
       }
@@ -1491,6 +1512,7 @@ export default function FitQuotes() {
           subtotal_mad: numberValue(line.subtotal_mad),
           notes: line.notes || null,
           public_notes: line.public_notes || null,
+          ...financialOverlayPayload(line, numberValue(line.subtotal_mad), numberValue(line.subtotal_mad)),
         })));
         if (error) throw error;
       }

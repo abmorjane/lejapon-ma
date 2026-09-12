@@ -18,8 +18,8 @@ begin
       coalesce(comm.gross_agency_commission_amount_mad,0) agency_commission,
       coalesce(comm.sales_agent_commission_amount_mad,0) agent_commission,
       coalesce((select sum(x.estimated_cost*x.exchange_rate) from public._fit_financial_components_v4(q.id)x),0) estimated_cost,
-      coalesce((select sum(coalesce(x.confirmed_cost,x.supplier_quoted_cost,x.estimated_cost)*x.exchange_rate) from public._fit_financial_components_v4(q.id)x),0) confirmed_cost,
-      coalesce((select sum(coalesce(x.final_cost,x.confirmed_cost,x.supplier_quoted_cost,x.estimated_cost)*x.exchange_rate) from public._fit_financial_components_v4(q.id)x),0) final_cost,
+      coalesce((select sum(x.confirmed_cost*x.exchange_rate) filter(where x.confirmed_cost is not null) from public._fit_financial_components_v4(q.id)x),0) confirmed_cost,
+      coalesce((select sum(x.final_cost*x.exchange_rate) filter(where x.final_cost is not null) from public._fit_financial_components_v4(q.id)x),0) final_cost,
       coalesce((select sum(case when p.status='received' then p.amount_mad when p.status='refunded' then -p.amount_mad else 0 end) from public.payments p where p.fit_quote_id=q.id or (q.converted_booking_id is not null and p.booking_id=q.converted_booking_id)),0) client_paid,
       (select string_agg(distinct f.pnr,' · ') from public.booking_flight_reservations f where f.booking_id=q.converted_booking_id and nullif(trim(f.pnr),'') is not null) pnr
     from public.fit_quotes q

@@ -35,7 +35,7 @@ export default function Suppliers() {
     setLinkSupplier(s); setLinkOpen(true); setMemberUid("");
     const [{ data: t }, { data: ts }, { data: m }] = await Promise.all([
       supabase.from("trips").select("id,title").order("start_date", { ascending: false }),
-      supabase.from("trip_suppliers").select("trip_id").eq("supplier_id", s.id),
+      (supabase as any).from("trip_suppliers").select("trip_id").eq("supplier_id", s.id).neq("status", "cancelled"),
       supabase.from("supplier_members").select("id,user_id,created_at").eq("supplier_id", s.id),
     ]);
     setTrips(t ?? []);
@@ -46,11 +46,23 @@ export default function Suppliers() {
   const toggleTrip = async (tripId: string, on: boolean) => {
     if (!linkSupplier) return;
     if (on) {
-      const { error } = await supabase.from("trip_suppliers").insert({ trip_id: tripId, supplier_id: linkSupplier.id });
+      const { error } = await (supabase as any).rpc("assign_supplier_trip_quote_v2", {
+        p_trip_id: tripId,
+        p_supplier_id: linkSupplier.id,
+      });
       if (error) return toast.error(error.message);
       setAssignedTrips((p) => [...p, tripId]);
+      const { data: emailData, error: emailError } = await supabase.functions.invoke("send-admin-notification", {
+        body: { event_type: "supplier_trip_assigned", trip_id: tripId, supplier_id: linkSupplier.id },
+      });
+      if (emailError || emailData?.ok === false) {
+        toast.warning("Voyage assigné. L’email fournisseur est resté en échec dans la file de notifications.");
+      }
     } else {
-      const { error } = await supabase.from("trip_suppliers").delete().eq("trip_id", tripId).eq("supplier_id", linkSupplier.id);
+      const { error } = await (supabase as any).from("trip_suppliers")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("trip_id", tripId)
+        .eq("supplier_id", linkSupplier.id);
       if (error) return toast.error(error.message);
       setAssignedTrips((p) => p.filter((x) => x !== tripId));
     }

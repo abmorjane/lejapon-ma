@@ -26,6 +26,11 @@ type EventType =
   | "fit_deposit_requested"
   | "fit_payment_received"
   | "fit_booking_confirmed"
+  | "supplier_trip_assigned"
+  | "supplier_quote_submitted"
+  | "supplier_quote_revision_requested"
+  | "supplier_quote_approved"
+  | "supplier_quote_comment"
   | "payment_recorded"
   | "agency_payment_recorded"
   | "new_reservation"
@@ -38,7 +43,7 @@ type EventType =
   | "resend_log"
   | "unknown";
 type LogStatus = "pending" | "sent" | "failed";
-type AdminNotificationType = "new_reservation" | "new_payment" | "new_visa_request" | "agency_fit_request" | "fit_commercial";
+type AdminNotificationType = "new_reservation" | "new_payment" | "new_visa_request" | "agency_fit_request" | "fit_commercial" | "supplier_quote";
 type AdminNotificationChannel = "email" | "push";
 
 type EmailPayload = {
@@ -568,6 +573,7 @@ function adminNotificationTypeForPayload(payload: EmailPayload): AdminNotificati
   if (payload.eventType === "new_visa_request") return "new_visa_request";
   if (payload.eventType === "agency_fit_request") return "agency_fit_request";
   if (["fit_quote_viewed", "fit_quote_revision_requested", "fit_quote_accepted", "fit_quote_declined"].includes(payload.eventType)) return "fit_commercial";
+  if (["supplier_quote_submitted", "supplier_quote_comment"].includes(payload.eventType) && payload.metadata?.audience === "admin") return "supplier_quote";
   return null;
 }
 
@@ -583,6 +589,7 @@ function notificationFromEmailPayload(payload: EmailPayload): AdminNotification 
     new_visa_request: "Nouvelle demande de visa",
     agency_fit_request: "Nouvelle demande FIT agence",
     fit_commercial: String(metadata.notification_title || "Mise à jour devis FIT"),
+    supplier_quote: String(metadata.notification_title || "Mise à jour devis fournisseur"),
   };
   const messages: Record<AdminNotificationType, string> = {
     new_reservation: `${clientName} vient de faire une réservation.`,
@@ -590,6 +597,7 @@ function notificationFromEmailPayload(payload: EmailPayload): AdminNotification 
     new_visa_request: `${clientName} a créé une nouvelle demande de visa.`,
     agency_fit_request: `${plainMissing(metadata.agency_name)} a envoyé une demande FIT pour ${clientName}.`,
     fit_commercial: String(metadata.notification_message || `${clientName} a mis à jour son devis FIT.`),
+    supplier_quote: String(metadata.notification_message || "Un devis fournisseur a été mis à jour."),
   };
   const relatedId = payload.related_payment_id ?? payload.related_booking_id ?? String(metadata.visa_application_id ?? metadata.related_id ?? "");
   return {
@@ -1536,6 +1544,123 @@ const fitLifecycleEvents = [
   "fit_quote_sent", "fit_quote_revision_ready", "fit_deposit_requested", "fit_payment_received", "fit_booking_confirmed",
 ] as const;
 
+const supplierWorkflowEvents = [
+  "supplier_trip_assigned", "supplier_quote_submitted", "supplier_quote_revision_requested",
+  "supplier_quote_approved", "supplier_quote_comment",
+] as const;
+
+async function requestUser(admin: any, req: Request) {
+  const jwt = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!jwt) throw new Error("missing_auth");
+  const { data, error } = await admin.auth.getUser(jwt);
+  if (error || !data.user) throw new Error("invalid_token");
+  return data.user;
+}
+
+async function supplierRecipients(admin: any, supplier: any) {
+  const recipients = new Set<string>();
+  const contact = normalizeEmail(supplier?.contact_email);
+  if (contact) recipients.add(contact);
+  const { data: members } = await admin.from("supplier_members").select("user_id").eq("supplier_id", supplier.id);
+  for (const member of members ?? []) {
+    const { data } = await admin.auth.admin.getUserById(member.user_id);
+    const email = normalizeEmail(data?.user?.email);
+    if (email) recipients.add(email);
+  }
+  return [...recipients];
+}
+
+async function supplierWorkflowEmails(admin: any, body: any, req: Request): Promise<EmailPayload[]> {
+  const eventType = String(body.event_type || body.type) as EventType;
+  const actor = await requestUser(admin, req);
+  const { data: actorRoles } = await admin.from("user_roles").select("role").eq("user_id", actor.id);
+  const staff = (actorRoles ?? []).some((row: any) => ["admin", "manager", "agent", "super_admin"].includes(row.role));
+  const tripId = String(body.trip_id || body.payload?.trip_id || "");
+  const quoteId = String(body.quote_id || body.payload?.quote_id || "");
+  const commentId = String(body.comment_id || body.payload?.comment_id || "");
+
+  let quote: any = null;
+  let resolvedTripId = tripId;
+  let supplierId = String(body.supplier_id || body.payload?.supplier_id || "");
+  if (quoteId) {
+    const { data, error } = await admin.from("supplier_trip_quotes").select("id,trip_id,supplier_id,status,version_number,grand_total_jpy").eq("id", quoteId).maybeSingle();
+    if (error || !data) throw new Error(error?.message || "Supplier quote not found");
+    quote = data; resolvedTripId = data.trip_id; supplierId = data.supplier_id;
+  }
+  const [{ data: trip }, { data: supplier }] = await Promise.all([
+    admin.from("trips").select("id,title,start_date,end_date,duration_days,total_slots").eq("id", resolvedTripId).maybeSingle(),
+    admin.from("suppliers").select("id,name,contact_name,contact_email").eq("id", supplierId).maybeSingle(),
+  ]);
+  if (!trip || !supplier) throw new Error("Supplier workflow context not found");
+
+  if (!staff) {
+    const { data: membership } = await admin.from("supplier_members").select("id").eq("user_id", actor.id).eq("supplier_id", supplier.id).limit(1);
+    if (!membership?.length) throw new Error("not_supplier_member");
+  }
+  if (["supplier_trip_assigned", "supplier_quote_revision_requested", "supplier_quote_approved"].includes(eventType) && !staff) {
+    throw new Error("not_staff");
+  }
+  if (eventType === "supplier_quote_comment" && commentId) {
+    const { data: comment } = await admin.from("supplier_quote_comments").select("id,created_by,visibility,body").eq("id", commentId).eq("quote_id", quoteId).maybeSingle();
+    if (!comment || (!staff && comment.created_by !== actor.id)) throw new Error("comment access denied");
+    if (staff && comment.visibility === "internal") return [];
+  }
+
+  const version = `V${Number(quote?.version_number || 1)}`;
+  const duration = trip.start_date && trip.end_date
+    ? Math.max(1, Math.round((new Date(trip.end_date).getTime() - new Date(trip.start_date).getTime()) / 86400000) + 1)
+    : Number(trip.duration_days || 0);
+  const supplierUrl = `${adminBaseUrl()}/supplier/trips/${trip.id}/quote`;
+  const adminUrl = `${adminBaseUrl()}/supplier/trips/${trip.id}/quote`;
+  const portalNotificationType: Partial<Record<EventType, string>> = {
+    supplier_trip_assigned: "trip_assigned",
+    supplier_quote_revision_requested: "quote_revision_requested",
+    supplier_quote_approved: "quote_approved",
+    supplier_quote_comment: "quote_comment",
+  };
+  const expectedNotificationType = portalNotificationType[eventType];
+  const notificationQuery = expectedNotificationType
+    ? await admin.from("supplier_portal_notifications")
+      .select("id")
+      .eq("supplier_id", supplier.id)
+      .eq("entity_id", eventType === "supplier_trip_assigned" ? trip.id : (quote?.id || trip.id))
+      .eq("type", expectedNotificationType)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    : { data: null };
+  const notification = notificationQuery.data;
+  const metadataBase = { supplier_id: supplier.id, supplier_name: supplier.name, trip_id: trip.id, trip_title: trip.title, supplier_quote_id: quote?.id, version_number: quote?.version_number, supplier_notification_id: notification?.id };
+
+  if (["supplier_trip_assigned", "supplier_quote_revision_requested", "supplier_quote_approved"].includes(eventType) || (eventType === "supplier_quote_comment" && staff)) {
+    const recipients = await supplierRecipients(admin, supplier);
+    if (!recipients.length) throw new Error("Supplier email is missing");
+    const copy: Record<string, [string, string]> = {
+      supplier_trip_assigned: [`Nouveau voyage assigné – Demande de devis – ${trip.title}`, "Un nouveau voyage vous est assigné. Merci de préparer le devis fournisseur dans votre portail."],
+      supplier_quote_revision_requested: [`Correction demandée – ${trip.title} – ${version}`, "L’équipe LeJapon.ma demande une correction de votre devis fournisseur."],
+      supplier_quote_approved: [`Devis approuvé – ${trip.title} – ${version}`, "Votre devis fournisseur a été approuvé. La version validée reste consultable dans votre portail."],
+      supplier_quote_comment: [`Nouveau commentaire – ${trip.title} – ${version}`, "Un nouveau commentaire partagé a été ajouté à une ligne de votre devis."],
+    };
+    const [subject, message] = copy[eventType];
+    return recipients.map((recipient) => ({
+      eventType, recipient, subject,
+      html: emailShell(subject, message, [["Voyage", trip.title], ["Arrivée", fmtDateOnly(trip.start_date)], ["Départ", fmtDateOnly(trip.end_date)], ["Durée", duration ? `${duration} jours` : missing], ["Participants prévisionnels", trip.total_slots]], { label: "Préparer le devis", href: supplierUrl }),
+      text: `${subject}\n\n${message}\nVoyage: ${trip.title}\nArrivée: ${fmtDateOnly(trip.start_date)}\nDépart: ${fmtDateOnly(trip.end_date)}\nDurée: ${duration || missing} jours\n${supplierUrl}`,
+      metadata: { ...metadataBase, workflow_event: eventType, audience: "supplier" },
+    }));
+  }
+
+  const adminCopy = eventType === "supplier_quote_submitted"
+    ? [`Devis fournisseur soumis – ${trip.title} – ${version}`, `${supplier.name} a soumis ${version}.`]
+    : [`Réponse fournisseur – ${trip.title} – ${version}`, `${supplier.name} a répondu à un commentaire du devis.`];
+  return [{
+    eventType, recipient: adminRecipient(), subject: adminCopy[0],
+    html: emailShell(adminCopy[0], adminCopy[1], [["Fournisseur", supplier.name], ["Voyage", trip.title], ["Version", version]], { label: "Ouvrir le devis fournisseur", href: adminUrl }),
+    text: `${adminCopy[0]}\n\n${adminCopy[1]}\n${adminUrl}`,
+    metadata: { ...metadataBase, workflow_event: eventType, audience: "admin", notification_title: adminCopy[0], notification_message: adminCopy[1], admin_url: adminUrl, related_id: quote?.id },
+  }];
+}
+
 async function fitLifecycleEmails(admin: any, body: any, req: Request): Promise<EmailPayload[]> {
   const eventType = String(body.event_type || body.type) as EventType;
   const payload = body?.payload && typeof body.payload === "object" ? body.payload : {};
@@ -1718,6 +1843,7 @@ function eventTypeFromBody(body: any): EventType {
   if (type === "agency_fit_request") return "agency_fit_request";
   if (type === "agency_fit_quote_ready") return "agency_fit_quote_ready";
   if ((fitLifecycleEvents as readonly string[]).includes(type)) return type as EventType;
+  if ((supplierWorkflowEvents as readonly string[]).includes(type)) return type as EventType;
   if (type === "payment" || type === "new_payment") return "payment_recorded";
   if (type === "visa_request" || type === "new_visa_request") return "new_visa_request";
   if (type === "agency_payment") return "agency_payment_recorded";
@@ -1728,7 +1854,7 @@ function eventTypeFromBody(body: any): EventType {
   if (["contact_internal", "contact_client", "booking_internal", "booking_client", "client_portal_invitation", "new_visa_request", "agency_fit_request", "agency_fit_quote_ready"].includes(type)) return type as EventType;
 
   const eventType = String(body?.event_type ?? "");
-  if (["booking_created", "new_booking", "client_portal_invitation", "agency_booking_internal", "agency_fit_request", "agency_fit_quote_ready", "payment_recorded", "new_payment", "new_visa_request", "visa_request", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log", ...fitLifecycleEvents].includes(eventType)) {
+  if (["booking_created", "new_booking", "client_portal_invitation", "agency_booking_internal", "agency_fit_request", "agency_fit_quote_ready", "payment_recorded", "new_payment", "new_visa_request", "visa_request", "agency_payment_recorded", "contact_message", "test_email", "test", "resend_log", ...fitLifecycleEvents, ...supplierWorkflowEvents].includes(eventType)) {
     if (eventType === "new_booking") return "booking_created";
     if (eventType === "new_payment") return "payment_recorded";
     if (eventType === "visa_request") return "new_visa_request";
@@ -1765,6 +1891,7 @@ async function payloadFromBody(admin: any, body: any, req: Request): Promise<Ema
   const type = String(body.type ?? "");
   const payload = body?.payload && typeof body.payload === "object" ? body.payload : {};
   if ((fitLifecycleEvents as readonly string[]).includes(type) || (fitLifecycleEvents as readonly string[]).includes(String(body.event_type || ""))) return fitLifecycleEmails(admin, body, req);
+  if ((supplierWorkflowEvents as readonly string[]).includes(type) || (supplierWorkflowEvents as readonly string[]).includes(String(body.event_type || ""))) return supplierWorkflowEmails(admin, body, req);
   if (type === "contact") return contactEmailsFromPayload(admin, body.payload ?? {});
   if (type === "contact_internal") {
     const contactId = String(body.payload?.contact_id ?? body.contact_id ?? "");
@@ -1906,6 +2033,16 @@ Deno.serve(async (req) => {
       } else {
         results.push(await sendEmail(admin, payload));
       }
+    }
+    const supplierNotificationIds = [...new Set(payloads.map((payload) => String(payload.metadata?.supplier_notification_id || "")).filter(Boolean))];
+    if (supplierNotificationIds.length) {
+      const failedDelivery = results.some((item: any) => item.ok === false);
+      await admin.from("supplier_portal_notifications").update({
+        email_delivery_status: failedDelivery ? "failed" : "sent",
+        email_sent_at: failedDelivery ? null : new Date().toISOString(),
+        email_last_error: failedDelivery ? results.map((item: any) => item.detail || item.error).filter(Boolean).join(" | ") : null,
+        email_attempt_count: 1,
+      }).in("id", supplierNotificationIds);
     }
     const failed = results.filter((result: any) => result.ok === false);
     const result = {

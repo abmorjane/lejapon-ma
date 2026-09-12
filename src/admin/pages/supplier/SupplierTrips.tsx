@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, BedDouble, ClipboardList, Plane, Ticket, Users } from "lucide-react";
+import { ArrowRight, BedDouble, Bell, Check, ClipboardList, Plane, Ticket, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { PageHeader } from "../../components/PageHeader";
@@ -27,6 +27,15 @@ type TripCard = {
   quote_id?: string | null;
 };
 
+type SupplierNotification = {
+  id: string;
+  title: string;
+  message?: string | null;
+  link?: string | null;
+  read_at?: string | null;
+  created_at: string;
+};
+
 const quoteStatusLabel: Record<string, string> = {
   draft: "Brouillon",
   submitted: "Soumis",
@@ -50,7 +59,9 @@ export default function SupplierTrips() {
   const [supplierIds, setSupplierIds] = useState<string[]>([]);
   const [quoteTableMissing, setQuoteTableMissing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadErrorDetail, setLoadErrorDetail] = useState<string | null>(null);
   const [hasSupplierMembership, setHasSupplierMembership] = useState(true);
+  const [notifications, setNotifications] = useState<SupplierNotification[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -58,6 +69,7 @@ export default function SupplierTrips() {
       setLoading(true);
       setQuoteTableMissing(false);
       setLoadError(null);
+      setLoadErrorDetail(null);
 
       const { data: members, error: membersError } = await db
         .from("supplier_members")
@@ -67,12 +79,35 @@ export default function SupplierTrips() {
         setTrips([]);
         setHasSupplierMembership(false);
         setLoadError("Impossible de charger votre rattachement fournisseur.");
+        setLoadErrorDetail(formatSupabaseError(membersError));
         setLoading(false);
         return;
       }
       const currentSupplierIds = Array.from(new Set((members ?? []).map((member: any) => member.supplier_id).filter(Boolean)));
       setSupplierIds(currentSupplierIds);
       setHasSupplierMembership(isAdmin || currentSupplierIds.length > 0);
+
+      if (!isAdmin) {
+        const [{ data: dashboardRows, error: dashboardError }, notificationResult] = await Promise.all([
+          db.rpc("get_supplier_trip_dashboard"),
+          db.from("supplier_portal_notifications").select("id,title,message,link,read_at,created_at").order("created_at", { ascending: false }).limit(8),
+        ]);
+        if (dashboardError) {
+          console.error("Supplier dashboard query failed", dashboardError);
+          setTrips([]);
+          setLoadError("Impossible de charger vos voyages assignés.");
+          setLoadErrorDetail(formatSupabaseError(dashboardError));
+          setLoading(false);
+          return;
+        }
+        if (notificationResult.error && !isMissingTableError(notificationResult.error)) {
+          console.error("Supplier notifications query failed", notificationResult.error);
+        }
+        setNotifications(notificationResult.data ?? []);
+        setTrips((dashboardRows ?? []) as TripCard[]);
+        setLoading(false);
+        return;
+      }
 
       let assignedTripIds: string[] = [];
       if (currentSupplierIds.length) {
@@ -83,6 +118,7 @@ export default function SupplierTrips() {
         if (assignmentError && !isAdmin) {
           setTrips([]);
           setLoadError("Impossible de charger vos voyages assignés.");
+          setLoadErrorDetail(formatSupabaseError(assignmentError));
           setLoading(false);
           return;
         }
@@ -96,7 +132,7 @@ export default function SupplierTrips() {
 
       let tripQuery = db
         .from("trips")
-        .select("id,title,status,start_date,end_date,duration_days,season,is_public")
+        .select("id,title,status,start_date,end_date,duration_days,season")
         .order("start_date", { ascending: true, nullsFirst: false });
 
       if (assignedTripIds.length) {
@@ -105,8 +141,10 @@ export default function SupplierTrips() {
 
       const { data: tripRows, error: tripError } = await tripQuery;
       if (tripError) {
+        console.error("Supplier trips query failed", tripError);
         setTrips([]);
         setLoadError("Impossible de charger vos voyages assignés.");
+        setLoadErrorDetail(formatSupabaseError(tripError));
         setLoading(false);
         return;
       }
@@ -161,6 +199,12 @@ export default function SupplierTrips() {
     })();
   }, [isAdmin, user]);
 
+  const markNotificationRead = async (notification: SupplierNotification) => {
+    const { error } = await db.rpc("mark_supplier_notification_read", { p_notification_id: notification.id });
+    if (error) return;
+    setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read_at: new Date().toISOString() } : item));
+  };
+
   const summary = useMemo(() => ({
     trips: trips.length,
     participants: trips.reduce((sum, trip) => sum + trip.participant_count, 0),
@@ -188,6 +232,30 @@ export default function SupplierTrips() {
         <StatCard icon={Ticket} label="Extras sélectionnés" value={summary.extras} />
       </div>
 
+      {!isAdmin && notifications.length > 0 && (
+        <Card className="overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+            <Bell className="h-4 w-4 text-primary" />
+            <h2 className="font-display text-lg">Notifications</h2>
+            <Badge variant="outline">{notifications.filter((item) => !item.read_at).length} non lue(s)</Badge>
+          </div>
+          <div className="divide-y divide-border">
+            {notifications.map((notification) => (
+              <div key={notification.id} className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between ${notification.read_at ? "opacity-70" : "bg-primary/5"}`}>
+                <div>
+                  <p className="font-medium">{notification.title}</p>
+                  {notification.message && <p className="text-sm text-muted-foreground">{notification.message}</p>}
+                </div>
+                <div className="flex gap-2">
+                  {notification.link && <Button asChild size="sm" variant="outline"><Link to={notification.link}>Ouvrir</Link></Button>}
+                  {!notification.read_at && <Button size="sm" variant="ghost" onClick={() => void markNotificationRead(notification)}><Check className="h-4 w-4" /> Lu</Button>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {loading ? (
         <p className="text-muted-foreground">Chargement…</p>
       ) : loadError ? (
@@ -197,6 +265,7 @@ export default function SupplierTrips() {
           <p className="mt-1 text-sm text-muted-foreground">
             Contactez l'équipe LeJapon.ma si le problème persiste.
           </p>
+          {loadErrorDetail && <p className="mt-3 break-all font-mono text-xs text-destructive">{loadErrorDetail}</p>}
         </Card>
       ) : trips.length === 0 ? (
         <Card className="p-10 text-center">
@@ -258,6 +327,8 @@ const countBy = (rows: any[], key: string) => {
 
 const isMissingTableError = (error: any) =>
   ["42P01", "PGRST205", "PGRST204"].includes(error?.code) || /Could not find the table|does not exist|schema cache/i.test(error?.message ?? "");
+
+const formatSupabaseError = (error: any) => [error?.code, error?.message, error?.details, error?.hint].filter(Boolean).join(" · ") || "Erreur Supabase inconnue";
 
 const StatCard = ({ icon: Icon, label, value }: { icon: any; label: string; value: number }) => (
   <Card className="p-4">

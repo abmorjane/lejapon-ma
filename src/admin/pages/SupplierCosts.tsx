@@ -80,7 +80,7 @@ export default function SupplierCosts() {
           if (!calculated[row.quote_id]) {
             calculated[row.quote_id] = { hotels: 0, transport: 0, activities: 0, guides: 0, other: 0 };
           }
-          calculated[row.quote_id][section] += supplierRowSubtotal(section, row);
+          if (row.included_in_total !== false) calculated[row.quote_id][section] += supplierRowSubtotal(section, row);
         });
       });
       Object.entries(calculated).forEach(([quoteId, totals]: [string, any]) => {
@@ -172,7 +172,7 @@ export default function SupplierCosts() {
           return (
             <Card key={quote.id}>
               <CardHeader className="flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-base">{quote.supplier_id ? suppliers[quote.supplier_id] ?? "Fournisseur" : "Japan office / admin"}</CardTitle>
+                <CardTitle className="text-base">{quote.supplier_id ? suppliers[quote.supplier_id] ?? "Fournisseur" : "Fournisseur non rattaché"}</CardTitle>
                 <span className="font-display text-xl text-primary">
                   {hasTotals ? fmtJPY(finalTotalJpy) : "Devis créé"}
                 </span>

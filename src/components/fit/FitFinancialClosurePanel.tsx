@@ -22,7 +22,7 @@ type SupplierItem = {
 };
 type ClosureData = {
   financial_status: string; can_close: boolean; cash_exposure_mad: number; final_margin_mad: number;
-  expected_margin_mad: number; confirmed_margin_mad: number; closed_at?: string | null;
+  expected_margin_mad: number; confirmed_margin_mad: number; confirmed_complete?: boolean; final_complete?: boolean; closed_at?: string | null;
   client?: { balance_mad: number; selling_price_mad: number; deposit_required_mad: number; deposit_received_mad: number; additional_payments_mad: number; refunds_mad: number; received_mad: number; payments?: ClientPayment[] };
   suppliers?: { payable_mad: number; paid_mad: number; incomplete_count: number; items?: SupplierItem[] };
   alerts?: { client_payment_overdue?: boolean; client_balance_due?: number; supplier_payment_due?: boolean; cancellation_deadline?: boolean; unpaid_supplier?: boolean; missing_invoice?: boolean; commission_not_finalized?: boolean };
@@ -153,9 +153,9 @@ export function FitFinancialClosurePanel({ quoteId, readOnly = false }: { quoteI
       <Metric icon={CircleDollarSign} label="Créance client" value={client.balance_mad} />
       <Metric icon={Landmark} label="Dettes fournisseurs" value={suppliers.payable_mad} />
       <Metric icon={WalletCards} label="Exposition de trésorerie" value={data.cash_exposure_mad} />
-      <Metric icon={Receipt} label="Marge finale" value={data.final_margin_mad} />
+      <Metric icon={Receipt} label="Marge finale" value={data.final_margin_mad} available={Boolean(data.final_complete)} helper={data.final_complete ? undefined : "Coûts finaux incomplets"} />
       <Metric icon={Receipt} label="Marge attendue" value={data.expected_margin_mad} />
-      <Metric icon={Receipt} label="Marge confirmée" value={data.confirmed_margin_mad} />
+      <Metric icon={Receipt} label="Marge confirmée" value={data.confirmed_margin_mad} available={Boolean(data.confirmed_complete)} helper={data.confirmed_complete ? undefined : "Engagements incomplets"} />
       <Metric icon={FileCheck2} label="Fournisseurs payés" value={suppliers.paid_mad} />
       <Metric icon={CheckCircle2} label="Paiements client" value={client.received_mad} />
     </div>
@@ -194,7 +194,7 @@ export function FitFinancialClosurePanel({ quoteId, readOnly = false }: { quoteI
   </section>;
 }
 
-function Metric({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: number }) { return <Card className="rounded-md p-4"><div className="flex items-center gap-2 text-xs text-muted-foreground"><Icon className="h-4 w-4" />{label}</div><p className="mt-2 text-lg font-semibold tabular-nums">{fmtMAD(value || 0)}</p></Card>; }
+function Metric({ icon: Icon, label, value, available = true, helper }: { icon: LucideIcon; label: string; value: number; available?: boolean; helper?: string }) { return <Card className="rounded-md p-4"><div className="flex items-center gap-2 text-xs text-muted-foreground"><Icon className="h-4 w-4" />{label}</div><p className="mt-2 text-lg font-semibold tabular-nums">{available ? fmtMAD(value || 0) : "—"}</p>{helper && <p className="mt-1 text-xs text-muted-foreground">{helper}</p>}</Card>; }
 function Amount({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) { return <div className="rounded-md bg-secondary/60 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 tabular-nums ${strong ? "font-bold text-foreground" : "font-medium"}`}>{fmtMAD(value || 0)}</p></div>; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div className="space-y-1.5"><Label>{label}</Label>{children}</div>; }
 function TextField({ id, label, value, onChange, type = "text", inputMode, disabled = false }: { id: string; label: string; value: string; onChange: (value: string) => void; type?: string; inputMode?: "decimal"; disabled?: boolean }) { return <div className="space-y-1.5"><Label htmlFor={id}>{label}</Label><Input id={id} type={type} inputMode={inputMode} value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} /></div>; }

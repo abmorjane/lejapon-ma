@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, Download, MessageSquare, Paperclip, Plane, Plus, Save, Search, Send, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Download, History, MessageSquare, Paperclip, Plane, Plus, Save, Search, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -23,7 +23,7 @@ import {
 
 const db = supabase as any;
 
-type QuoteStatus = "draft" | "submitted" | "reviewed" | "approved" | "revision_requested";
+type QuoteStatus = "draft" | "submitted" | "reviewed" | "approved" | "revision_requested" | "rejected" | "archived";
 type RowStatus = "todo" | "pending" | "confirmed" | "issue";
 type QuoteSection = "hotels" | "transport" | "activities" | "guides" | "other";
 type ValidationItemKey = QuoteSection | "participants" | "rooming" | "documents";
@@ -38,7 +38,22 @@ type QuoteRow = {
   status: RowStatus;
   assigned_to?: string | null;
   comment?: string | null;
+  included_in_total?: boolean;
+  review_status?: "pending" | "approved" | "rejected";
   [key: string]: any;
+};
+
+type QuoteLineComment = {
+  id: string;
+  quote_id: string;
+  row_table: string;
+  row_id: string;
+  visibility: "supplier" | "internal";
+  body: string;
+  author_name?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  requires_attention?: boolean;
 };
 
 type DayOperationalStatus = "to_confirm" | "confirmed" | "attention" | "modified";
@@ -105,6 +120,7 @@ type TripDocument = {
   uploaded_at: string;
   updated_at?: string | null;
   deleted_at?: string | null;
+  supplier_visible?: boolean;
 };
 
 const tableBySection: Record<QuoteSection, string> = {
@@ -129,6 +145,8 @@ const quoteStatusLabel: Record<QuoteStatus, string> = {
   reviewed: "Revu",
   approved: "Approuvé",
   revision_requested: "Révision demandée",
+  rejected: "Rejeté",
+  archived: "Superseded",
 };
 
 const rowStatusLabel: Record<RowStatus, string> = {
@@ -219,12 +237,16 @@ const roomTypes = ["double/twin", "single", "triple", "TL"];
 
 export default function SupplierTripCosts() {
   const { tripId } = useParams();
-  const { user, roles, isAdmin } = useAuth();
+  const { user, roles, isInternalStaff: isAdmin } = useAuth();
   const [trip, setTrip] = useState<any>(null);
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [supplierName, setSupplierName] = useState<string>("Japan office");
+  const [supplierOptions, setSupplierOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [accessDenied, setAccessDenied] = useState<string | null>(null);
   const [quote, setQuote] = useState<any>(null);
+  const [quoteVersions, setQuoteVersions] = useState<any[]>([]);
+  const [lineComments, setLineComments] = useState<QuoteLineComment[]>([]);
+  const [versionChanges, setVersionChanges] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<QuoteSection, QuoteRow[]>>({
     hotels: [],
     transport: [],
@@ -251,6 +273,7 @@ export default function SupplierTripCosts() {
   const [commissionPct, setCommissionPct] = useState(10);
   const [exchangeRate, setExchangeRate] = useState(0.068);
   const [internalNotes, setInternalNotes] = useState("");
+  const [adminFeedback, setAdminFeedback] = useState("");
   const [operationalState, setOperationalState] = useState<OperationalState>({ day_statuses: {}, day_comments: {} });
   const [activeTab, setActiveTab] = useState("quote");
   const [messages, setMessages] = useState<TripMessage[]>([]);
@@ -271,7 +294,9 @@ export default function SupplierTripCosts() {
   const [documentBusy, setDocumentBusy] = useState(false);
   const [documentsSqlMissing, setDocumentsSqlMissing] = useState(false);
 
-  const canEdit = isAdmin || ["draft", "submitted", "revision_requested"].includes(status);
+  const canEditSupplierValues = !isAdmin && ["draft", "revision_requested"].includes(status);
+  const canEditOperations = isAdmin || status !== "archived";
+  const canReviewLines = isAdmin && ["submitted", "reviewed"].includes(status);
   const unreadMessageCount = useMemo(
     () => messages.filter((message) => message.sender_id !== user?.id && !messageReads[message.id]).length,
     [messageReads, messages, user?.id]
@@ -333,66 +358,102 @@ export default function SupplierTripCosts() {
       }
       currentSupplierId = assignmentRows[0].supplier_id;
       member = (memberRows ?? []).find((row: any) => row.supplier_id === currentSupplierId) ?? member;
+    } else {
+      const [{ data: allSuppliers, error: suppliersError }, { data: assignedSuppliers }] = await Promise.all([
+        db.from("suppliers").select("id,name").eq("status", "active").order("name"),
+        db.from("trip_suppliers").select("supplier_id,suppliers(name)").eq("trip_id", tripId).neq("status", "cancelled"),
+      ]);
+      if (suppliersError) {
+        toast.error(`Fournisseurs: ${formatSupabaseError(suppliersError)}`);
+        return;
+      }
+      setSupplierOptions(allSuppliers ?? []);
+      currentSupplierId = assignedSuppliers?.[0]?.supplier_id ?? null;
+      member = assignedSuppliers?.[0] ?? null;
     }
 
     setSupplierId(currentSupplierId);
-    setSupplierName(member?.suppliers?.name ?? (isAdmin ? "Japan office / admin" : "Japan office"));
+    setSupplierName(member?.suppliers?.name ?? (isAdmin ? "Aucun fournisseur assigné" : "Fournisseur Japon"));
 
-    const { data: tripRow, error: tripError } = await db
-      .from("trips")
-      .select("*,programmes:programme_id(id,title,duration_days,duration,days)")
-      .eq("id", tripId)
-      .maybeSingle();
-    if (tripError || !tripRow) {
-      toast.error(tripError?.message ?? "Voyage introuvable.");
-      return;
+    let tripRow: any;
+    let dayRows: any[] = [];
+    let bookingRows: any[] = [];
+    let hotelRows: any[] = [];
+    let extraRows: any[] = [];
+    let participantList: any[] = [];
+    let extrasRows: any[] = [];
+    let roomRows: any[] = [];
+    let assignmentRows: any[] = [];
+    let selectionRows: any[] = [];
+
+    if (!isAdmin) {
+      const { data: workspace, error: workspaceError } = await db.rpc("get_supplier_trip_workspace", {
+        p_trip_id: tripId,
+        p_supplier_id: currentSupplierId,
+      });
+      if (workspaceError || !workspace?.trip) {
+        setTrip(null);
+        setAccessDenied(`Impossible de charger le dossier fournisseur. ${formatSupabaseError(workspaceError)}`);
+        return;
+      }
+      tripRow = workspace.trip;
+      dayRows = workspace.programme_days ?? [];
+      bookingRows = workspace.bookings ?? [];
+      hotelRows = workspace.hotels ?? [];
+      extraRows = workspace.extras ?? [];
+      participantList = workspace.participants ?? [];
+      extrasRows = workspace.booking_extras ?? [];
+      roomRows = workspace.rooms ?? [];
+      assignmentRows = workspace.room_assignments ?? [];
+      selectionRows = workspace.participant_activities ?? [];
+    } else {
+      const { data, error: tripError } = await db
+        .from("trips")
+        .select("*,programmes:programme_id(id,title,duration_days,duration,days)")
+        .eq("id", tripId)
+        .maybeSingle();
+      if (tripError || !data) {
+        toast.error(tripError?.message ?? "Voyage introuvable.");
+        return;
+      }
+      tripRow = data;
+      const baseResults = await Promise.all([
+        tripRow.programme_id
+          ? db.from("programme_days").select("*").eq("programme_id", tripRow.programme_id).order("day_number", { ascending: true }).order("sort_order", { ascending: true })
+          : Promise.resolve({ data: [] }),
+        db.from("bookings").select("id,reference,contact_name,contact_email,contact_phone,contact_city,num_adults,num_children,room_type,formula,status,source,agency_organization_id,special_requests,total_amount_mad,paid_amount_mad,metadata,created_at").eq("trip_id", tripId),
+        db.from("trip_hotels").select("*").eq("trip_id", tripId).order("sort_order", { ascending: true }),
+        db.from("extras").select("*").eq("is_active", true).order("sort_order"),
+      ]);
+      dayRows = baseResults[0].data ?? [];
+      bookingRows = baseResults[1].data ?? [];
+      hotelRows = baseResults[2].data ?? [];
+      extraRows = baseResults[3].data ?? [];
+      const bookingIds = bookingRows.map((booking: any) => booking.id);
+      const hotelIds = hotelRows.map((hotel: any) => hotel.id);
+      const detailResults = await Promise.all([
+        bookingIds.length ? db.from("booking_participants").select("*").in("booking_id", bookingIds) : Promise.resolve({ data: [] }),
+        bookingIds.length ? db.from("booking_extras").select("*,extras(id,name,price_mad)").in("booking_id", bookingIds) : Promise.resolve({ data: [] }),
+        hotelIds.length ? db.from("trip_rooms").select("*").in("trip_hotel_id", hotelIds) : Promise.resolve({ data: [] }),
+      ]);
+      participantList = detailResults[0].data ?? [];
+      extrasRows = detailResults[1].data ?? [];
+      roomRows = detailResults[2].data ?? [];
+      const existingParticipantIds = new Set(participantList.map((participant: any) => participant.id));
+      const { data: directParticipantRows } = await db.from("booking_participants").select("*").eq("trip_id", tripId);
+      for (const participant of directParticipantRows ?? []) {
+        if (participant?.id && !existingParticipantIds.has(participant.id)) participantList.push(participant);
+      }
+      const roomIds = roomRows.map((room: any) => room.id);
+      const participantIds = participantList.map((participant: any) => participant.id).filter(Boolean);
+      const relationResults = await Promise.all([
+        roomIds.length ? db.from("room_assignments").select("*").in("room_id", roomIds) : Promise.resolve({ data: [] }),
+        participantIds.length ? db.from("booking_participant_activities").select("*").in("participant_id", participantIds) : Promise.resolve({ data: [] }),
+      ]);
+      assignmentRows = relationResults[0].data ?? [];
+      selectionRows = relationResults[1].data ?? [];
     }
     setTrip(tripRow);
-
-    const [{ data: dayRows }, { data: bookingRows }, { data: hotelRows }, { data: extraRows }] = await Promise.all([
-      tripRow.programme_id
-        ? db.from("programme_days").select("*").eq("programme_id", tripRow.programme_id).order("day_number", { ascending: true }).order("sort_order", { ascending: true })
-        : Promise.resolve({ data: [] }),
-      db.from("bookings").select("id,reference,contact_name,contact_email,contact_phone,contact_city,num_adults,num_children,room_type,formula,status,source,agency_organization_id,special_requests,total_amount_mad,paid_amount_mad,metadata,created_at").eq("trip_id", tripId),
-      db.from("trip_hotels").select("*").eq("trip_id", tripId).order("sort_order", { ascending: true }),
-      db.from("extras").select("*").eq("is_active", true).order("sort_order"),
-    ]);
-
-    const bookingIds = (bookingRows ?? []).map((booking: any) => booking.id);
-    const hotelIds = (hotelRows ?? []).map((hotel: any) => hotel.id);
-
-    const [{ data: participantRows }, { data: extrasRows }, { data: roomRows }] = await Promise.all([
-      bookingIds.length
-        ? db.from("booking_participants").select("*").in("booking_id", bookingIds)
-        : Promise.resolve({ data: [] }),
-      bookingIds.length
-        ? db.from("booking_extras").select("*,extras(id,name,price_mad)").in("booking_id", bookingIds)
-        : Promise.resolve({ data: [] }),
-      hotelIds.length
-        ? db.from("trip_rooms").select("*").in("trip_hotel_id", hotelIds)
-        : Promise.resolve({ data: [] }),
-    ]);
-
-    let participantList = participantRows ?? [];
-    const existingParticipantIds = new Set(participantList.map((participant: any) => participant.id));
-    const { data: directParticipantRows } = await db.from("booking_participants").select("*").eq("trip_id", tripId);
-    for (const participant of directParticipantRows ?? []) {
-      if (participant?.id && !existingParticipantIds.has(participant.id)) {
-        participantList.push(participant);
-        existingParticipantIds.add(participant.id);
-      }
-    }
-
-    const roomIds = (roomRows ?? []).map((room: any) => room.id);
-    const participantIds = participantList.map((participant: any) => participant.id).filter(Boolean);
-    const [{ data: assignmentRows }, { data: selectionRows }] = await Promise.all([
-      roomIds.length
-        ? db.from("room_assignments").select("*").in("room_id", roomIds)
-        : Promise.resolve({ data: [] }),
-      participantIds.length
-        ? db.from("booking_participant_activities").select("*").in("participant_id", participantIds)
-        : Promise.resolve({ data: [] }),
-    ]);
 
     setProgrammeDays(normalizeProgrammeDays(dayRows ?? [], tripRow));
     setBookings(bookingRows ?? []);
@@ -409,12 +470,15 @@ export default function SupplierTripCosts() {
       setQuote(loadedQuote.quote);
       setStatus((loadedQuote.quote.status ?? "draft") as QuoteStatus);
       setValidationStatus((loadedQuote.quote.validation_status ?? "draft") as SupplierValidationStatus);
-      setCommissionPct(Number(loadedQuote.quote.commission_percentage ?? loadedQuote.quote.commission_percent ?? 10));
-      setExchangeRate(Number(loadedQuote.quote.exchange_rate_jpy_mad ?? 0.068));
-      setInternalNotes(loadedQuote.quote.internal_notes ?? loadedQuote.quote.admin_notes ?? "");
+      setCommissionPct(isAdmin ? Number(loadedQuote.quote.commission_percentage ?? loadedQuote.quote.commission_percent ?? 10) : 0);
+      setExchangeRate(isAdmin ? Number(loadedQuote.quote.exchange_rate_jpy_mad ?? 0.068) : 0);
+      setInternalNotes(isAdmin ? loadedQuote.quote.internal_notes ?? loadedQuote.quote.admin_notes ?? "" : "");
+      setAdminFeedback(loadedQuote.quote.admin_feedback ?? "");
       setOperationalState(parseOperationalState(loadedQuote.quote.supplier_notes));
       setValidationOverrides(extractValidationOverrides(loadedQuote.quote));
       setRows(loadedQuote.rows);
+      await loadLineComments(loadedQuote.quote.id);
+      await loadVersionComparison(loadedQuote.quote, loadedQuote.rows);
     } else {
       const initialRows = buildInitialRows({
         trip: tripRow,
@@ -429,15 +493,42 @@ export default function SupplierTripCosts() {
       setQuote(null);
       setStatus("draft");
       setValidationStatus("draft");
-      setCommissionPct(10);
-      setExchangeRate(0.068);
+      setCommissionPct(isAdmin ? 10 : 0);
+      setExchangeRate(isAdmin ? 0.068 : 0);
       setInternalNotes("");
+      setAdminFeedback("");
       setOperationalState({ day_statuses: {}, day_comments: {} });
       setValidationOverrides({});
       setRows(initialRows);
+      setLineComments([]);
+      setVersionChanges([]);
     }
+    await loadQuoteVersions(tripId, currentSupplierId);
     await loadMessages(tripId);
     await loadDocuments(tripId);
+  };
+
+  const loadQuoteVersions = async (targetTripId: string, targetSupplierId: string | null) => {
+    if (!targetSupplierId) return setQuoteVersions([]);
+    const { data, error } = await db.rpc("get_supplier_quote_versions_v2", {
+      p_trip_id: targetTripId,
+      p_supplier_id: targetSupplierId,
+    });
+    if (!error) setQuoteVersions(data ?? []);
+  };
+
+  const loadLineComments = async (quoteId: string) => {
+    const { data, error } = await db.from("supplier_quote_comments").select("*").eq("quote_id", quoteId).order("created_at", { ascending: true });
+    if (!error) setLineComments(data ?? []);
+  };
+
+  const loadVersionComparison = async (targetQuote: any, currentRows: Record<QuoteSection, QuoteRow[]>) => {
+    if (!targetQuote?.parent_quote_id) return setVersionChanges([]);
+    const results = await Promise.all((Object.keys(tableBySection) as QuoteSection[]).map(async (section) => {
+      const { data } = await db.from(tableBySection[section]).select("*").eq("quote_id", targetQuote.parent_quote_id).order("sort_order");
+      return [section, normalizeRows(section, data ?? [])] as const;
+    }));
+    setVersionChanges(buildVersionChanges(currentRows, Object.fromEntries(results) as Record<QuoteSection, QuoteRow[]>));
   };
 
   const loadMessages = async (targetTripId = tripId) => {
@@ -598,6 +689,7 @@ export default function SupplierTripCosts() {
         uploaded_by_role: roles[0] ?? (isAdmin ? "admin" : "supplier"),
         uploaded_at: now,
         updated_at: now,
+        supplier_visible: true,
       });
       if (error) throw error;
       setDocumentTitle("");
@@ -663,16 +755,30 @@ export default function SupplierTripCosts() {
     }
   };
 
-  const loadQuote = async (tripId: string, currentSupplierId: string | null, admin: boolean) => {
-    const query = db
-      .from("supplier_trip_quotes")
-      .select("*")
-      .eq("trip_id", tripId)
-      .order("updated_at", { ascending: false, nullsFirst: false })
-      .limit(1);
-    const { data: quoteRows, error } = currentSupplierId && !admin
-      ? await query.eq("supplier_id", currentSupplierId)
-      : await query;
+  const loadQuote = async (tripId: string, currentSupplierId: string | null, admin: boolean, quoteId?: string) => {
+    if (!admin) {
+      if (!currentSupplierId) return null;
+      const { data: quote, error } = quoteId
+        ? await db.rpc("get_supplier_quote_version_v2", { p_quote_id: quoteId })
+        : await db.rpc("get_supplier_trip_quote", { p_trip_id: tripId, p_supplier_id: currentSupplierId });
+      if (error) {
+        setLastQuoteEngineError(formatSupabaseError(error));
+        if (isMissingTableError(error)) setSqlMissing(true);
+        return null;
+      }
+      if (!quote?.id) return null;
+      const sectionResults = await Promise.all((Object.keys(tableBySection) as QuoteSection[]).map(async (section) => {
+        const { data, error: sectionError } = await db.from(tableBySection[section]).select("*").eq("quote_id", quote.id).order("sort_order", { ascending: true });
+        if (sectionError) setLastQuoteEngineError(`${tableBySection[section]}: ${formatSupabaseError(sectionError)}`);
+        return [section, normalizeRows(section, data ?? [])] as const;
+      }));
+      return { quote, rows: Object.fromEntries(sectionResults) as Record<QuoteSection, QuoteRow[]> };
+    }
+    const query = db.from("supplier_trip_quotes").select("*").eq("trip_id", tripId)
+      .order("version_number", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(1);
+    const { data: quoteRows, error } = currentSupplierId
+      ? await (quoteId ? query.eq("supplier_id", currentSupplierId).eq("id", quoteId) : query.eq("supplier_id", currentSupplierId))
+      : await (quoteId ? query.eq("id", quoteId) : query);
     if (error) {
       setLastQuoteEngineError(formatSupabaseError(error));
       if (isMissingTableError(error)) setSqlMissing(true);
@@ -698,6 +804,73 @@ export default function SupplierTripCosts() {
       quote,
       rows: Object.fromEntries(sectionResults) as Record<QuoteSection, QuoteRow[]>,
     };
+  };
+
+  const selectQuoteVersion = async (quoteId: string) => {
+    if (!tripId || !supplierId) return;
+    setBusy(true);
+    try {
+      const loaded = await loadQuote(tripId, supplierId, isAdmin, quoteId);
+      if (!loaded) throw new Error("Version du devis introuvable.");
+      setQuote(loaded.quote);
+      setStatus((loaded.quote.status ?? "draft") as QuoteStatus);
+      setValidationStatus((loaded.quote.validation_status ?? "draft") as SupplierValidationStatus);
+      setRows(loaded.rows);
+      if (isAdmin) {
+        setCommissionPct(Number(loaded.quote.commission_percentage ?? 10));
+        setExchangeRate(Number(loaded.quote.exchange_rate_jpy_mad ?? 0.068));
+        setInternalNotes(loaded.quote.internal_notes ?? "");
+        setAdminFeedback(loaded.quote.admin_feedback ?? "");
+      }
+      setOperationalState(parseOperationalState(loaded.quote.supplier_notes));
+      await loadLineComments(loaded.quote.id);
+      await loadVersionComparison(loaded.quote, loaded.rows);
+    } catch (error: any) {
+      toast.error(error?.message ?? "Chargement de la version impossible.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectAdminSupplier = async (nextSupplierId: string) => {
+    if (!isAdmin || !tripId) return;
+    const selectedSupplier = supplierOptions.find((item) => item.id === nextSupplierId);
+    const changed = nextSupplierId !== supplierId;
+    if (changed) {
+      const { data: assignment, error: assignmentError } = await db.rpc("assign_supplier_trip_quote_v2", { p_trip_id: tripId, p_supplier_id: nextSupplierId });
+      if (assignmentError) return toast.error(assignmentError.message);
+      const { data: emailData, error: emailError } = await db.functions.invoke("send-admin-notification", {
+        body: { event_type: "supplier_trip_assigned", trip_id: tripId, supplier_id: nextSupplierId },
+      });
+      if (emailError || emailData?.ok === false) toast.warning("Fournisseur assigné. L’email reste en échec dans la file de notifications.");
+      if (assignment?.quote_id) await loadQuoteVersions(tripId, nextSupplierId);
+    }
+    setSupplierId(nextSupplierId);
+    setSupplierName(selectedSupplier?.name ?? "Fournisseur Japon");
+    const loadedQuote = await loadQuote(tripId, nextSupplierId, true);
+    if (loadedQuote) {
+      setQuote(loadedQuote.quote);
+      setStatus((loadedQuote.quote.status ?? "draft") as QuoteStatus);
+      setValidationStatus((loadedQuote.quote.validation_status ?? "draft") as SupplierValidationStatus);
+      setCommissionPct(Number(loadedQuote.quote.commission_percentage ?? loadedQuote.quote.commission_percent ?? 10));
+      setExchangeRate(Number(loadedQuote.quote.exchange_rate_jpy_mad ?? 0.068));
+      setInternalNotes(loadedQuote.quote.internal_notes ?? loadedQuote.quote.admin_notes ?? "");
+      setAdminFeedback(loadedQuote.quote.admin_feedback ?? "");
+      setOperationalState(parseOperationalState(loadedQuote.quote.supplier_notes));
+      setValidationOverrides(extractValidationOverrides(loadedQuote.quote));
+      setRows(loadedQuote.rows);
+      return;
+    }
+    setQuote(null);
+    setStatus("draft");
+    setValidationStatus("draft");
+    setCommissionPct(10);
+    setExchangeRate(0.068);
+    setInternalNotes("");
+    setAdminFeedback("");
+    setOperationalState({ day_statuses: {}, day_comments: {} });
+    setValidationOverrides({});
+    setRows(buildInitialRows({ trip, programmeDays, hotels, rooms, assignments, bookings, participants, bookingExtras }));
   };
 
   const totals = useMemo(
@@ -726,6 +899,10 @@ export default function SupplierTripCosts() {
     } = {}
   ) => {
     if (!tripId) return null;
+    if (!supplierId) {
+      toast.error("Choisissez le fournisseur avant d'enregistrer ou de soumettre le devis.");
+      return null;
+    }
     if (sqlMissing) {
       toast.error(lastQuoteEngineError ? `Migration SQL quote engine requise: ${lastQuoteEngineError}` : "Migration SQL quote engine requise avant l'enregistrement.");
       return null;
@@ -733,6 +910,13 @@ export default function SupplierTripCosts() {
     setBusy(true);
     try {
       const rowsToSave = options.rowsOverride ?? rows;
+      if (!isAdmin && nextStatus === "submitted") {
+        const quoteErrors = quotationSubmissionErrors(rowsToSave);
+        if (quoteErrors.length) {
+          toast.error(quoteErrors[0]);
+          return null;
+        }
+      }
       const overridesToSave = options.validationOverridesOverride ?? validationOverrides;
       const validationStatusToSave = options.validationStatusOverride ?? validationStatus;
       const validationForSave = buildValidationForSave(rowsToSave, overridesToSave);
@@ -773,30 +957,53 @@ export default function SupplierTripCosts() {
         validation_updated_at: new Date().toISOString(),
       };
 
-      let quotePayload: Record<string, any> = { ...quotePayloadBase, ...quotePayloadValidation };
+      const quotePayload: Record<string, any> = { ...quotePayloadBase, ...quotePayloadValidation };
       let quoteResult: any = null;
-      for (let attempt = 0; attempt <= validationDbColumns.length; attempt += 1) {
-        quoteResult = quote?.id
-          ? await db.from("supplier_trip_quotes").update(quotePayload).eq("id", quote.id).select("*").maybeSingle()
-          : await db.from("supplier_trip_quotes").insert({ ...quotePayload, created_by: user?.id ?? null }).select("*").maybeSingle();
-        if (!quoteResult.error) break;
-        const missingColumn = missingValidationColumnName(quoteResult.error);
-        if (!missingColumn || !(missingColumn in quotePayload)) break;
-        const nextPayload = { ...quotePayload };
-        delete nextPayload[missingColumn];
-        quotePayload = nextPayload;
+      if (isAdmin) {
+        let targetQuoteId = quote?.id;
+        if (!targetQuoteId) {
+          const assignmentResult = await db.rpc("assign_supplier_trip_quote_v2", { p_trip_id: tripId, p_supplier_id: supplierId });
+          if (assignmentResult.error) throw withQueryContext(assignmentResult.error, "supplier assignment");
+          targetQuoteId = assignmentResult.data?.quote_id;
+        }
+        quoteResult = await db.rpc("admin_save_supplier_quote_settings_v2", {
+          p_quote_id: targetQuoteId,
+          p_commission_percentage: commissionPct,
+          p_exchange_rate: exchangeRate,
+          p_internal_notes: internalNotes || null,
+          p_supplier_notes: quotePayload.supplier_notes,
+          p_validation_status: validationStatusToSave,
+          p_validation_snapshot: quotePayloadValidation.validation_snapshot,
+          p_validation_metadata: quotePayloadValidation.validation_metadata,
+          p_validation_completion: quotePayloadValidation.validation_completion_percentage,
+        });
+      } else {
+        const supplierPayload = {
+          participant_count: quotePayload.participant_count,
+          supplier_notes: quotePayload.supplier_notes,
+          ...quotePayloadValidation,
+        };
+        const serializedRows = Object.fromEntries((Object.keys(tableBySection) as QuoteSection[]).map((section) => [
+          section,
+          rowsToSave[section].map((row, index) => serializeRow(section, row, quote?.id ?? "00000000-0000-0000-0000-000000000000", index)),
+        ]));
+        quoteResult = await db.rpc("supplier_save_trip_quote_v2", {
+          p_quote_id: quote?.id ?? null,
+          p_trip_id: tripId,
+          p_supplier_id: supplierId,
+          p_status: nextStatus,
+          p_payload: supplierPayload,
+          p_rows: serializedRows,
+        });
       }
       if (quoteResult?.error) throw withQueryContext(quoteResult.error, "supplier_trip_quotes save");
       const savedQuote = quoteResult.data;
       if (!savedQuote?.id) throw new Error("Demande de devis non sauvegardée.");
-
-      for (const section of Object.keys(tableBySection) as QuoteSection[]) {
-        await db.from(tableBySection[section]).delete().eq("quote_id", savedQuote.id);
-        const payload = rowsToSave[section].map((row, index) => serializeRow(section, row, savedQuote.id, index));
-        if (payload.length) {
-          const { error } = await db.from(tableBySection[section]).insert(payload);
-          if (error) throw withQueryContext(error, `${tableBySection[section]} insert`);
-        }
+      if (!isAdmin && nextStatus === "submitted") {
+        const { data: emailData, error: emailError } = await db.functions.invoke("send-admin-notification", {
+          body: { event_type: "supplier_quote_submitted", quote_id: savedQuote.id },
+        });
+        if (emailError || emailData?.ok === false) toast.warning("Devis soumis. La notification email admin a échoué et reste traçable dans les logs email.");
       }
 
       setQuote(savedQuote);
@@ -828,7 +1035,7 @@ export default function SupplierTripCosts() {
     }
     setValidationBusy(true);
     try {
-      const saved = await saveQuote(status, { validationStatusOverride: nextStatus });
+      const saved = await saveOperationalState(nextStatus);
       if (!saved?.id) throw new Error("Enregistrez le devis avant de modifier le workflow.");
       setValidationStatus(nextStatus);
       toast.success(`Statut workflow: ${validationStatusLabel[nextStatus]}`);
@@ -839,11 +1046,121 @@ export default function SupplierTripCosts() {
     }
   };
 
+  const saveOperationalState = async (
+    nextValidationStatus = validationStatus,
+    overridesToSave: Partial<Record<ValidationItemKey, boolean>> = validationOverrides
+  ) => {
+    if (!quote?.id) return null;
+    const validationForSave = buildValidationForSave(rows, overridesToSave);
+    const { data, error } = await db.rpc("save_supplier_operational_state_v2", {
+      p_quote_id: quote.id,
+      p_supplier_notes: serializeOperationalState(operationalState),
+      p_validation_status: nextValidationStatus,
+      p_validation_snapshot: { ...validationForSave, manual_overrides: overridesToSave },
+      p_validation_metadata: { manual_overrides: overridesToSave, updated_at: new Date().toISOString() },
+      p_validation_completion: validationForSave.completionPercentage,
+    });
+    if (error) {
+      toast.error(error.message);
+      return null;
+    }
+    setQuote(data);
+    toast.success("Préparation opérationnelle enregistrée.");
+    return data;
+  };
+
+  const createNewVersion = async () => {
+    if (!quote?.id || quote.status !== "approved") return;
+    setBusy(true);
+    try {
+      const { data, error } = await db.rpc("create_supplier_quote_version_v2", { p_quote_id: quote.id });
+      if (error) throw error;
+      toast.success(`Version V${data.version_number} créée à partir de la version approuvée.`);
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Création de la nouvelle version impossible.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviewQuote = async (action: "reviewed" | "revision_requested" | "approved" | "rejected") => {
+    if (!isAdmin || !quote?.id) return;
+    setBusy(true);
+    try {
+      const { data, error } = await db.rpc("review_supplier_quote_v2", {
+        p_quote_id: quote.id,
+        p_action: action,
+        p_feedback: adminFeedback || null,
+      });
+      if (error) throw error;
+      setQuote(data);
+      setStatus(action);
+      if (["revision_requested", "approved"].includes(action)) {
+        const { data: emailData, error: emailError } = await db.functions.invoke("send-admin-notification", {
+          body: { event_type: action === "approved" ? "supplier_quote_approved" : "supplier_quote_revision_requested", quote_id: quote.id },
+        });
+        if (emailError || emailData?.ok === false) toast.warning("Statut enregistré. L’email fournisseur a échoué et reste traçable.");
+      }
+      toast.success(action === "approved" ? "Devis approuvé." : action === "revision_requested" ? "Correction demandée." : "Statut de revue enregistré.");
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Revue du devis impossible.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviewLine = async (section: QuoteSection, row: QuoteRow, included: boolean, reviewStatus: "pending" | "approved" | "rejected") => {
+    if (!quote?.id || !row.id || !canReviewLines) return;
+    const { error } = await db.rpc("review_supplier_quote_line_v2", {
+      p_quote_id: quote.id,
+      p_row_table: tableBySection[section],
+      p_row_id: row.id,
+      p_included: included,
+      p_review_status: reviewStatus,
+    });
+    if (error) return toast.error(error.message);
+    updateRows(section, rows[section].map((item) => item.id === row.id ? { ...item, included_in_total: included, review_status: reviewStatus } : item));
+    toast.success(included ? "Ligne incluse dans le total." : "Ligne exclue du total sans modifier son prix.");
+  };
+
+  const addLineComment = async (section: QuoteSection, row: QuoteRow, body: string, internal: boolean) => {
+    if (!quote?.id || !row.id) {
+      toast.error("Enregistrez la ligne avant d’ajouter un commentaire.");
+      return false;
+    }
+    const { data, error } = await db.rpc("add_supplier_quote_comment_v2", {
+      p_quote_id: quote.id,
+      p_row_table: tableBySection[section],
+      p_row_id: row.id,
+      p_body: body,
+      p_visibility: internal ? "internal" : "supplier",
+      p_requires_attention: !internal,
+    });
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
+    setLineComments((current) => [...current, data]);
+    if (!internal) {
+      const { data: emailData, error: emailError } = await db.functions.invoke("send-admin-notification", {
+        body: { event_type: "supplier_quote_comment", quote_id: quote.id, comment_id: data.id },
+      });
+      if (emailError || emailData?.ok === false) toast.warning("Commentaire enregistré. L’email associé a échoué et reste traçable.");
+    }
+    return true;
+  };
+
   const bulkSetValidationSection = async (section: ValidationItemKey, confirmed: boolean) => {
-    if (!canEdit) return;
+    if (!canEditOperations) return;
     setValidationBusy(true);
     try {
       if (isQuoteSection(section)) {
+        if (!canEditSupplierValues) {
+          toast.error("Le statut fournisseur des lignes appartient au fournisseur. Utilisez la revue de ligne pour approuver ou exclure.");
+          return;
+        }
         const nextRows = {
           ...rows,
           [section]: normalizeRows(section, rows[section].map((row) => ({ ...row, status: confirmed ? "confirmed" : "todo" }))),
@@ -853,7 +1170,7 @@ export default function SupplierTripCosts() {
       } else {
         const nextOverrides = { ...validationOverrides, [section]: confirmed };
         setValidationOverrides(nextOverrides);
-        await saveQuote(status, { validationOverridesOverride: nextOverrides });
+        await saveOperationalState(validationStatus, nextOverrides);
       }
       toast.success(confirmed ? "Section validée." : "Section remise à faire.");
     } catch (error: any) {
@@ -919,6 +1236,7 @@ export default function SupplierTripCosts() {
         participantActivitySelections,
         operationalState,
         supplierName,
+        includeInternalFinancials: isAdmin,
       });
       await exportWorkbook(`${fileBase}-dossier-operationnel.xlsx`, [
         { name: "Summary", rows: book.summaryRows },
@@ -934,7 +1252,7 @@ export default function SupplierTripCosts() {
     } else {
       const commentRows = buildCommentsExportRows({ operationalState, messages });
       await exportWorkbook(`${fileBase}-global.xlsx`, [
-        { name: "Summary", rows: buildOperationalSummaryRows({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName }) },
+        { name: "Summary", rows: buildOperationalSummaryRows({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName, includeInternalFinancials: isAdmin }) },
         { name: "Financial Quote", rows: context.totalRows },
         { name: "Hotels", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.hotels) },
         { name: "Transport", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.transport) },
@@ -1031,15 +1349,39 @@ export default function SupplierTripCosts() {
         description={`${supplierName} · ${fmtDate(trip.start_date)} → ${fmtDate(trip.end_date)} · ${trip.duration_days ?? (programmeDays.length || "?")} jours`}
         action={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => saveQuote(status)} disabled={busy || !canEdit}>
+            <Button variant="outline" onClick={() => saveQuote(status)} disabled={busy || (isAdmin ? !quote?.id || ["approved", "archived"].includes(status) : !canEditSupplierValues)}>
               <Save className="h-4 w-4" /> Enregistrer
             </Button>
-            <Button onClick={() => saveQuote("submitted")} disabled={busy || status === "approved"}>
+            {!isAdmin && <Button onClick={() => saveQuote("submitted")} disabled={busy || !canEditSupplierValues}>
               <Send className="h-4 w-4" /> Soumettre
-            </Button>
+            </Button>}
+            {!isAdmin && status === "approved" && <Button onClick={createNewVersion} disabled={busy}>
+              <History className="h-4 w-4" /> Créer une nouvelle version
+            </Button>}
           </div>
         }
       />
+
+      {quoteVersions.length > 0 && <Card className="p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <Label>Versions du devis fournisseur</Label>
+            <p className="text-xs text-muted-foreground">Les versions validées restent consultables et ne sont jamais écrasées.</p>
+          </div>
+          <Select value={quote?.id ?? ""} onValueChange={(value) => void selectQuoteVersion(value)}>
+            <SelectTrigger className="w-full sm:w-[260px]"><SelectValue /></SelectTrigger>
+            <SelectContent>{quoteVersions.map((version) => (
+              <SelectItem key={version.id} value={version.id}>V{version.version_number ?? 1} · {quoteStatusLabel[(version.status ?? "draft") as QuoteStatus] ?? version.status}</SelectItem>
+            ))}</SelectContent>
+          </Select>
+        </div>
+      </Card>}
+      {quote?.parent_quote_id && <Card className="p-4">
+        <h2 className="font-display text-lg">Évolutions depuis V{Math.max(1, Number(quote.version_number || 1) - 1)}</h2>
+        {versionChanges.length === 0
+          ? <p className="mt-2 text-sm text-muted-foreground">Aucune différence enregistrée par rapport à la version précédente.</p>
+          : <ul className="mt-2 space-y-1 text-sm">{versionChanges.map((change, index) => <li key={`${change}-${index}`}>• {change}</li>)}</ul>}
+      </Card>}
 
       {sqlMissing && (
         <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
@@ -1048,11 +1390,23 @@ export default function SupplierTripCosts() {
         </Card>
       )}
 
+      {isAdmin && (
+        <Card className="p-4">
+          <Label>Fournisseur assigné au devis</Label>
+          <Select value={supplierId ?? ""} onValueChange={(value) => void selectAdminSupplier(value)}>
+            <SelectTrigger className="mt-2"><SelectValue placeholder="Choisir le fournisseur" /></SelectTrigger>
+            <SelectContent>{supplierOptions.map((supplier) => <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>)}</SelectContent>
+          </Select>
+          <p className="mt-2 text-xs text-muted-foreground">Changer ce fournisseur met immédiatement à jour l’assignation, crée V1 si nécessaire et envoie la demande de devis.</p>
+        </Card>
+      )}
+
       <SupplierValidationWorkflow
         validation={validation}
         status={validationStatus}
         busy={validationBusy || busy}
-        canEdit={canEdit}
+        canEdit={canEditOperations}
+        isAdmin={isAdmin}
         onStatusChange={updateValidationStatus}
         onBulkSectionChange={bulkSetValidationSection}
       />
@@ -1069,26 +1423,21 @@ export default function SupplierTripCosts() {
         <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
           <div>
             <Label>Statut</Label>
-            <Select value={status} onValueChange={(value) => setStatus(value as QuoteStatus)} disabled={!isAdmin && status === "approved"}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(quoteStatusLabel).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <div className="mt-2"><Badge variant="outline">V{quote?.version_number ?? 1} · {quoteStatusLabel[status] ?? status}</Badge></div>
           </div>
-          <div>
+          {isAdmin && <div>
             <Label>Commission office (%)</Label>
-            <Input className="mt-1" type="number" value={commissionPct} onChange={(event) => setCommissionPct(Number(event.target.value))} disabled={!canEdit} />
-          </div>
-          <div>
+            <Input className="mt-1" type="number" value={commissionPct} onChange={(event) => setCommissionPct(Number(event.target.value))} />
+          </div>}
+          {isAdmin && <div>
             <Label>JPY → MAD</Label>
-            <Input className="mt-1" type="number" step="0.001" value={exchangeRate} onChange={(event) => setExchangeRate(Number(event.target.value))} disabled={!canEdit} />
-          </div>
+            <Input className="mt-1" type="number" step="0.001" value={exchangeRate} onChange={(event) => setExchangeRate(Number(event.target.value))} />
+          </div>}
           <SummaryMetric label="Total brut JPY" value={fmtJPY(totals.grandTotalJpy)} />
-          <SummaryMetric label="Commission JPY" value={fmtJPY(totals.commissionAmountJpy)} />
-          <SummaryMetric label="Total final JPY" value={fmtJPY(totals.finalTotalJpy)} strong />
-          <SummaryMetric label="Total final MAD" value={fmtMAD(totals.finalTotalMad)} strong />
-          <SummaryMetric label="Coût / personne" value={`${fmtJPY(totals.costPerPersonJpy)} · ${fmtMAD(totals.costPerPersonMad)}`} />
+          {isAdmin && <SummaryMetric label="Commission JPY" value={fmtJPY(totals.commissionAmountJpy)} />}
+          <SummaryMetric label={isAdmin ? "Total final JPY" : "Total devis JPY"} value={fmtJPY(totals.finalTotalJpy)} strong />
+          {isAdmin && <SummaryMetric label="Total final MAD" value={fmtMAD(totals.finalTotalMad)} strong />}
+          {isAdmin && <SummaryMetric label="Coût / personne" value={`${fmtJPY(totals.costPerPersonJpy)} · ${fmtMAD(totals.costPerPersonMad)}`} />}
         </div>
       </Card>
 
@@ -1124,15 +1473,32 @@ export default function SupplierTripCosts() {
         </TabsList>
 
         <TabsContent value="quote" className="space-y-5">
-          <QuoteTable section="hotels" rows={rows.hotels} canEdit={canEdit} onRowsChange={(next) => updateRows("hotels", next)} onAdd={() => addRow("hotels")} />
-          <QuoteTable section="transport" rows={rows.transport} canEdit={canEdit} onRowsChange={(next) => updateRows("transport", next)} onAdd={() => addRow("transport")} />
-          <QuoteTable section="activities" rows={rows.activities} canEdit={canEdit} onRowsChange={(next) => updateRows("activities", next)} onAdd={() => addRow("activities")} />
-          <QuoteTable section="guides" rows={rows.guides} canEdit={canEdit} onRowsChange={(next) => updateRows("guides", next)} onAdd={() => addRow("guides")} />
-          <QuoteTable section="other" rows={rows.other} canEdit={canEdit} onRowsChange={(next) => updateRows("other", next)} onAdd={() => addRow("other")} />
-          <Card className="p-4">
+          {(Object.keys(tableBySection) as QuoteSection[]).map((section) => <QuoteTable
+            key={section}
+            section={section}
+            rows={rows[section]}
+            canEdit={canEditSupplierValues}
+            canReview={canReviewLines}
+            isAdmin={isAdmin}
+            comments={lineComments}
+            onRowsChange={(next) => updateRows(section, next)}
+            onAdd={() => addRow(section)}
+            onReview={(row, included, reviewStatus) => void reviewLine(section, row, included, reviewStatus)}
+            onAddComment={(row, body, internal) => addLineComment(section, row, body, internal)}
+          />)}
+          {isAdmin && quote?.id && <Card className="p-4">
+            <Label>Commentaire de revue partagé avec le fournisseur</Label>
+            <Textarea className="mt-2" rows={3} value={adminFeedback} onChange={(event) => setAdminFeedback(event.target.value)} placeholder="Motif de correction ou note de validation…" />
+            <div className="mt-3 flex flex-wrap gap-2">
+              {status === "submitted" && <Button variant="outline" onClick={() => void reviewQuote("reviewed")} disabled={busy}>Passer en revue</Button>}
+              {["submitted", "reviewed"].includes(status) && <Button variant="outline" onClick={() => void reviewQuote("revision_requested")} disabled={busy}>Demander une correction</Button>}
+              {["submitted", "reviewed"].includes(status) && <Button onClick={() => void reviewQuote("approved")} disabled={busy}>Valider le devis</Button>}
+            </div>
+          </Card>}
+          {isAdmin && <Card className="p-4">
             <Label>Notes internes admin / Japan office</Label>
             <Textarea className="mt-2" rows={3} value={internalNotes} onChange={(event) => setInternalNotes(event.target.value)} disabled={!isAdmin} />
-          </Card>
+          </Card>}
         </TabsContent>
 
         {isAdmin && (
@@ -1172,6 +1538,8 @@ export default function SupplierTripCosts() {
             filter={documentFilter}
             busy={documentBusy}
             sqlMissing={documentsSqlMissing}
+            isAdmin={isAdmin}
+            currentUserId={user?.id ?? null}
             onCategoryChange={setDocumentCategory}
             onTitleChange={setDocumentTitle}
             onFileChange={setDocumentFile}
@@ -1184,12 +1552,13 @@ export default function SupplierTripCosts() {
         </TabsContent>
 
         <TabsContent value="operations" className="space-y-3">
+          <div className="flex justify-end"><Button variant="outline" onClick={() => void saveOperationalState()} disabled={busy || !canEditOperations || !quote?.id}><Save className="h-4 w-4" /> Enregistrer les opérations</Button></div>
           <OperationProgramme
             trip={trip}
             days={programmeDays}
             hotels={hotels}
             operationalState={operationalState}
-            canEdit={canEdit}
+            canEdit={canEditOperations}
             isAdmin={isAdmin}
             currentUserId={user?.id ?? null}
             onDayStatusChange={updateDayStatus}
@@ -1355,6 +1724,7 @@ function SupplierValidationWorkflow({
   status,
   busy,
   canEdit,
+  isAdmin,
   onStatusChange,
   onBulkSectionChange,
 }: {
@@ -1362,6 +1732,7 @@ function SupplierValidationWorkflow({
   status: SupplierValidationStatus;
   busy: boolean;
   canEdit: boolean;
+  isAdmin: boolean;
   onStatusChange: (status: SupplierValidationStatus) => void;
   onBulkSectionChange: (section: ValidationItemKey, confirmed: boolean) => void;
 }) {
@@ -1372,14 +1743,14 @@ function SupplierValidationWorkflow({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="font-display text-lg">Supplier Validation Workflow</h2>
-            <p className="text-sm text-muted-foreground">Aucun voyage ne peut passer en prêt tant que les éléments opérationnels requis ne sont pas complets.</p>
+            <p className="text-sm text-muted-foreground">Le devis financier et la préparation opérationnelle sont suivis séparément. Passeports, rooming et documents ne bloquent jamais la soumission du devis.</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Badge variant={validation.allComplete ? "default" : "outline"}>{validationStatusLabel[status]}</Badge>
-            <Select value={status} onValueChange={(value) => onStatusChange(value as SupplierValidationStatus)} disabled={busy}>
+            <Select value={status} onValueChange={(value) => onStatusChange(value as SupplierValidationStatus)} disabled={busy || !canEdit}>
               <SelectTrigger className="w-full sm:w-[250px]"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {validationStatusOrder.map((item) => (
+                {validationStatusOrder.filter((item) => isAdmin || ["draft", "in_progress", "ready_for_japan_office"].includes(item)).map((item) => (
                   <SelectItem key={item} value={item}>{validationStatusLabel[item]}</SelectItem>
                 ))}
               </SelectContent>
@@ -1400,14 +1771,16 @@ function SupplierValidationWorkflow({
 
         <div className="space-y-4">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {validation.items.map((item) => (
+            {validation.items.map((item) => {
+              const operational = !isQuoteSection(item.key);
+              return (
               <div key={item.key} className={`rounded-lg border p-3 ${item.complete ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "border-amber-200 bg-amber-50 text-amber-950"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-medium">{item.label}</p>
                     <p className="mt-1 text-xs opacity-80">{item.detail}</p>
                   </div>
-                  <Badge variant="outline" className="border-current text-current">{item.complete ? "OK" : "Bloquant"}</Badge>
+                  <Badge variant="outline" className="border-current text-current">{item.complete ? "OK" : operational ? "Suivi opérations" : "À compléter devis"}</Badge>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button
@@ -1430,7 +1803,7 @@ function SupplierValidationWorkflow({
                   </Button>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
 
           {validation.blockingErrors.length > 0 && (
@@ -1649,6 +2022,8 @@ function TripDocumentsCenter({
   filter,
   busy,
   sqlMissing,
+  isAdmin,
+  currentUserId,
   onCategoryChange,
   onTitleChange,
   onFileChange,
@@ -1666,6 +2041,8 @@ function TripDocumentsCenter({
   filter: TripDocumentCategory | "all";
   busy: boolean;
   sqlMissing: boolean;
+  isAdmin: boolean;
+  currentUserId: string | null;
   onCategoryChange: (value: TripDocumentCategory) => void;
   onTitleChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
@@ -1788,8 +2165,9 @@ function TripDocumentsCenter({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {group.documents.map((document) => (
-                      <tr key={document.id}>
+                    {group.documents.map((document) => {
+                      const canManageDocument = isAdmin || document.uploaded_by === currentUserId;
+                      return <tr key={document.id}>
                         <td className="px-3 py-2">
                           <p className="font-medium">{document.title || document.file_name}</p>
                           <p className="text-xs text-muted-foreground">{document.file_name}</p>
@@ -1811,7 +2189,7 @@ function TripDocumentsCenter({
                                 <Download className="h-4 w-4" /> Télécharger
                               </a>
                             </Button>
-                            <label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent">
+                            {canManageDocument && <label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent">
                               Remplacer
                               <input
                                 type="file"
@@ -1823,14 +2201,14 @@ function TripDocumentsCenter({
                                   event.currentTarget.value = "";
                                 }}
                               />
-                            </label>
-                            <Button variant="ghost" size="icon" disabled={busy} onClick={() => onDelete(document)} aria-label="Supprimer le document">
+                            </label>}
+                            {canManageDocument && <Button variant="ghost" size="icon" disabled={busy} onClick={() => onDelete(document)} aria-label="Supprimer le document">
                               <Trash2 className="h-4 w-4" />
-                            </Button>
+                            </Button>}
                           </div>
                         </td>
-                      </tr>
-                    ))}
+                      </tr>;
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1842,14 +2220,19 @@ function TripDocumentsCenter({
   );
 }
 
-function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
+function QuoteTable({ section, rows, canEdit, canReview, isAdmin, comments, onRowsChange, onAdd, onReview, onAddComment }: {
   section: QuoteSection;
   rows: QuoteRow[];
   canEdit: boolean;
+  canReview: boolean;
+  isAdmin: boolean;
+  comments: QuoteLineComment[];
   onRowsChange: (rows: QuoteRow[]) => void;
   onAdd: () => void;
+  onReview: (row: QuoteRow, included: boolean, reviewStatus: "pending" | "approved" | "rejected") => void;
+  onAddComment: (row: QuoteRow, body: string, internal: boolean) => Promise<boolean>;
 }) {
-  const total = rows.reduce((sum, row) => sum + subtotal(row, section), 0);
+  const total = rows.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, section), 0);
   const columns = columnsForSection(section);
   const update = (index: number, key: string, value: any) => {
     onRowsChange(rows.map((row, rowIndex) => rowIndex === index ? normalizeRow(section, { ...row, [key]: value }, rowIndex) : row));
@@ -1864,10 +2247,10 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
     onRowsChange(nextRows);
   };
   const requiredActivityTotal = section === "activities"
-    ? rows.filter((row) => !row.optional).reduce((sum, row) => sum + subtotal(row, "activities"), 0)
+    ? rows.filter((row) => !row.optional && row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "activities"), 0)
     : 0;
   const optionalActivityTotal = section === "activities"
-    ? rows.filter((row) => row.optional).reduce((sum, row) => sum + subtotal(row, "activities"), 0)
+    ? rows.filter((row) => row.optional && row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "activities"), 0)
     : 0;
 
   return (
@@ -1899,15 +2282,18 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
               <th className="px-3 py-2 font-medium">Statut</th>
               <th className="px-3 py-2 font-medium">Assigné</th>
               <th className="px-3 py-2 font-medium">Commentaire</th>
+              <th className="px-3 py-2 font-medium">Calcul</th>
+              <th className="px-3 py-2 font-medium">Revue</th>
+              <th className="px-3 py-2 font-medium">Échanges</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {rows.length === 0 && (
-              <tr><td colSpan={columns.length + 6} className="p-8 text-center text-muted-foreground">Aucune ligne.</td></tr>
+              <tr><td colSpan={columns.length + 9} className="p-8 text-center text-muted-foreground">Aucune ligne.</td></tr>
             )}
             {rows.map((row, index) => (
-              <tr key={row.local_id} className="align-top">
+              <tr key={row.local_id} className={`align-top ${row.included_in_total === false ? "bg-muted/50 text-muted-foreground" : ""}`}>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" disabled={!canEdit || index === 0} onClick={() => move(index, -1)} aria-label="Monter la ligne">
@@ -1932,6 +2318,30 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
                 </td>
                 <td className="px-3 py-2"><Input className="h-9 min-w-[130px]" value={row.assigned_to ?? ""} disabled={!canEdit} onChange={(event) => update(index, "assigned_to", event.target.value)} /></td>
                 <td className="px-3 py-2"><Input className="h-9 min-w-[180px]" value={row.comment ?? ""} disabled={!canEdit} onChange={(event) => update(index, "comment", event.target.value)} /></td>
+                <td className="px-3 py-2">
+                  <label className="flex min-w-[105px] items-center gap-2 text-xs">
+                    <input type="checkbox" checked={row.included_in_total !== false} disabled={!canReview} onChange={(event) => onReview(row, event.target.checked, row.review_status ?? "pending")} />
+                    {row.included_in_total === false ? "Exclue" : "Incluse"}
+                  </label>
+                </td>
+                <td className="px-3 py-2">
+                  <Select value={row.review_status ?? "pending"} disabled={!canReview} onValueChange={(value) => onReview(row, row.included_in_total !== false, value as "pending" | "approved" | "rejected")}>
+                    <SelectTrigger className="h-9 min-w-[120px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">À revoir</SelectItem>
+                      <SelectItem value="approved">Approuvée</SelectItem>
+                      <SelectItem value="rejected">Rejetée</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </td>
+                <td className="px-3 py-2">
+                  <LineComments
+                    comments={comments.filter((comment) => comment.row_table === tableBySection[section] && comment.row_id === row.id)}
+                    isAdmin={isAdmin}
+                    disabled={!row.id}
+                    onAdd={(body, internal) => onAddComment(row, body, internal)}
+                  />
+                </td>
                 <td className="px-3 py-2 text-right">
                   <Button variant="ghost" size="icon" disabled={!canEdit} onClick={() => remove(index)}><Trash2 className="h-4 w-4" /></Button>
                 </td>
@@ -1961,6 +2371,38 @@ function QuoteTable({ section, rows, canEdit, onRowsChange, onAdd }: {
       </div>
     </Card>
   );
+}
+
+function LineComments({ comments, isAdmin, disabled, onAdd }: {
+  comments: QuoteLineComment[];
+  isAdmin: boolean;
+  disabled: boolean;
+  onAdd: (body: string, internal: boolean) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [internal, setInternal] = useState(false);
+  const submit = async () => {
+    if (!draft.trim()) return;
+    if (await onAdd(draft.trim(), internal)) {
+      setDraft("");
+      setInternal(false);
+    }
+  };
+  return <div className="min-w-[240px] space-y-2">
+    <Button type="button" variant="outline" size="sm" onClick={() => setOpen((value) => !value)} disabled={disabled}>
+      <MessageSquare className="h-3.5 w-3.5" /> {comments.length} commentaire(s)
+    </Button>
+    {open && <div className="space-y-2 rounded-md border border-border bg-background p-2">
+      {comments.map((comment) => <div key={comment.id} className="rounded bg-secondary/40 p-2 text-xs">
+        <p className="font-medium">{comment.author_name || "Utilisateur"} · {fmtDateTimeLabel(comment.created_at)} {comment.visibility === "internal" ? "· Interne" : ""}</p>
+        <p className="mt-1 whitespace-pre-wrap">{comment.body}</p>
+      </div>)}
+      <Textarea rows={2} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ajouter un commentaire…" />
+      {isAdmin && <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> Commentaire interne</label>}
+      <Button type="button" size="sm" onClick={() => void submit()} disabled={!draft.trim()}>Ajouter</Button>
+    </div>}
+  </div>;
 }
 
 const CellInput = ({ column, value, disabled, onChange }: { column: any; value: any; disabled: boolean; onChange: (value: any) => void }) => {
@@ -2606,7 +3048,7 @@ const columnsForSection = (section: QuoteSection) => {
 };
 
 const blankRow = (section: QuoteSection, index: number): QuoteRow => {
-  const base = { local_id: crypto.randomUUID(), sort_order: index, status: "todo" as RowStatus, comment: "", assigned_to: "" };
+  const base = { local_id: crypto.randomUUID(), sort_order: index, status: "todo" as RowStatus, comment: "", assigned_to: "", included_in_total: true, review_status: "pending" as const };
   if (section === "hotels") return { ...base, city: "", hotel_name: "", check_in: "", check_out: "", nights: 1, room_type: "double/twin", person_count: 1, price_per_person_per_night_jpy: 0 };
   if (section === "transport") return { ...base, service_date: "", day_number: index + 1, city_route: "", transport_type: "bus", description: "", quantity: 1, unit_price_jpy: 0 };
   if (section === "activities") return { ...base, service_date: "", day_number: index + 1, activity_name: "", participant_count: 1, quantity: 1, unit_price_jpy: 0, optional: false };
@@ -2642,6 +3084,8 @@ const subtotal = (row: QuoteRow, section?: QuoteSection) => {
 const serializeRow = (section: QuoteSection, row: QuoteRow, quoteId: string, index: number) => {
   const normalized = normalizeRow(section, row, index);
   const base = {
+    id: normalized.id ?? normalized.local_id,
+    local_id: normalized.local_id,
     quote_id: quoteId,
     sort_order: index,
     status: normalized.status ?? "todo",
@@ -2711,20 +3155,23 @@ const buildExportContext = ({ trip, rows, totals, programmeDays, hotels, rooms, 
   const roomRows = buildRoomRows({ hotels, rooms, assignments, participants, bookings });
   const operationalRows = buildOperationalExportRows({ trip, days: programmeDays, hotels, operationalState });
   const quoteRows = buildQuoteExportRows(rows, includeAdminNotes);
-  const totalRows = [
+  const supplierTotalRows = [
     { poste: "Hôtels", montant_jpy: roundNumber(totals.hotels) },
     { poste: "Transport", montant_jpy: roundNumber(totals.transport) },
     { poste: "Activités", montant_jpy: roundNumber(totals.activities) },
     { poste: "Guides", montant_jpy: roundNumber(totals.guides) },
     { poste: "Autres", montant_jpy: roundNumber(totals.other) },
     { poste: "Total brut", montant_jpy: roundNumber(totals.grandTotalJpy) },
+    { poste: "Participants", valeur: totals.participantCount },
+  ];
+  const totalRows = includeAdminNotes ? [
+    ...supplierTotalRows,
     { poste: "Commission office", montant_jpy: roundNumber(totals.commissionAmountJpy) },
     { poste: "Total final JPY", montant_jpy: roundNumber(totals.finalTotalJpy) },
     { poste: "Total final MAD", montant_mad: roundNumber(totals.finalTotalMad) },
-    { poste: "Participants", valeur: totals.participantCount },
     { poste: "Coût par personne JPY", montant_jpy: roundNumber(totals.costPerPersonJpy) },
     { poste: "Coût par personne MAD", montant_mad: roundNumber(totals.costPerPersonMad) },
-  ];
+  ] : supplierTotalRows;
   return { participantRows, extraRows, roomRows, operationalRows, quoteRows, totalRows };
 };
 
@@ -2767,11 +3214,12 @@ const buildOperationalBookContext = ({
   participantActivitySelections,
   operationalState,
   supplierName,
+  includeInternalFinancials,
 }: any) => {
   const participantRows = buildParticipantRows({ participants, bookings, bookingExtras, extrasList, rooms, hotels, assignments, participantActivitySelections });
   const roomingRows = buildRoomRows({ hotels, rooms, assignments, participants, bookings });
   const extraRows = buildExtraGroups({ participants, bookings, bookingExtras, extrasList, participantActivitySelections });
-  const summaryRows = buildOperationalSummaryRows({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName });
+  const summaryRows = buildOperationalSummaryRows({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName, includeInternalFinancials });
   return {
     summaryRows,
     flightRows: buildFlightRows(trip),
@@ -2785,7 +3233,7 @@ const buildOperationalBookContext = ({
   };
 };
 
-const buildOperationalSummaryRows = ({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName }: any) => [
+const buildOperationalSummaryRows = ({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName, includeInternalFinancials = false }: any) => [
   { Rubrique: "Voyage", Information: "Titre", Valeur: trip?.title ?? "—" },
   { Rubrique: "Voyage", Information: "Saison", Valeur: trip?.season ?? trip?.label ?? "—" },
   { Rubrique: "Voyage", Information: "Départ", Valeur: formatDateForDisplay(trip?.start_date) },
@@ -2799,9 +3247,11 @@ const buildOperationalSummaryRows = ({ trip, totals, participants, bookings, hot
   { Rubrique: "Planning", Information: "Activités devis", Valeur: rows.activities.length },
   { Rubrique: "Planning", Information: "Guides", Valeur: rows.guides.length },
   { Rubrique: "Planning", Information: "Transports", Valeur: rows.transport.length },
-  { Rubrique: "Coûts", Information: "Total fournisseur JPY", Valeur: roundNumber(totals.grandTotalJpy) },
-  { Rubrique: "Coûts", Information: "Total final JPY", Valeur: roundNumber(totals.finalTotalJpy) },
-  { Rubrique: "Coûts", Information: "Total final MAD", Valeur: roundNumber(totals.finalTotalMad) },
+  { Rubrique: "Devis", Information: "Total fournisseur JPY", Valeur: roundNumber(totals.grandTotalJpy) },
+  ...(includeInternalFinancials ? [
+    { Rubrique: "Coûts", Information: "Total final JPY", Valeur: roundNumber(totals.finalTotalJpy) },
+    { Rubrique: "Coûts", Information: "Total final MAD", Valeur: roundNumber(totals.finalTotalMad) },
+  ] : []),
   { Rubrique: "Export", Information: "Généré le", Valeur: new Date().toLocaleString("fr-FR") },
 ];
 
@@ -2993,6 +3443,8 @@ const buildQuoteExportRows = (rows: Record<QuoteSection, QuoteRow[]>, includeAdm
         section: sectionLabels[section],
         ordre: index + 1,
         statut: rowStatusLabel[row.status as RowStatus] ?? row.status ?? "",
+        inclus_dans_total: row.included_in_total === false ? "Non" : "Oui",
+        revue_lejapon: row.review_status === "approved" ? "Approuvée" : row.review_status === "rejected" ? "Rejetée" : "À revoir",
         sous_total_jpy: roundNumber(subtotal(row, section)),
         assigne_a: row.assigned_to ?? "",
         commentaire: row.comment ?? "",
@@ -3190,6 +3642,8 @@ const normalizeRow = (section: QuoteSection, row: any, index: number): QuoteRow 
     sort_order: row.sort_order ?? index,
     status: row.status ?? "todo",
     optional: Boolean(row.optional),
+    included_in_total: row.included_in_total !== false,
+    review_status: row.review_status ?? "pending",
   };
 
   if (section === "hotels") {
@@ -3231,7 +3685,8 @@ const reindexRows = (rows: QuoteRow[]): QuoteRow[] =>
 
 const buildInitialRows = ({ trip, programmeDays, hotels, rooms, assignments, bookings, participants, bookingExtras }: any): Record<QuoteSection, QuoteRow[]> => {
   const participantCount = getParticipantCount(participants, bookings ?? []);
-  const sortedHotels = [...(hotels.length ? hotels : [])].sort((a: any, b: any) =>
+  const hotelSource = hotels.length ? hotels : programmeHotelPeriods(programmeDays, trip);
+  const sortedHotels = [...hotelSource].sort((a: any, b: any) =>
     (dateToTime(a.check_in) ?? Number.MAX_SAFE_INTEGER) - (dateToTime(b.check_in) ?? Number.MAX_SAFE_INTEGER)
     || Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0)
   );
@@ -3304,6 +3759,40 @@ const buildInitialRows = ({ trip, programmeDays, hotels, rooms, assignments, boo
     guides: normalizeRows("guides", guideRows),
     other: normalizeRows("other", []),
   };
+};
+
+const programmeHotelPeriods = (programmeDays: any[], trip: any) => {
+  const sorted = [...(programmeDays ?? [])].sort((a, b) => Number(a.day_number || 0) - Number(b.day_number || 0));
+  const groups: any[] = [];
+  for (const day of sorted) {
+    const city = String(day.city || day.location || "").trim();
+    if (!city) continue;
+    const previous = groups[groups.length - 1];
+    if (previous?.city === city && Number(day.day_number) === Number(previous.last_day_number) + 1) {
+      previous.last_day_number = day.day_number;
+      previous.check_out = dateOnly(addCalendarDays(day.date || dateForDay(sorted, trip, day.day_number), 1));
+    } else {
+      const checkIn = dateOnly(day.date || dateForDay(sorted, trip, day.day_number));
+      groups.push({
+        id: `programme-${day.day_number}-${city}`,
+        city,
+        name: "",
+        check_in: checkIn,
+        check_out: dateOnly(addCalendarDays(checkIn, 1)),
+        last_day_number: day.day_number,
+        sort_order: groups.length,
+      });
+    }
+  }
+  return groups;
+};
+
+const addCalendarDays = (value: any, days: number) => {
+  if (!value) return "";
+  const date = new Date(`${dateOnly(value)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 };
 
 const hotelPersonCountsByRoomType = (hotelId: string, rooms: any[], assignments: any[], totalParticipants: number) => {
@@ -3736,11 +4225,11 @@ const calculateQuoteTotals = (
   bookings: any[]
 ) => {
   const sectionTotals = {
-    hotels: rows.hotels.reduce((sum, row) => sum + subtotal(row, "hotels"), 0),
-    transport: rows.transport.reduce((sum, row) => sum + subtotal(row, "transport"), 0),
-    activities: rows.activities.reduce((sum, row) => sum + subtotal(row, "activities"), 0),
-    guides: rows.guides.reduce((sum, row) => sum + subtotal(row, "guides"), 0),
-    other: rows.other.reduce((sum, row) => sum + subtotal(row, "other"), 0),
+    hotels: rows.hotels.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "hotels"), 0),
+    transport: rows.transport.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "transport"), 0),
+    activities: rows.activities.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "activities"), 0),
+    guides: rows.guides.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "guides"), 0),
+    other: rows.other.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "other"), 0),
   };
   const grandTotalJpy = Object.values(sectionTotals).reduce((sum, value) => sum + value, 0);
   const commissionAmountJpy = grandTotalJpy * Number(commissionPct || 0) / 100;
@@ -3757,6 +4246,43 @@ const calculateQuoteTotals = (
     costPerPersonJpy: finalTotalJpy / participantCount,
     costPerPersonMad: finalTotalMad / participantCount,
   };
+};
+
+const versionRowLabel = (section: QuoteSection, row: QuoteRow) => String(
+  row.hotel_name || row.description || row.activity_name || row.guide_type || row.label || `${sectionLabels[section]} J${row.day_number ?? ""}`
+).trim();
+
+const buildVersionChanges = (
+  current: Record<QuoteSection, QuoteRow[]>,
+  previous: Record<QuoteSection, QuoteRow[]>
+) => {
+  const changes: string[] = [];
+  for (const section of Object.keys(tableBySection) as QuoteSection[]) {
+    const oldById = new Map(previous[section].map((row) => [row.id, row]));
+    const retained = new Set<string>();
+    for (const row of current[section]) {
+      const old = row.source_line_id ? oldById.get(row.source_line_id) : undefined;
+      const label = versionRowLabel(section, row) || "Ligne sans libellé";
+      if (!old) {
+        changes.push(`${sectionLabels[section]} · ${label} : ligne ajoutée`);
+        continue;
+      }
+      if (old.id) retained.add(old.id);
+      const oldTotal = subtotal(old, section);
+      const nextTotal = subtotal(row, section);
+      if (oldTotal !== nextTotal) changes.push(`${sectionLabels[section]} · ${label} : ${fmtJPY(oldTotal)} → ${fmtJPY(nextTotal)} (${nextTotal >= oldTotal ? "+" : ""}${fmtJPY(nextTotal - oldTotal)})`);
+      if ((old.included_in_total !== false) !== (row.included_in_total !== false)) changes.push(`${sectionLabels[section]} · ${label} : ${row.included_in_total === false ? "désactivée" : "réactivée"}`);
+      for (const key of ["hotel_name", "room_type", "quantity", "participant_count", "guides_count", "unit_price_jpy", "daily_price_jpy"]) {
+        if (String(old[key] ?? "") !== String(row[key] ?? "") && !["unit_price_jpy", "daily_price_jpy"].includes(key)) {
+          changes.push(`${sectionLabels[section]} · ${label} : ${key} modifié (${old[key] ?? "—"} → ${row[key] ?? "—"})`);
+        }
+      }
+    }
+    for (const old of previous[section]) {
+      if (old.id && !retained.has(old.id)) changes.push(`${sectionLabels[section]} · ${versionRowLabel(section, old)} : ligne retirée`);
+    }
+  }
+  return changes;
 };
 
 const isQuoteSection = (section: ValidationItemKey): section is QuoteSection =>
@@ -3894,12 +4420,19 @@ const buildSupplierValidation = ({
       error: "Documents: all mandatory operational files must be uploaded.",
     },
   ];
+  const quoteItems = items.filter((item) => isQuoteSection(item.key));
+  const operationItems = items.filter((item) => !isQuoteSection(item.key));
   const blockingErrors = items.filter((item) => !item.complete).map((item) => item.error);
+  const quotationBlockingErrors = quoteItems.filter((item) => !item.complete).map((item) => item.error);
   const completedItems = items.filter((item) => item.complete).length;
   const totalItems = items.length;
   return {
     items,
+    quoteItems,
+    operationItems,
     blockingErrors,
+    quotationBlockingErrors,
+    quotationComplete: quotationBlockingErrors.length === 0,
     missingDocumentCategories,
     allComplete: blockingErrors.length === 0,
     completedItems,
@@ -3929,10 +4462,21 @@ const validationBlockingErrors = (
   const currentIndex = validationStatusOrder.indexOf(currentStatus);
   if (nextIndex <= currentIndex) return [];
   if (nextStatus === "draft" || nextStatus === "in_progress") return [];
-  if (!validation.allComplete) return validation.blockingErrors;
+  if (nextStatus === "ready_for_japan_office" && !validation.quotationComplete) return validation.quotationBlockingErrors;
+  if (["japan_office_confirmed", "ready_to_travel"].includes(nextStatus) && !validation.allComplete) return validation.blockingErrors;
   if (nextStatus === "ready_to_travel" && currentStatus !== "japan_office_confirmed" && currentStatus !== "ready_to_travel") {
     return ["Ready To Travel requires Japan Office Confirmed first."];
   }
+  return [];
+};
+
+const quotationSubmissionErrors = (rows: Record<QuoteSection, QuoteRow[]>) => {
+  const included = (Object.keys(rows) as QuoteSection[]).flatMap((section) => rows[section]
+    .filter((row) => row.included_in_total !== false)
+    .map((row) => subtotal(row, section)));
+  if (!included.length) return ["Le devis doit contenir au moins une ligne active."];
+  if (!included.some((value) => value > 0)) return ["Renseignez au moins un montant fournisseur avant de soumettre le devis."];
+  if (included.some((value) => !Number.isFinite(value) || value < 0)) return ["Les montants actifs du devis doivent être valides."];
   return [];
 };
 
