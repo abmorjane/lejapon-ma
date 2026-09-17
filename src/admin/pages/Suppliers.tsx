@@ -34,7 +34,7 @@ export default function Suppliers() {
   const openLink = async (s: any) => {
     setLinkSupplier(s); setLinkOpen(true); setMemberUid("");
     const [{ data: t }, { data: ts }, { data: m }] = await Promise.all([
-      supabase.from("trips").select("id,title").order("start_date", { ascending: false }),
+      supabase.from("trips").select("id,title").is("archived_at", null).order("start_date", { ascending: false }),
       (supabase as any).from("trip_suppliers").select("trip_id").eq("supplier_id", s.id).neq("status", "cancelled"),
       supabase.from("supplier_members").select("id,user_id,created_at").eq("supplier_id", s.id),
     ]);

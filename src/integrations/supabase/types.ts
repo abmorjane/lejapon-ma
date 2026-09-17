@@ -1992,6 +1992,9 @@ export type Database = {
       }
       trips: {
         Row: {
+          archive_reason: string | null
+          archived_at: string | null
+          archived_by: string | null
           badge_text: string | null
           badge_type: string | null
           base_price_mad: number
@@ -2035,6 +2038,9 @@ export type Database = {
           visa_japan_departure_date: string | null
         }
         Insert: {
+          archive_reason?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
           badge_text?: string | null
           badge_type?: string | null
           base_price_mad?: number
@@ -2078,6 +2084,9 @@ export type Database = {
           visa_japan_departure_date?: string | null
         }
         Update: {
+          archive_reason?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
           badge_text?: string | null
           badge_type?: string | null
           base_price_mad?: number
@@ -2522,6 +2531,10 @@ export type Database = {
       }
     }
     Functions: {
+      archive_trip: {
+        Args: { p_reason?: string | null; p_trip_id: string }
+        Returns: Json
+      }
       claim_marketing_batch: {
         Args: { _campaign_id: string; _limit: number }
         Returns: {
@@ -2582,7 +2595,12 @@ export type Database = {
         Args: { _token: string }
         Returns: Json
       }
+      restore_trip: { Args: { p_trip_id: string }; Returns: Json }
       supplier_can_access_trip: {
+        Args: { _trip_id: string; _user_id: string }
+        Returns: boolean
+      }
+      supplier_can_edit_trip: {
         Args: { _trip_id: string; _user_id: string }
         Returns: boolean
       }

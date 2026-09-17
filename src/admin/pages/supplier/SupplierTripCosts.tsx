@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { SupplierHandlingFields } from "./SupplierHandlingFields";
+import { SupplierQuoteVersionHistory, type SupplierQuoteVersionChange } from "./SupplierQuoteVersionHistory";
+import { calculateSupplierHandling, supplierHandlingErrors, HANDLING_CATEGORY_LABELS, EXECUTION_STATUS_LABELS, type SupplierHandlingTerms, type SupplierExecutionStatus } from "@/admin/lib/supplier-quote-business-model";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, Download, History, MessageSquare, Paperclip, Plane, Plus, Save, Search, Send, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Download, History, MessageSquare, Paperclip, Plane, Plus, Save, Search, Send, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -20,6 +23,18 @@ import {
   DEFAULT_OPTIONAL_ACTIVITIES,
   DEFAULT_REQUIRED_ACTIVITIES,
 } from "@/admin/lib/supplier-defaults";
+import {
+  buildSupplierQuoteImportMetadata,
+  confirmSupplierQuoteImportHandling, supplierQuoteImportHandlingErrors,
+  buildSupplierQuoteImportPayload,
+  hasUnresolvedSupplierQuoteImportRows,
+  parseSupplierQuoteWorkbook,
+  resolveSupplierQuoteImportRow,
+  type SupplierQuoteAmbiguousResolution,
+  type SupplierQuoteExcelPreview,
+} from "@/admin/lib/supplier-quote-excel-import";
+import { SupplierQuoteExcelImportDialog } from "./SupplierQuoteExcelImportDialog";
+import { loadSupplierQuoteSections, supplierQuoteSectionTables as tableBySection } from "@/admin/lib/supplier-quote-section-loader";
 
 const db = supabase as any;
 
@@ -123,14 +138,6 @@ type TripDocument = {
   supplier_visible?: boolean;
 };
 
-const tableBySection: Record<QuoteSection, string> = {
-  hotels: "supplier_quote_hotel_rows",
-  transport: "supplier_quote_transport_rows",
-  activities: "supplier_quote_activity_rows",
-  guides: "supplier_quote_guide_rows",
-  other: "supplier_quote_other_rows",
-};
-
 const sectionLabels: Record<QuoteSection, string> = {
   hotels: "Hôtels",
   transport: "Transport",
@@ -214,11 +221,11 @@ const mandatoryTripDocumentCategories: TripDocumentCategory[] = [
 ];
 
 const validationStatusLabel: Record<SupplierValidationStatus, string> = {
-  draft: "Draft",
-  in_progress: "In Progress",
-  ready_for_japan_office: "Ready For Japan Office",
-  japan_office_confirmed: "Japan Office Confirmed",
-  ready_to_travel: "Ready To Travel",
+  draft: "Préparation à commencer",
+  in_progress: "Préparation en cours",
+  ready_for_japan_office: "Dossier à contrôler par Japan Office",
+  japan_office_confirmed: "Dossier contrôlé par Japan Office",
+  ready_to_travel: "Dossier prêt au voyage",
 };
 
 const validationStatusOrder: SupplierValidationStatus[] = ["draft", "in_progress", "ready_for_japan_office", "japan_office_confirmed", "ready_to_travel"];
@@ -244,9 +251,18 @@ export default function SupplierTripCosts() {
   const [supplierOptions, setSupplierOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [accessDenied, setAccessDenied] = useState<string | null>(null);
   const [quote, setQuote] = useState<any>(null);
+  const [handlingTerms, setHandlingTerms] = useState<SupplierHandlingTerms>({percentage:0,categories:[]});
   const [quoteVersions, setQuoteVersions] = useState<any[]>([]);
   const [lineComments, setLineComments] = useState<QuoteLineComment[]>([]);
-  const [versionChanges, setVersionChanges] = useState<string[]>([]);
+  const [versionChanges, setVersionChanges] = useState<SupplierQuoteVersionChange[]>([]);
+  const [versionComparisonLoading, setVersionComparisonLoading] = useState(false);
+  const [comparisonParentVersion, setComparisonParentVersion] = useState<number|null>(null);
+  const [versionComparisonError, setVersionComparisonError] = useState<string | null>(null);
+  const [quoteSectionsLoading, setQuoteSectionsLoading] = useState(true);
+  const [quoteReadError, setQuoteReadError] = useState<string | null>(null);
+  const [sectionLoadErrors, setSectionLoadErrors] = useState<Partial<Record<QuoteSection, string>>>({});
+  const quoteReadsBlockedRef = useRef(true);
+  const quoteDataUnavailable = quoteSectionsLoading || Boolean(quoteReadError) || Object.keys(sectionLoadErrors).length > 0;
   const [rows, setRows] = useState<Record<QuoteSection, QuoteRow[]>>({
     hotels: [],
     transport: [],
@@ -293,10 +309,47 @@ export default function SupplierTripCosts() {
   const [documentFilter, setDocumentFilter] = useState<TripDocumentCategory | "all">("all");
   const [documentBusy, setDocumentBusy] = useState(false);
   const [documentsSqlMissing, setDocumentsSqlMissing] = useState(false);
+  const excelFileInputRef = useRef<HTMLInputElement>(null);
+  const [excelPreview, setExcelPreview] = useState<SupplierQuoteExcelPreview | null>(null);
+  const [excelImportOpen, setExcelImportOpen] = useState(false);
+  const [excelReading, setExcelReading] = useState(false);
+  const [excelImportBusy, setExcelImportBusy] = useState(false);
 
-  const canEditSupplierValues = !isAdmin && ["draft", "revision_requested"].includes(status);
-  const canEditOperations = isAdmin || status !== "archived";
-  const canReviewLines = isAdmin && ["submitted", "reviewed"].includes(status);
+  const tripArchived = Boolean(trip?.archived_at);
+  const handlingSchemaAvailable=!quote?.id || (Object.prototype.hasOwnProperty.call(quote,"supplier_handling_percentage") && Object.prototype.hasOwnProperty.call(quote,"supplier_handling_categories"));
+  const canEditSupplierValues = handlingSchemaAvailable && !quoteDataUnavailable && !isAdmin && !tripArchived && ["draft", "revision_requested"].includes(status);
+  const canEditOperations = !quoteDataUnavailable && status === "approved" && (isAdmin || !tripArchived);
+  const canConfirmReservations = Boolean(quote?.id) && canEditOperations;
+  const canReviewLines = !quoteDataUnavailable && isAdmin && ["submitted", "reviewed"].includes(status);
+  const canImportExcel = handlingSchemaAvailable && !quoteDataUnavailable && !isAdmin && !tripArchived && Boolean(supplierId);
+  const hasPersistedQuoteLines = useMemo(
+    () => (Object.keys(tableBySection) as QuoteSection[]).some((section) => rows[section].some((row) => Boolean(row.id))),
+    [rows]
+  );
+  const hasMeaningfulQuoteLines = useMemo(
+    () => (Object.keys(tableBySection) as QuoteSection[]).some((section) => rows[section].some((row) => {
+      if (section === "hotels") return Boolean(row.hotel_name || row.city || row.check_in || row.check_out || row.comment || numeric(row.price_per_person_per_night_jpy) > 0);
+      if (section === "transport") return Boolean(row.city_route || row.description || row.service_date || row.comment || numeric(row.unit_price_jpy) > 0);
+      if (section === "activities") return Boolean(row.activity_name || row.service_date || row.comment || numeric(row.unit_price_jpy) > 0);
+      if (section === "guides") return Boolean(row.city || row.service_date || row.comment || numeric(row.daily_price_jpy) > 0);
+      return Boolean(row.label || row.comment || numeric(row.unit_price_jpy) > 0);
+    })),
+    [rows]
+  );
+  // Excel import rule:
+  // - no existing quote => import directly into the first draft (V1)
+  // - any existing quote => preserve it and import into a new version
+  //
+  // Do not infer database emptiness from the currently rendered rows: a quote
+  // may already have persisted rows even while the UI is still loading them.
+  const excelImportMode: "direct" | "new_version" = quote?.id ? "new_version" : "direct";
+  const nextQuoteVersionNumber = useMemo(
+    () => {
+      const currentMaximum = Math.max(Number(quote?.version_number ?? 0), ...quoteVersions.map((version) => Number(version.version_number ?? 0)), 0);
+      return currentMaximum === 0 && hasMeaningfulQuoteLines ? 2 : currentMaximum + 1;
+    },
+    [hasMeaningfulQuoteLines, quote?.version_number, quoteVersions]
+  );
   const unreadMessageCount = useMemo(
     () => messages.filter((message) => message.sender_id !== user?.id && !messageReads[message.id]).length,
     [messageReads, messages, user?.id]
@@ -468,6 +521,7 @@ export default function SupplierTripCosts() {
     const loadedQuote = await loadQuote(tripId, currentSupplierId, isAdmin);
     if (loadedQuote) {
       setQuote(loadedQuote.quote);
+      setHandlingTerms({percentage:Number(loadedQuote.quote.supplier_handling_percentage ?? 0),categories:loadedQuote.quote.supplier_handling_categories ?? []});
       setStatus((loadedQuote.quote.status ?? "draft") as QuoteStatus);
       setValidationStatus((loadedQuote.quote.validation_status ?? "draft") as SupplierValidationStatus);
       setCommissionPct(isAdmin ? Number(loadedQuote.quote.commission_percentage ?? loadedQuote.quote.commission_percent ?? 10) : 0);
@@ -479,7 +533,7 @@ export default function SupplierTripCosts() {
       setRows(loadedQuote.rows);
       await loadLineComments(loadedQuote.quote.id);
       await loadVersionComparison(loadedQuote.quote, loadedQuote.rows);
-    } else {
+    } else if (!quoteReadsBlockedRef.current) {
       const initialRows = buildInitialRows({
         trip: tripRow,
         programmeDays: normalizeProgrammeDays(dayRows ?? [], tripRow),
@@ -491,6 +545,7 @@ export default function SupplierTripCosts() {
         bookingExtras: extrasRows ?? [],
       });
       setQuote(null);
+      setHandlingTerms({percentage:0,categories:[]});
       setStatus("draft");
       setValidationStatus("draft");
       setCommissionPct(isAdmin ? 10 : 0);
@@ -523,12 +578,34 @@ export default function SupplierTripCosts() {
   };
 
   const loadVersionComparison = async (targetQuote: any, currentRows: Record<QuoteSection, QuoteRow[]>) => {
-    if (!targetQuote?.parent_quote_id) return setVersionChanges([]);
-    const results = await Promise.all((Object.keys(tableBySection) as QuoteSection[]).map(async (section) => {
-      const { data } = await db.from(tableBySection[section]).select("*").eq("quote_id", targetQuote.parent_quote_id).order("sort_order");
-      return [section, normalizeRows(section, data ?? [])] as const;
-    }));
-    setVersionChanges(buildVersionChanges(currentRows, Object.fromEntries(results) as Record<QuoteSection, QuoteRow[]>));
+    setVersionChanges([]);
+    setComparisonParentVersion(null);
+    setVersionComparisonError(null);
+    if (!targetQuote?.parent_quote_id) return;
+    if (quoteReadsBlockedRef.current) {
+      setVersionComparisonError("Comparaison indisponible : les lignes de la version courante n’ont pas pu être chargées.");
+      return;
+    }
+    setVersionComparisonLoading(true);
+    const parentResult=await db.rpc("get_supplier_quote_version_v2",{p_quote_id:targetQuote.parent_quote_id});
+    const results = await loadSupplierQuoteSections(db, targetQuote.parent_quote_id);
+    setVersionComparisonLoading(false);
+    if(parentResult.error) {setVersionComparisonError(formatSupabaseError(parentResult.error));return;}
+    const failures = results.filter((result) => result.error !== null);
+    if (failures.length) {
+      const message = failures.map((result) => `${tableBySection[result.section]}: ${formatSupabaseError(result.error)}`).join(" | ");
+      console.error("Supplier quote comparison load failed", { quoteId: targetQuote.parent_quote_id, message });
+      setVersionComparisonError(message);
+      return;
+    }
+    const previousRows = Object.fromEntries(results.map((result) => [result.section, normalizeRows(result.section, result.data!)])) as Record<QuoteSection, QuoteRow[]>;
+    const changes=buildVersionChanges(currentRows, previousRows);
+    const parent=parentResult.data;
+    setComparisonParentVersion(Number(parent?.version_number ?? 1));
+    for(const key of ["supplier_handling_percentage","supplier_handling_categories","supplier_handling_amount_jpy"]) {
+      if(JSON.stringify(parent?.[key] ?? (key.endsWith("categories") ? [] : 0))!==JSON.stringify(targetQuote[key] ?? (key.endsWith("categories") ? [] : 0))) changes.push({section:"handling",kind:"changed",detail:key==="supplier_handling_percentage" ? `Pourcentage fournisseur : ${parent?.[key] ?? 0} % → ${targetQuote[key] ?? 0} %` : key==="supplier_handling_amount_jpy" ? `Montant du handling : ${fmtJPY(parent?.[key] ?? 0)} → ${fmtJPY(targetQuote[key] ?? 0)}` : `Périmètre : ${(parent?.[key] ?? []).map((category:QuoteSection)=>HANDLING_CATEGORY_LABELS[category]).join(", ") || "Aucun"} → ${(targetQuote[key] ?? []).map((category:QuoteSection)=>HANDLING_CATEGORY_LABELS[category]).join(", ") || "Aucun"}`});
+    }
+    setVersionChanges(changes);
   };
 
   const loadMessages = async (targetTripId = tripId) => {
@@ -593,6 +670,7 @@ export default function SupplierTripCosts() {
   };
 
   const sendTripMessage = async () => {
+    if (!isAdmin && tripArchived) return;
     if (!tripId || !user) return;
     const body = messageDraft.trim();
     if (!body && messageFiles.length === 0) return;
@@ -666,6 +744,7 @@ export default function SupplierTripCosts() {
   };
 
   const uploadTripDocument = async () => {
+    if (!isAdmin && tripArchived) return;
     if (!tripId || !user || !documentFile) return;
     setDocumentBusy(true);
     try {
@@ -705,6 +784,7 @@ export default function SupplierTripCosts() {
   };
 
   const replaceTripDocument = async (document: TripDocument, file: File) => {
+    if (!isAdmin && tripArchived) return;
     if (!tripId || !user) return;
     setDocumentBusy(true);
     try {
@@ -740,6 +820,7 @@ export default function SupplierTripCosts() {
   };
 
   const deleteTripDocument = async (document: TripDocument) => {
+    if (!isAdmin && tripArchived) return;
     if (!tripId) return;
     setDocumentBusy(true);
     try {
@@ -756,54 +837,67 @@ export default function SupplierTripCosts() {
   };
 
   const loadQuote = async (tripId: string, currentSupplierId: string | null, admin: boolean, quoteId?: string) => {
-    if (!admin) {
-      if (!currentSupplierId) return null;
-      const { data: quote, error } = quoteId
-        ? await db.rpc("get_supplier_quote_version_v2", { p_quote_id: quoteId })
-        : await db.rpc("get_supplier_trip_quote", { p_trip_id: tripId, p_supplier_id: currentSupplierId });
-      if (error) {
-        setLastQuoteEngineError(formatSupabaseError(error));
-        if (isMissingTableError(error)) setSqlMissing(true);
+    quoteReadsBlockedRef.current = true;
+    setQuoteSectionsLoading(true);
+    setQuoteReadError(null);
+    setSectionLoadErrors({});
+    setLastQuoteEngineError(null);
+    setSqlMissing(false);
+    try {
+      let loadedQuote: any;
+      if (!admin) {
+        if (!currentSupplierId) throw new Error("Rattachement fournisseur introuvable.");
+        const { data, error } = quoteId
+          ? await db.rpc("get_supplier_quote_version_v2", { p_quote_id: quoteId })
+          : await db.rpc("get_supplier_trip_quote", { p_trip_id: tripId, p_supplier_id: currentSupplierId });
+        if (error) throw error;
+        loadedQuote = data;
+      } else {
+        const query = db.from("supplier_trip_quotes").select("*").eq("trip_id", tripId)
+          .order("version_number", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(1);
+        const { data, error } = currentSupplierId
+          ? await (quoteId ? query.eq("supplier_id", currentSupplierId).eq("id", quoteId) : query.eq("supplier_id", currentSupplierId))
+          : await (quoteId ? query.eq("id", quoteId) : query);
+        if (error) throw error;
+        loadedQuote = data?.[0];
+      }
+      if (!loadedQuote?.id) {
+        if (quoteId) throw new Error("Version du devis introuvable.");
+        quoteReadsBlockedRef.current = false;
         return null;
       }
-      if (!quote?.id) return null;
-      const sectionResults = await Promise.all((Object.keys(tableBySection) as QuoteSection[]).map(async (section) => {
-        const { data, error: sectionError } = await db.from(tableBySection[section]).select("*").eq("quote_id", quote.id).order("sort_order", { ascending: true });
-        if (sectionError) setLastQuoteEngineError(`${tableBySection[section]}: ${formatSupabaseError(sectionError)}`);
-        return [section, normalizeRows(section, data ?? [])] as const;
-      }));
-      return { quote, rows: Object.fromEntries(sectionResults) as Record<QuoteSection, QuoteRow[]> };
-    }
-    const query = db.from("supplier_trip_quotes").select("*").eq("trip_id", tripId)
-      .order("version_number", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(1);
-    const { data: quoteRows, error } = currentSupplierId
-      ? await (quoteId ? query.eq("supplier_id", currentSupplierId).eq("id", quoteId) : query.eq("supplier_id", currentSupplierId))
-      : await (quoteId ? query.eq("id", quoteId) : query);
-    if (error) {
-      setLastQuoteEngineError(formatSupabaseError(error));
-      if (isMissingTableError(error)) setSqlMissing(true);
-      return null;
-    }
-    const quote = quoteRows?.[0];
-    if (!quote?.id) return null;
-
-    const sectionResults = await Promise.all((Object.keys(tableBySection) as QuoteSection[]).map(async (section) => {
-      const { data, error } = await db
-        .from(tableBySection[section])
-        .select("*")
-        .eq("quote_id", quote.id)
-        .order("sort_order", { ascending: true });
-      if (error) {
-        setLastQuoteEngineError(`${tableBySection[section]}: ${formatSupabaseError(error)}`);
-        if (isMissingTableError(error)) setSqlMissing(true);
+      const results = await loadSupplierQuoteSections(db, loadedQuote.id);
+      const errors: Partial<Record<QuoteSection, string>> = {};
+      const loadedRows = Object.fromEntries(results.map((result) => {
+        if (result.error !== null) {
+          const message = `${tableBySection[result.section]}: ${(formatSupabaseError(result.error) || String(result.error))}`;
+          errors[result.section] = message;
+          console.error("Supplier quote section load failed", { quoteId: loadedQuote.id, table: tableBySection[result.section], error: result.error });
+          if (isMissingTableError(result.error)) setSqlMissing(true);
+          // This slot is unavailable, not a successful empty quote section.
+          // The error state hides the table and blocks saving incomplete rows.
+          return [result.section, []];
+        }
+        return [result.section, normalizeRows(result.section, result.data!)];
+      })) as Record<QuoteSection, QuoteRow[]>;
+      setSectionLoadErrors(errors);
+      quoteReadsBlockedRef.current = Object.keys(errors).length > 0;
+      if (quoteReadsBlockedRef.current) {
+        setLastQuoteEngineError(Object.values(errors).join(" | "));
+        toast.error("Certaines lignes du devis n’ont pas pu être chargées. Consultez les erreurs affichées.");
       }
-      return [section, normalizeRows(section, data ?? [])] as const;
-    }));
-
-    return {
-      quote,
-      rows: Object.fromEntries(sectionResults) as Record<QuoteSection, QuoteRow[]>,
-    };
+      return { quote: loadedQuote, rows: loadedRows };
+    } catch (error) {
+      const message = formatSupabaseError(error) || String(error);
+      console.error("Supplier quote load failed", { quoteId, tripId, error });
+      setQuoteReadError(message);
+      setLastQuoteEngineError(message);
+      if (isMissingTableError(error)) setSqlMissing(true);
+      toast.error(`Chargement du devis impossible : ${message}`);
+      return null;
+    } finally {
+      setQuoteSectionsLoading(false);
+    }
   };
 
   const selectQuoteVersion = async (quoteId: string) => {
@@ -813,6 +907,7 @@ export default function SupplierTripCosts() {
       const loaded = await loadQuote(tripId, supplierId, isAdmin, quoteId);
       if (!loaded) throw new Error("Version du devis introuvable.");
       setQuote(loaded.quote);
+      setHandlingTerms({percentage:Number(loaded.quote.supplier_handling_percentage ?? 0),categories:loaded.quote.supplier_handling_categories ?? []});
       setStatus((loaded.quote.status ?? "draft") as QuoteStatus);
       setValidationStatus((loaded.quote.validation_status ?? "draft") as SupplierValidationStatus);
       setRows(loaded.rows);
@@ -850,6 +945,7 @@ export default function SupplierTripCosts() {
     const loadedQuote = await loadQuote(tripId, nextSupplierId, true);
     if (loadedQuote) {
       setQuote(loadedQuote.quote);
+      setHandlingTerms({percentage:Number(loadedQuote.quote.supplier_handling_percentage ?? 0),categories:loadedQuote.quote.supplier_handling_categories ?? []});
       setStatus((loadedQuote.quote.status ?? "draft") as QuoteStatus);
       setValidationStatus((loadedQuote.quote.validation_status ?? "draft") as SupplierValidationStatus);
       setCommissionPct(Number(loadedQuote.quote.commission_percentage ?? loadedQuote.quote.commission_percent ?? 10));
@@ -861,7 +957,9 @@ export default function SupplierTripCosts() {
       setRows(loadedQuote.rows);
       return;
     }
+    if (quoteReadsBlockedRef.current) return;
     setQuote(null);
+      setHandlingTerms({percentage:0,categories:[]});
     setStatus("draft");
     setValidationStatus("draft");
     setCommissionPct(10);
@@ -874,8 +972,8 @@ export default function SupplierTripCosts() {
   };
 
   const totals = useMemo(
-    () => calculateQuoteTotals(rows, commissionPct, exchangeRate, participants, bookings),
-    [bookings, commissionPct, exchangeRate, participants, rows]
+    () => calculateQuoteTotals(rows, commissionPct, exchangeRate, participants, bookings, handlingTerms),
+    [bookings, commissionPct, exchangeRate, participants, rows, handlingTerms]
   );
 
   const buildValidationForSave = (
@@ -899,6 +997,11 @@ export default function SupplierTripCosts() {
     } = {}
   ) => {
     if (!tripId) return null;
+    if(!isAdmin && !handlingSchemaAvailable) {toast.error("Conditions de handling fournisseur indisponibles.");return null;}
+    if (quoteReadsBlockedRef.current) {
+      toast.error("Enregistrement bloqué : rechargez toutes les lignes du devis avant de sauvegarder.");
+      return null;
+    }
     if (!supplierId) {
       toast.error("Choisissez le fournisseur avant d'enregistrer ou de soumettre le devis.");
       return null;
@@ -911,7 +1014,7 @@ export default function SupplierTripCosts() {
     try {
       const rowsToSave = options.rowsOverride ?? rows;
       if (!isAdmin && nextStatus === "submitted") {
-        const quoteErrors = quotationSubmissionErrors(rowsToSave);
+        const quoteErrors = [...quotationSubmissionErrors(rowsToSave),...supplierHandlingErrors(handlingTerms)];
         if (quoteErrors.length) {
           toast.error(quoteErrors[0]);
           return null;
@@ -920,8 +1023,9 @@ export default function SupplierTripCosts() {
       const overridesToSave = options.validationOverridesOverride ?? validationOverrides;
       const validationStatusToSave = options.validationStatusOverride ?? validationStatus;
       const validationForSave = buildValidationForSave(rowsToSave, overridesToSave);
-      const totalsForSave = calculateQuoteTotals(rowsToSave, commissionPct, exchangeRate, participants, bookings);
+      const totalsForSave = calculateQuoteTotals(rowsToSave, commissionPct, exchangeRate, participants, bookings, handlingTerms);
       const validationMetadata = {
+        ...(quote?.validation_metadata ?? {}),
         manual_overrides: overridesToSave,
         completion_percentage: validationForSave.completionPercentage,
         updated_at: new Date().toISOString(),
@@ -978,7 +1082,12 @@ export default function SupplierTripCosts() {
           p_validation_completion: quotePayloadValidation.validation_completion_percentage,
         });
       } else {
+        const handlingErrors=supplierHandlingErrors(handlingTerms);
+        if (handlingErrors.length) throw new Error(handlingErrors[0]);
         const supplierPayload = {
+          supplier_handling_percentage:handlingTerms.percentage,
+          supplier_handling_categories:handlingTerms.categories,
+          supplier_handling_confirmed:true,
           participant_count: quotePayload.participant_count,
           supplier_notes: quotePayload.supplier_notes,
           ...quotePayloadValidation,
@@ -1007,12 +1116,18 @@ export default function SupplierTripCosts() {
       }
 
       setQuote(savedQuote);
+      setHandlingTerms({percentage:Number(savedQuote.supplier_handling_percentage ?? 0),categories:savedQuote.supplier_handling_categories ?? []});
       setStatus(nextStatus as QuoteStatus);
       setValidationStatus(validationStatusToSave);
       toast.success(nextStatus === "submitted" ? "Devis soumis à l'équipe LeJapon.ma." : "Devis enregistré.");
       await load();
       return savedQuote;
     } catch (error: any) {
+      // Keep the original Supabase/RPC error visible in the browser console.
+      // Excel import may call saveQuote() as a safety checkpoint before creating
+      // a new version; without this log the caller only sees the secondary
+      // “brouillon courant” message and the real database error is hidden.
+      console.error("saveQuote failed:", error);
       setLastQuoteEngineError(formatSupabaseError(error));
       if (isMissingTableError(error)) {
         setSqlMissing(true);
@@ -1057,7 +1172,7 @@ export default function SupplierTripCosts() {
       p_supplier_notes: serializeOperationalState(operationalState),
       p_validation_status: nextValidationStatus,
       p_validation_snapshot: { ...validationForSave, manual_overrides: overridesToSave },
-      p_validation_metadata: { manual_overrides: overridesToSave, updated_at: new Date().toISOString() },
+      p_validation_metadata: { ...(quote?.validation_metadata ?? {}), manual_overrides: overridesToSave, updated_at: new Date().toISOString() },
       p_validation_completion: validationForSave.completionPercentage,
     });
     if (error) {
@@ -1070,12 +1185,12 @@ export default function SupplierTripCosts() {
   };
 
   const createNewVersion = async () => {
-    if (!quote?.id || quote.status !== "approved") return;
+    if (!quote?.id || !["approved","revision_requested"].includes(quote.status) || quoteReadsBlockedRef.current) return;
     setBusy(true);
     try {
       const { data, error } = await db.rpc("create_supplier_quote_version_v2", { p_quote_id: quote.id });
       if (error) throw error;
-      toast.success(`Version V${data.version_number} créée à partir de la version approuvée.`);
+      toast.success(`Version V${data.version_number} créée à partir de la version sélectionnée.`);
       await load();
     } catch (error: any) {
       toast.error(error?.message ?? "Création de la nouvelle version impossible.");
@@ -1085,7 +1200,7 @@ export default function SupplierTripCosts() {
   };
 
   const reviewQuote = async (action: "reviewed" | "revision_requested" | "approved" | "rejected") => {
-    if (!isAdmin || !quote?.id) return;
+    if (!isAdmin || !quote?.id || quoteReadsBlockedRef.current) return;
     setBusy(true);
     try {
       const { data, error } = await db.rpc("review_supplier_quote_v2", {
@@ -1152,27 +1267,48 @@ export default function SupplierTripCosts() {
     return true;
   };
 
+  const setReservationStatus = async (section: QuoteSection, rowId: string | null, nextStatus: RowStatus) => {
+    if (!canConfirmReservations || !quote?.id || quoteReadsBlockedRef.current) return;
+    setValidationBusy(true);
+    try {
+      const {error}=await db.rpc("set_supplier_quote_reservation_status_v1",{p_quote_id:quote.id,p_row_table:tableBySection[section],p_row_id:rowId,p_status:nextStatus});
+      if(error) throw error;
+      await selectQuoteVersion(quote.id);
+      toast.success("Statut de réservation enregistré.");
+    } catch(error:any) {toast.error(formatSupabaseError(error));}
+    finally {setValidationBusy(false);}
+  };
+
+  const setExecutionStatus = async (nextStatus: SupplierExecutionStatus) => {
+    if (!canEditOperations || !quote?.id || quoteReadsBlockedRef.current) return;
+    setValidationBusy(true);
+    try {
+      const {error}=await db.rpc("set_supplier_quote_execution_status_v1",{p_quote_id:quote.id,p_status:nextStatus});
+      if(error) throw error;
+      await selectQuoteVersion(quote.id);
+      toast.success("Statut d’exécution enregistré.");
+    } catch(error:any) {toast.error(formatSupabaseError(error));}
+    finally {setValidationBusy(false);}
+  };
+
+  const changeHandlingTerms = (terms: SupplierHandlingTerms) => {
+    if (!canEditSupplierValues) return;
+    setHandlingTerms(terms);
+    if (terms.percentage>0) setRows(current=>({...current,other:current.other.map(row=>isLegacySupplierHandlingRow(row) ? {...row,included_in_total:false} : row)}));
+  };
+
   const bulkSetValidationSection = async (section: ValidationItemKey, confirmed: boolean) => {
     if (!canEditOperations) return;
     setValidationBusy(true);
     try {
       if (isQuoteSection(section)) {
-        if (!canEditSupplierValues) {
-          toast.error("Le statut fournisseur des lignes appartient au fournisseur. Utilisez la revue de ligne pour approuver ou exclure.");
-          return;
-        }
-        const nextRows = {
-          ...rows,
-          [section]: normalizeRows(section, rows[section].map((row) => ({ ...row, status: confirmed ? "confirmed" : "todo" }))),
-        };
-        setRows(nextRows);
-        await saveQuote(status, { rowsOverride: nextRows });
+        await setReservationStatus(section,null,confirmed ? "confirmed" : "todo");
       } else {
         const nextOverrides = { ...validationOverrides, [section]: confirmed };
         setValidationOverrides(nextOverrides);
         await saveOperationalState(validationStatus, nextOverrides);
       }
-      toast.success(confirmed ? "Section validée." : "Section remise à faire.");
+      toast.success(confirmed ? "Suivi opérationnel confirmé." : "Suivi opérationnel à compléter.");
     } catch (error: any) {
       toast.error(error?.message ?? "Mise à jour de la validation impossible.");
     } finally {
@@ -1186,6 +1322,94 @@ export default function SupplierTripCosts() {
 
   const addRow = (section: QuoteSection) => {
     updateRows(section, [...rows[section], blankRow(section, rows[section].length)]);
+  };
+
+  const readExcelImportFile = async (file: File | null) => {
+    if (!file) return;
+    if (!/\.xlsx$/i.test(file.name)) {
+      toast.error("Sélectionnez un fichier Excel .xlsx.");
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error("Le fichier Excel dépasse la limite de 25 Mo.");
+      return;
+    }
+    setExcelReading(true);
+    try {
+      const preview = await parseSupplierQuoteWorkbook(await file.arrayBuffer(), file.name);
+      if (preview.counts.importable === 0 && preview.counts.unresolved === 0) {
+        throw new Error("Aucune ligne de devis reconnue dans la première feuille.");
+      }
+      setExcelPreview(preview);
+      setExcelImportOpen(true);
+    } catch (error: any) {
+      setExcelPreview(null);
+      toast.error(error?.message ?? "Lecture du fichier Excel impossible.");
+    } finally {
+      setExcelReading(false);
+    }
+  };
+
+  const confirmExcelImport = async () => {
+    if (!tripId || !supplierId || !excelPreview || !canImportExcel || quoteReadsBlockedRef.current) return;
+    if (hasUnresolvedSupplierQuoteImportRows(excelPreview)) {
+      toast.error("Choisissez une décision pour chaque ligne sans sous-total Excel.");
+      return;
+    }
+    const handlingErrors=supplierQuoteImportHandlingErrors(excelPreview);
+    if(handlingErrors.length) {toast.error(handlingErrors[0]);return;}
+    setExcelImportBusy(true);
+    try {
+      // Freeze the selected strategy before saveQuote() reloads React state.
+      const importMode: "direct" | "new_version" = excelImportMode;
+      let sourceQuoteId = quote?.id ?? null;
+      if (importMode === "new_version" && ["draft", "revision_requested"].includes(status)) {
+        const savedSource = await saveQuote("draft");
+        if (!savedSource?.id) throw new Error("Le brouillon courant n’a pas pu être sécurisé avant l’import.");
+        sourceQuoteId = savedSource.id;
+      }
+      const importRows = buildSupplierQuoteImportPayload(excelPreview);
+      const importDecisionMetadata = buildSupplierQuoteImportMetadata(excelPreview);
+      const { data, error } = await db.rpc("import_supplier_quote_excel_v1", {
+        p_quote_id: sourceQuoteId,
+        p_trip_id: tripId,
+        p_supplier_id: supplierId,
+        p_mode: importMode,
+        p_file_name: excelPreview.fileName,
+        p_sheet_name: excelPreview.sheetName,
+        p_rows: importRows,
+        p_participant_count: excelPreview.participantCount,
+        p_import_metadata: {
+          ...importDecisionMetadata,
+          preview_counts: excelPreview.counts,
+          financial_summary: excelPreview.financialSummary,
+          handling_semantics: "quote_level_category_scope_distinct_from_internal_commission",
+          ignored_sheet_count: excelPreview.ignoredSheetCount,
+          workbook_warning_count: excelPreview.workbookWarnings.length,
+        },
+      });
+      if (error) throw error;
+
+      const importedQuoteId = data?.id;
+      if (!importedQuoteId) {
+        throw new Error("L’import a réussi mais la nouvelle version du devis n’a pas été identifiée.");
+      }
+
+      setExcelImportOpen(false);
+      setExcelPreview(null);
+      toast.success(importMode === "new_version"
+        ? `Import terminé dans V${data?.version_number ?? nextQuoteVersionNumber} (brouillon). La version précédente reste intacte.`
+        : `Import terminé : ${data?.imported_line_count ?? excelPreview.counts.importable} lignes ajoutées au brouillon.`);
+
+      // The import RPC returns the exact quote/version that received the Excel rows.
+      // Reload that version explicitly instead of asking load() to rediscover it.
+      await loadQuoteVersions(tripId, supplierId);
+      await selectQuoteVersion(importedQuoteId);
+    } catch (error: any) {
+      toast.error(error?.message ?? "Import Excel impossible. Aucune ligne n’a été écrite.");
+    } finally {
+      setExcelImportBusy(false);
+    }
   };
 
   const exportExcel = async (scope: "quote" | "operations" | "participants" | "rooms_extras" | "global" | "operational_book") => {
@@ -1349,18 +1573,24 @@ export default function SupplierTripCosts() {
         description={`${supplierName} · ${fmtDate(trip.start_date)} → ${fmtDate(trip.end_date)} · ${trip.duration_days ?? (programmeDays.length || "?")} jours`}
         action={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => saveQuote(status)} disabled={busy || (isAdmin ? !quote?.id || ["approved", "archived"].includes(status) : !canEditSupplierValues)}>
+            <Button variant="outline" onClick={() => saveQuote(status)} disabled={busy || quoteDataUnavailable || (isAdmin ? !quote?.id || ["approved", "archived"].includes(status) : !canEditSupplierValues)}>
               <Save className="h-4 w-4" /> Enregistrer
             </Button>
             {!isAdmin && <Button onClick={() => saveQuote("submitted")} disabled={busy || !canEditSupplierValues}>
               <Send className="h-4 w-4" /> Soumettre
             </Button>}
-            {!isAdmin && status === "approved" && <Button onClick={createNewVersion} disabled={busy}>
+            {!isAdmin && ["approved","revision_requested"].includes(status) && <Button onClick={createNewVersion} disabled={busy || tripArchived || quoteDataUnavailable}>
               <History className="h-4 w-4" /> Créer une nouvelle version
             </Button>}
           </div>
         }
       />
+
+      {tripArchived && !isAdmin && (
+        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          Ce voyage est archivé. Les devis, versions, commentaires, documents et données opérationnelles restent consultables en lecture seule.
+        </Card>
+      )}
 
       {quoteVersions.length > 0 && <Card className="p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1368,7 +1598,7 @@ export default function SupplierTripCosts() {
             <Label>Versions du devis fournisseur</Label>
             <p className="text-xs text-muted-foreground">Les versions validées restent consultables et ne sont jamais écrasées.</p>
           </div>
-          <Select value={quote?.id ?? ""} onValueChange={(value) => void selectQuoteVersion(value)}>
+          <Select disabled={busy || quoteSectionsLoading} value={quote?.id ?? ""} onValueChange={(value) => void selectQuoteVersion(value)}>
             <SelectTrigger className="w-full sm:w-[260px]"><SelectValue /></SelectTrigger>
             <SelectContent>{quoteVersions.map((version) => (
               <SelectItem key={version.id} value={version.id}>V{version.version_number ?? 1} · {quoteStatusLabel[(version.status ?? "draft") as QuoteStatus] ?? version.status}</SelectItem>
@@ -1376,16 +1606,19 @@ export default function SupplierTripCosts() {
           </Select>
         </div>
       </Card>}
-      {quote?.parent_quote_id && <Card className="p-4">
-        <h2 className="font-display text-lg">Évolutions depuis V{Math.max(1, Number(quote.version_number || 1) - 1)}</h2>
-        {versionChanges.length === 0
-          ? <p className="mt-2 text-sm text-muted-foreground">Aucune différence enregistrée par rapport à la version précédente.</p>
-          : <ul className="mt-2 space-y-1 text-sm">{versionChanges.map((change, index) => <li key={`${change}-${index}`}>• {change}</li>)}</ul>}
+      {quote?.parent_quote_id && <SupplierQuoteVersionHistory key={quote.id} previousVersion={comparisonParentVersion ?? Math.max(1,Number(quote.version_number || 1)-1)} changes={versionChanges} error={versionComparisonError} loading={versionComparisonLoading} />}
+
+
+      {quoteReadError && <Card role="alert" className="border-destructive p-4 text-sm text-destructive">
+        Le devis n’a pas pu être chargé. {quoteReadError}
       </Card>}
+      {(quoteReadError || Object.keys(sectionLoadErrors).length > 0) && <Button variant="outline" disabled={busy || quoteSectionsLoading} onClick={() => quote?.id ? void selectQuoteVersion(quote.id) : void load()}>
+        Réessayer le chargement des lignes
+      </Button>}
 
       {sqlMissing && (
         <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          Les tables dédiées au quote engine fournisseur sont absentes ou non accessibles. Appliquez la migration SQL V1 pour enregistrer les devis structurés.
+          Une table du devis fournisseur est introuvable. Vérifiez le schéma et l’erreur ci-dessous avant d’appliquer un correctif SQL.
           {lastQuoteEngineError && <p className="mt-2 font-mono text-xs">{lastQuoteEngineError}</p>}
         </Card>
       )}
@@ -1401,23 +1634,20 @@ export default function SupplierTripCosts() {
         </Card>
       )}
 
-      <SupplierValidationWorkflow
-        validation={validation}
-        status={validationStatus}
-        busy={validationBusy || busy}
-        canEdit={canEditOperations}
-        isAdmin={isAdmin}
-        onStatusChange={updateValidationStatus}
-        onBulkSectionChange={bulkSetValidationSection}
-      />
+      {!handlingSchemaAvailable && !quoteDataUnavailable && <Card role="alert" className="p-4 text-sm">Les conditions de handling fournisseur ne sont pas encore disponibles. L’enregistrement fournisseur et l’import sont suspendus ; contactez LeJapon.ma.</Card>}
+      <Card className="p-4 text-sm">
+        <p className="font-medium">Devis commercial : {quoteStatusLabel[status]}</p>
+        <p className="mt-1 text-muted-foreground">LeJapon.ma approuve le devis ou demande une révision. Passeports, rooming, documents et réservations sont suivis dans la vue opérationnelle après approbation et ne bloquent pas la soumission.</p>
+        {quote?.admin_feedback && <p className="mt-2 whitespace-pre-wrap">Retour LeJapon.ma : {quote.admin_feedback}</p>}
+      </Card>
 
-      <div className="grid gap-3 lg:grid-cols-5">
+      {!quoteDataUnavailable && <div className="grid gap-3 lg:grid-cols-5">
         <TotalCard label="Hôtels" value={totals.hotels} />
         <TotalCard label="Transport" value={totals.transport} />
         <TotalCard label="Activités" value={totals.activities} />
         <TotalCard label="Guides" value={totals.guides} />
         <TotalCard label="Autres" value={totals.other} />
-      </div>
+      </div>}
 
       <Card className="sticky top-20 z-10 border-primary/20 bg-background/95 p-4 shadow-sm backdrop-blur">
         <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
@@ -1433,11 +1663,13 @@ export default function SupplierTripCosts() {
             <Label>JPY → MAD</Label>
             <Input className="mt-1" type="number" step="0.001" value={exchangeRate} onChange={(event) => setExchangeRate(Number(event.target.value))} />
           </div>}
-          <SummaryMetric label="Total brut JPY" value={fmtJPY(totals.grandTotalJpy)} />
-          {isAdmin && <SummaryMetric label="Commission JPY" value={fmtJPY(totals.commissionAmountJpy)} />}
-          <SummaryMetric label={isAdmin ? "Total final JPY" : "Total devis JPY"} value={fmtJPY(totals.finalTotalJpy)} strong />
-          {isAdmin && <SummaryMetric label="Total final MAD" value={fmtMAD(totals.finalTotalMad)} strong />}
-          {isAdmin && <SummaryMetric label="Coût / personne" value={`${fmtJPY(totals.costPerPersonJpy)} · ${fmtMAD(totals.costPerPersonMad)}`} />}
+          <SummaryMetric label="Sous-total services JPY" value={quoteDataUnavailable ? "Indisponible" : fmtJPY(totals.grandTotalJpy-totals.legacyHandlingIncludedJpy)} />
+          <SummaryMetric label={totals.legacyHandlingIncludedJpy>0 ? "Handling historique JPY" : "Handling fournisseur JPY"} value={quoteDataUnavailable || totals.handlingInvalid ? "Indisponible" : fmtJPY(totals.handlingAmountJpy+totals.legacyHandlingIncludedJpy)} />
+          <SummaryMetric label="Total fournisseur JPY" value={quoteDataUnavailable || totals.handlingInvalid ? "Indisponible" : fmtJPY(totals.supplierTotalJpy)} strong />
+          {isAdmin && <SummaryMetric label="Commission JPY" value={quoteDataUnavailable ? "Indisponible" : fmtJPY(totals.commissionAmountJpy)} />}
+          {isAdmin && <SummaryMetric label="Total avec commission interne JPY" value={quoteDataUnavailable || totals.handlingInvalid ? "Indisponible" : fmtJPY(totals.finalTotalJpy)} strong />}
+          {isAdmin && <SummaryMetric label="Total final MAD" value={quoteDataUnavailable ? "Indisponible" : fmtMAD(totals.finalTotalMad)} strong />}
+          {isAdmin && <SummaryMetric label="Coût / personne" value={quoteDataUnavailable ? "Indisponible" : `${fmtJPY(totals.costPerPersonJpy)} · ${fmtMAD(totals.costPerPersonMad)}`} />}
         </div>
       </Card>
 
@@ -1448,15 +1680,53 @@ export default function SupplierTripCosts() {
             <p className="text-sm text-muted-foreground">Données opérationnelles bureau Japon, sans paiements ni marge commerciale.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => void exportExcel("quote")}><Download className="h-4 w-4" /> Export devis Excel</Button>
-            <Button variant="outline" size="sm" onClick={() => void exportExcel("operations")}><Download className="h-4 w-4" /> Export vue opérationnelle Excel</Button>
+            {!isAdmin && <>
+              <input
+                ref={excelFileInputRef}
+                type="file"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0] ?? null;
+                  event.currentTarget.value = "";
+                  void readExcelImportFile(file);
+                }}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => excelFileInputRef.current?.click()}
+                disabled={!canImportExcel || excelReading || excelImportBusy}
+              >
+                <Upload className="h-4 w-4" /> {excelReading ? "Lecture…" : "Importer Excel"}
+              </Button>
+            </>}
+            <Button variant="outline" size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("quote")}><Download className="h-4 w-4" /> Export devis Excel</Button>
+            <Button variant="outline" size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("operations")}><Download className="h-4 w-4" /> Export vue opérationnelle Excel</Button>
             <Button variant="outline" size="sm" onClick={() => void exportExcel("participants")}><Download className="h-4 w-4" /> Export participants Excel</Button>
             <Button variant="outline" size="sm" onClick={() => void exportExcel("rooms_extras")}><Download className="h-4 w-4" /> Export chambres & extras Excel</Button>
-            <Button size="sm" onClick={() => void exportExcel("global")}><Download className="h-4 w-4" /> Export dossier global Excel</Button>
-            <Button size="sm" onClick={() => void exportExcel("operational_book")}><Download className="h-4 w-4" /> Exporter dossier opérationnel</Button>
+            <Button size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("global")}><Download className="h-4 w-4" /> Export dossier global Excel</Button>
+            <Button size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("operational_book")}><Download className="h-4 w-4" /> Exporter dossier opérationnel</Button>
           </div>
         </div>
       </Card>
+
+      <SupplierQuoteExcelImportDialog
+        open={excelImportOpen}
+        preview={excelPreview}
+        importMode={excelImportMode}
+        nextVersionNumber={nextQuoteVersionNumber}
+        busy={excelImportBusy}
+        onOpenChange={(open) => {
+          setExcelImportOpen(open);
+          if (!open) setExcelPreview(null);
+        }}
+        onConfirm={() => void confirmExcelImport()}
+        onHandlingChange={(terms,acknowledged)=>setExcelPreview(current=>current ? confirmSupplierQuoteImportHandling(current,terms,acknowledged ?? false) : current)}
+        onResolutionChange={(sourceRow: number, resolution: SupplierQuoteAmbiguousResolution) => {
+          setExcelPreview((current) => current ? resolveSupplierQuoteImportRow(current, sourceRow, resolution) : current);
+        }}
+      />
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value)} className="space-y-4">
         <TabsList className={`grid h-auto w-full grid-cols-1 ${isAdmin ? "md:grid-cols-4 xl:grid-cols-7" : "md:grid-cols-3 xl:grid-cols-6"}`}>
@@ -1473,12 +1743,22 @@ export default function SupplierTripCosts() {
         </TabsList>
 
         <TabsContent value="quote" className="space-y-5">
+          {!quoteDataUnavailable && <Card className="space-y-3 p-4">
+            {totals.legacyHandlingIncludedJpy>0 && !canEditSupplierValues ? <p className="text-sm">Handling historique conservé : {fmtJPY(totals.legacyHandlingIncludedJpy)}{quote?.validation_metadata?.excel_import?.financial_summary?.supplierHandlingPercentage!=null ? ` · ${quote.validation_metadata.excel_import.financial_summary.supplierHandlingPercentage} % (source Excel)` : ""}. Le périmètre historique n’est pas présumé. Une nouvelle révision permet de confirmer les catégories.</p> : <SupplierHandlingFields value={handlingTerms} disabled={!canEditSupplierValues} onChange={changeHandlingTerms} />}
+            <p className="text-sm text-muted-foreground">Base incluse des catégories sélectionnées : {totals.handlingInvalid ? "À confirmer" : fmtJPY(totals.handlingBaseJpy)}. Le handling est calculé par le serveur à l’enregistrement.</p>
+            {rows.other.some(isLegacySupplierHandlingRow) && <p className="text-sm text-amber-700">Cette version conserve une ancienne ligne de handling Excel. Sur un brouillon, renseigner un handling supérieur à zéro l’exclut du total, sans supprimer la ligne ni modifier les versions historiques.</p>}
+            {isAdmin && <p className="text-sm text-muted-foreground">Les conditions financières du fournisseur sont consultables. Demandez une révision pour modifier le pourcentage, le périmètre ou les prix.</p>}
+          </Card>}
           {(Object.keys(tableBySection) as QuoteSection[]).map((section) => <QuoteTable
             key={section}
             section={section}
             rows={rows[section]}
+            loading={quoteSectionsLoading}
+            loadError={quoteReadError ?? sectionLoadErrors[section]}
             canEdit={canEditSupplierValues}
             canReview={canReviewLines}
+            canConfirmReservations={canConfirmReservations && !validationBusy}
+            onReservationStatusChange={(rowId,nextStatus)=>void setReservationStatus(section,rowId,nextStatus)}
             isAdmin={isAdmin}
             comments={lineComments}
             onRowsChange={(next) => updateRows(section, next)}
@@ -1490,9 +1770,9 @@ export default function SupplierTripCosts() {
             <Label>Commentaire de revue partagé avec le fournisseur</Label>
             <Textarea className="mt-2" rows={3} value={adminFeedback} onChange={(event) => setAdminFeedback(event.target.value)} placeholder="Motif de correction ou note de validation…" />
             <div className="mt-3 flex flex-wrap gap-2">
-              {status === "submitted" && <Button variant="outline" onClick={() => void reviewQuote("reviewed")} disabled={busy}>Passer en revue</Button>}
-              {["submitted", "reviewed"].includes(status) && <Button variant="outline" onClick={() => void reviewQuote("revision_requested")} disabled={busy}>Demander une correction</Button>}
-              {["submitted", "reviewed"].includes(status) && <Button onClick={() => void reviewQuote("approved")} disabled={busy}>Valider le devis</Button>}
+              {status === "submitted" && <Button variant="outline" onClick={() => void reviewQuote("reviewed")} disabled={busy || quoteDataUnavailable}>Passer en revue</Button>}
+              {["submitted", "reviewed"].includes(status) && <Button variant="outline" onClick={() => void reviewQuote("revision_requested")} disabled={busy || quoteDataUnavailable}>Demander une correction</Button>}
+              {["submitted", "reviewed"].includes(status) && <Button onClick={() => void reviewQuote("approved")} disabled={busy || quoteDataUnavailable}>Approuver le devis commercial</Button>}
             </div>
           </Card>}
           {isAdmin && <Card className="p-4">
@@ -1503,7 +1783,7 @@ export default function SupplierTripCosts() {
 
         {isAdmin && (
           <TabsContent value="financial">
-            <FinancialDashboard rows={rows} totals={totals} bookings={bookings} participants={participants} exchangeRate={exchangeRate} />
+            {quoteDataUnavailable ? <p role="status">Bilan indisponible tant que toutes les lignes du devis ne sont pas chargées.</p> : <FinancialDashboard rows={rows} totals={totals} bookings={bookings} participants={participants} exchangeRate={exchangeRate} />}
           </TabsContent>
         )}
 
@@ -1518,7 +1798,7 @@ export default function SupplierTripCosts() {
             messageBusy={messageBusy}
             messagesSqlMissing={messagesSqlMissing}
             currentUserId={user?.id ?? null}
-            canSend={Boolean(user)}
+            canSend={Boolean(user) && (isAdmin || !tripArchived)}
             onTypeChange={setMessageType}
             onDraftChange={setMessageDraft}
             onFilesChange={setMessageFiles}
@@ -1539,6 +1819,7 @@ export default function SupplierTripCosts() {
             busy={documentBusy}
             sqlMissing={documentsSqlMissing}
             isAdmin={isAdmin}
+            canEdit={isAdmin || !tripArchived}
             currentUserId={user?.id ?? null}
             onCategoryChange={setDocumentCategory}
             onTitleChange={setDocumentTitle}
@@ -1552,6 +1833,23 @@ export default function SupplierTripCosts() {
         </TabsContent>
 
         <TabsContent value="operations" className="space-y-3">
+          {status!=="approved" && <p className="text-sm text-muted-foreground">Suivi opérationnel consultable. Les réservations commencent après l’approbation commerciale par LeJapon.ma.</p>}
+          <Card className="p-4">
+            <Label>Exécution des réservations (après approbation)</Label>
+            <Select value={quote?.supplier_execution_status ?? "to_book"} disabled={!canEditOperations || validationBusy} onValueChange={value=>void setExecutionStatus(value as SupplierExecutionStatus)}>
+              <SelectTrigger className="mt-2 w-full sm:w-[280px]"><SelectValue /></SelectTrigger>
+              <SelectContent>{Object.entries(EXECUTION_STATUS_LABELS).map(([value,label])=><SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+            </Select>
+          </Card>
+          <SupplierValidationWorkflow
+        validation={validation}
+        status={validationStatus}
+        busy={validationBusy || busy}
+        canEdit={canEditOperations}
+        isAdmin={isAdmin}
+        onStatusChange={updateValidationStatus}
+        onBulkSectionChange={bulkSetValidationSection}
+      />
           <div className="flex justify-end"><Button variant="outline" onClick={() => void saveOperationalState()} disabled={busy || !canEditOperations || !quote?.id}><Save className="h-4 w-4" /> Enregistrer les opérations</Button></div>
           <OperationProgramme
             trip={trip}
@@ -1618,9 +1916,9 @@ function FinancialDashboard({
   const revenueJpy = safeExchangeRate > 0 ? revenueMad / safeExchangeRate : 0;
   const revenuePerPassengerMad = passengerCount > 0 ? revenueMad / safePassengerCount : 0;
   const revenuePerPassengerJpy = passengerCount > 0 ? revenueJpy / safePassengerCount : 0;
-  const supplierCostMad = totals.grandTotalJpy * safeExchangeRate;
+  const supplierCostMad = totals.supplierTotalJpy * safeExchangeRate;
   const grossMarginMad = revenueMad - supplierCostMad;
-  const grossMarginJpy = revenueJpy - totals.grandTotalJpy;
+  const grossMarginJpy = revenueJpy - totals.supplierTotalJpy;
   const netProfitMad = revenueMad - totals.finalTotalMad;
   const netProfitJpy = revenueJpy - totals.finalTotalJpy;
   const marginPercent = revenueMad > 0 ? (netProfitMad / revenueMad) * 100 : 0;
@@ -1635,7 +1933,7 @@ function FinancialDashboard({
           <FinancialMetric label="Activities total" value={fmtJPY(totals.activities)} />
           <FinancialMetric label="Guides total" value={fmtJPY(totals.guides)} />
           <FinancialMetric label="Other costs total" value={fmtJPY(totals.other)} />
-          <FinancialMetric label="Grand total supplier cost" value={fmtJPY(totals.grandTotalJpy)} strong />
+          <FinancialMetric label="Total fournisseur avec handling" value={fmtJPY(totals.supplierTotalJpy)} strong />
         </div>
       </Card>
 
@@ -1664,10 +1962,10 @@ function FinancialDashboard({
       <Card className="p-4">
         <SectionTitle title="Supplier status" subtitle="Progression par poste selon les lignes marquées confirmées." />
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SupplierStatusCard label="Hotel confirmed" status={sectionConfirmationStatus(rows.hotels)} />
-          <SupplierStatusCard label="Transport confirmed" status={sectionConfirmationStatus(rows.transport)} />
-          <SupplierStatusCard label="Activities confirmed" status={sectionConfirmationStatus(rows.activities)} />
-          <SupplierStatusCard label="Guides confirmed" status={sectionConfirmationStatus(rows.guides)} />
+          <SupplierStatusCard label="Réservations hôtels" status={sectionConfirmationStatus(rows.hotels)} />
+          <SupplierStatusCard label="Réservations transport" status={sectionConfirmationStatus(rows.transport)} />
+          <SupplierStatusCard label="Réservations activités" status={sectionConfirmationStatus(rows.activities)} />
+          <SupplierStatusCard label="Réservations guides" status={sectionConfirmationStatus(rows.guides)} />
         </div>
       </Card>
     </div>
@@ -1742,7 +2040,7 @@ function SupplierValidationWorkflow({
       <div className="border-b border-border bg-secondary/30 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="font-display text-lg">Supplier Validation Workflow</h2>
+            <h2 className="font-display text-lg">Suivi opérationnel du voyage</h2>
             <p className="text-sm text-muted-foreground">Le devis financier et la préparation opérationnelle sont suivis séparément. Passeports, rooming et documents ne bloquent jamais la soumission du devis.</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -1761,7 +2059,7 @@ function SupplierValidationWorkflow({
 
       <div className="grid gap-4 p-4 xl:grid-cols-[280px_1fr]">
         <div className="rounded-lg border border-border p-4">
-          <p className="text-xs text-muted-foreground">Completion</p>
+          <p className="text-xs text-muted-foreground">Préparation opérationnelle</p>
           <p className="mt-1 font-display text-4xl">{validation.completionPercentage}%</p>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary">
             <div className={`h-full rounded-full ${validation.allComplete ? "bg-emerald-600" : "bg-amber-500"}`} style={{ width: `${validation.completionPercentage}%` }} />
@@ -1780,7 +2078,7 @@ function SupplierValidationWorkflow({
                     <p className="font-medium">{item.label}</p>
                     <p className="mt-1 text-xs opacity-80">{item.detail}</p>
                   </div>
-                  <Badge variant="outline" className="border-current text-current">{item.complete ? "OK" : operational ? "Suivi opérations" : "À compléter devis"}</Badge>
+                  <Badge variant="outline" className="border-current text-current">{item.complete ? "OK" : operational ? "Suivi opérations" : "Réservations à confirmer"}</Badge>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button
@@ -1790,7 +2088,7 @@ function SupplierValidationWorkflow({
                     disabled={busy || !canEdit}
                     onClick={() => onBulkSectionChange(item.key, true)}
                   >
-                    Tout valider
+                    {operational ? "Confirmer le suivi" : "Confirmer les réservations"}
                   </Button>
                   <Button
                     type="button"
@@ -1799,7 +2097,7 @@ function SupplierValidationWorkflow({
                     disabled={busy || !canEdit}
                     onClick={() => onBulkSectionChange(item.key, false)}
                   >
-                    Tout remettre à faire
+                    {operational ? "Suivi à compléter" : "Réservations à refaire"}
                   </Button>
                 </div>
               </div>
@@ -1808,7 +2106,7 @@ function SupplierValidationWorkflow({
 
           {validation.blockingErrors.length > 0 && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-950">
-              <p className="font-semibold">Blocking errors</p>
+              <p className="font-semibold">Suivi opérationnel restant</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {validation.blockingErrors.map((error) => <li key={error}>{error}</li>)}
               </ul>
@@ -1895,7 +2193,7 @@ function TripMessagesCenter({
         <div className="mt-4 space-y-3">
           <div>
             <Label>Type de message</Label>
-            <Select value={messageType} onValueChange={(value) => onTypeChange(value as TripMessageType)}>
+            <Select value={messageType} disabled={!canSend} onValueChange={(value) => onTypeChange(value as TripMessageType)}>
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {messageTypes.map((type) => <SelectItem key={type} value={type}>{messageTypeLabel[type]}</SelectItem>)}
@@ -1907,6 +2205,7 @@ function TripMessagesCenter({
             <Textarea
               className="mt-1"
               rows={6}
+              disabled={!canSend}
               value={messageDraft}
               onChange={(event) => onDraftChange(event.target.value)}
               placeholder="Écrire un message pour l’équipe Maroc ou le bureau Japon..."
@@ -1918,6 +2217,7 @@ function TripMessagesCenter({
               className="mt-1"
               type="file"
               multiple
+              disabled={!canSend}
               onChange={(event) => onFilesChange(Array.from(event.target.files ?? []))}
             />
             {messageFiles.length > 0 && (
@@ -2023,6 +2323,7 @@ function TripDocumentsCenter({
   busy,
   sqlMissing,
   isAdmin,
+  canEdit,
   currentUserId,
   onCategoryChange,
   onTitleChange,
@@ -2042,6 +2343,7 @@ function TripDocumentsCenter({
   busy: boolean;
   sqlMissing: boolean;
   isAdmin: boolean;
+  canEdit: boolean;
   currentUserId: string | null;
   onCategoryChange: (value: TripDocumentCategory) => void;
   onTitleChange: (value: string) => void;
@@ -2088,7 +2390,7 @@ function TripDocumentsCenter({
         <div className="mt-4 space-y-3">
           <div>
             <Label>Catégorie</Label>
-            <Select value={category} onValueChange={(value) => onCategoryChange(value as TripDocumentCategory)}>
+            <Select value={category} disabled={!canEdit} onValueChange={(value) => onCategoryChange(value as TripDocumentCategory)}>
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {tripDocumentCategories.map((item) => <SelectItem key={item} value={item}>{tripDocumentCategoryLabel[item]}</SelectItem>)}
@@ -2097,11 +2399,11 @@ function TripDocumentsCenter({
           </div>
           <div>
             <Label>Titre</Label>
-            <Input className="mt-1" value={title} onChange={(event) => onTitleChange(event.target.value)} placeholder="Ex: Voucher hôtel Tokyo" />
+            <Input className="mt-1" disabled={!canEdit} value={title} onChange={(event) => onTitleChange(event.target.value)} placeholder="Ex: Voucher hôtel Tokyo" />
           </div>
           <div>
             <Label>Fichier</Label>
-            <Input className="mt-1" type="file" onChange={(event) => onFileChange(event.target.files?.[0] ?? null)} />
+            <Input className="mt-1" type="file" disabled={!canEdit} onChange={(event) => onFileChange(event.target.files?.[0] ?? null)} />
             {file && (
               <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
                 <Paperclip className="h-3 w-3" />
@@ -2109,7 +2411,7 @@ function TripDocumentsCenter({
               </p>
             )}
           </div>
-          <Button className="w-full" onClick={onUpload} disabled={busy || !file}>
+          <Button className="w-full" onClick={onUpload} disabled={!canEdit || busy || !file}>
             <Plus className="h-4 w-4" />
             {busy ? "Upload..." : "Uploader"}
           </Button>
@@ -2166,7 +2468,7 @@ function TripDocumentsCenter({
                   </thead>
                   <tbody className="divide-y divide-border">
                     {group.documents.map((document) => {
-                      const canManageDocument = isAdmin || document.uploaded_by === currentUserId;
+                      const canManageDocument = canEdit && (isAdmin || document.uploaded_by === currentUserId);
                       return <tr key={document.id}>
                         <td className="px-3 py-2">
                           <p className="font-medium">{document.title || document.file_name}</p>
@@ -2220,11 +2522,15 @@ function TripDocumentsCenter({
   );
 }
 
-function QuoteTable({ section, rows, canEdit, canReview, isAdmin, comments, onRowsChange, onAdd, onReview, onAddComment }: {
+export function QuoteTable({ section, rows, loading = false, loadError, canEdit, canReview, canConfirmReservations = false, onReservationStatusChange, isAdmin, comments, onRowsChange, onAdd, onReview, onAddComment }: {
   section: QuoteSection;
   rows: QuoteRow[];
+  loading?: boolean;
+  loadError?: string | null;
   canEdit: boolean;
   canReview: boolean;
+  canConfirmReservations?: boolean;
+  onReservationStatusChange?: (rowId:string|null,status:RowStatus)=>void;
   isAdmin: boolean;
   comments: QuoteLineComment[];
   onRowsChange: (rows: QuoteRow[]) => void;
@@ -2232,13 +2538,22 @@ function QuoteTable({ section, rows, canEdit, canReview, isAdmin, comments, onRo
   onReview: (row: QuoteRow, included: boolean, reviewStatus: "pending" | "approved" | "rejected") => void;
   onAddComment: (row: QuoteRow, body: string, internal: boolean) => Promise<boolean>;
 }) {
+  if (loading || loadError) return <Card className="overflow-hidden p-4">
+    <h2 className="font-display text-lg">{sectionLabels[section]}</h2>
+    {loading
+      ? <p role="status" className="mt-2 text-sm text-muted-foreground">Chargement des lignes…</p>
+      : <div role="alert" className="mt-2 text-sm text-destructive">
+        <p>Les lignes n’ont pas pu être chargées. Le nombre de lignes et le total sont indisponibles.</p>
+        <p className="mt-2 break-words font-mono text-xs">{loadError}</p>
+      </div>}
+  </Card>;
   const total = rows.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, section), 0);
   const columns = columnsForSection(section);
   const update = (index: number, key: string, value: any) => {
     onRowsChange(rows.map((row, rowIndex) => rowIndex === index ? normalizeRow(section, { ...row, [key]: value }, rowIndex) : row));
   };
   const remove = (index: number) => onRowsChange(rows.filter((_, rowIndex) => rowIndex !== index));
-  const bulkSetStatus = (status: RowStatus) => onRowsChange(rows.map((row, index) => normalizeRow(section, { ...row, status }, index)));
+  const bulkSetStatus = (status: RowStatus) => onReservationStatusChange?.(null,status);
   const move = (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= rows.length) return;
@@ -2261,11 +2576,11 @@ function QuoteTable({ section, rows, canEdit, canReview, isAdmin, comments, onRo
           <p className="text-sm text-muted-foreground">{rows.length} ligne(s) · Total {fmtJPY(total)}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("confirmed")} disabled={!canEdit || rows.length === 0}>
-            Tout confirmer
+          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("confirmed")} disabled={!canConfirmReservations || rows.length === 0}>
+            Confirmer les réservations
           </Button>
-          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("todo")} disabled={!canEdit || rows.length === 0}>
-            Tout remettre à faire
+          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("todo")} disabled={!canConfirmReservations || rows.length === 0}>
+            Réservations à refaire
           </Button>
           <Button variant="outline" size="sm" onClick={onAdd} disabled={!canEdit}>
             <Plus className="h-4 w-4" /> Ajouter une ligne
@@ -2279,7 +2594,7 @@ function QuoteTable({ section, rows, canEdit, canReview, isAdmin, comments, onRo
               <th className="px-3 py-2 font-medium">Ordre</th>
               {columns.map((column) => <th key={column.key} className="px-3 py-2 font-medium">{column.label}</th>)}
               <th className="px-3 py-2 text-right font-medium">Sous-total</th>
-              <th className="px-3 py-2 font-medium">Statut</th>
+              <th className="px-3 py-2 font-medium">Réservation</th>
               <th className="px-3 py-2 font-medium">Assigné</th>
               <th className="px-3 py-2 font-medium">Commentaire</th>
               <th className="px-3 py-2 font-medium">Calcul</th>
@@ -2311,7 +2626,7 @@ function QuoteTable({ section, rows, canEdit, canReview, isAdmin, comments, onRo
                 ))}
                 <td className="px-3 py-2 text-right font-semibold">{fmtJPY(subtotal(row, section))}</td>
                 <td className="px-3 py-2">
-                  <Select value={row.status ?? "todo"} disabled={!canEdit} onValueChange={(value) => update(index, "status", value)}>
+                  <Select value={row.status ?? "todo"} disabled={!canConfirmReservations || !row.id} onValueChange={(value) => onReservationStatusChange?.(row.id!,value as RowStatus)}>
                     <SelectTrigger className="h-9 min-w-[130px]"><SelectValue /></SelectTrigger>
                     <SelectContent>{Object.entries(rowStatusLabel).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}</SelectContent>
                   </Select>
@@ -2320,7 +2635,7 @@ function QuoteTable({ section, rows, canEdit, canReview, isAdmin, comments, onRo
                 <td className="px-3 py-2"><Input className="h-9 min-w-[180px]" value={row.comment ?? ""} disabled={!canEdit} onChange={(event) => update(index, "comment", event.target.value)} /></td>
                 <td className="px-3 py-2">
                   <label className="flex min-w-[105px] items-center gap-2 text-xs">
-                    <input type="checkbox" checked={row.included_in_total !== false} disabled={!canReview} onChange={(event) => onReview(row, event.target.checked, row.review_status ?? "pending")} />
+                    <input type="checkbox" checked={row.included_in_total !== false} disabled={!canReview || (section==="other" && isLegacySupplierHandlingRow(row))} onChange={(event) => onReview(row, event.target.checked, row.review_status ?? "pending")} />
                     {row.included_in_total === false ? "Exclue" : "Incluse"}
                   </label>
                 </td>
@@ -3037,7 +3352,7 @@ const columnsForSection = (section: QuoteSection) => {
     { key: "day_number", label: "Jour", type: "number" },
     { key: "city", label: "Ville" },
     { key: "guide_type", label: "Type", type: "select", options: guideTypes },
-    { key: "guides_count", label: "Guides", type: "number" },
+    { key: "guides_count", label: "Réservations guides", type: "number" },
     { key: "daily_price_jpy", label: "Prix jour JPY", type: "number" },
   ];
   return [
@@ -3161,7 +3476,12 @@ const buildExportContext = ({ trip, rows, totals, programmeDays, hotels, rooms, 
     { poste: "Activités", montant_jpy: roundNumber(totals.activities) },
     { poste: "Guides", montant_jpy: roundNumber(totals.guides) },
     { poste: "Autres", montant_jpy: roundNumber(totals.other) },
-    { poste: "Total brut", montant_jpy: roundNumber(totals.grandTotalJpy) },
+    { poste: "Sous-total services", montant_jpy: roundNumber(totals.grandTotalJpy) },
+    { poste: "Handling fournisseur (%)", valeur: totals.handlingPercentage },
+    { poste: "Périmètre handling", valeur: totals.handlingCategories.join(", ") },
+    { poste: "Base handling", montant_jpy: roundNumber(totals.handlingBaseJpy) },
+    { poste: "Handling fournisseur", montant_jpy: roundNumber(totals.handlingAmountJpy) },
+    { poste: "Total fournisseur", montant_jpy: roundNumber(totals.supplierTotalJpy) },
     { poste: "Participants", valeur: totals.participantCount },
   ];
   const totalRows = includeAdminNotes ? [
@@ -3247,7 +3567,7 @@ const buildOperationalSummaryRows = ({ trip, totals, participants, bookings, hot
   { Rubrique: "Planning", Information: "Activités devis", Valeur: rows.activities.length },
   { Rubrique: "Planning", Information: "Guides", Valeur: rows.guides.length },
   { Rubrique: "Planning", Information: "Transports", Valeur: rows.transport.length },
-  { Rubrique: "Devis", Information: "Total fournisseur JPY", Valeur: roundNumber(totals.grandTotalJpy) },
+  { Rubrique: "Devis", Information: "Total fournisseur JPY", Valeur: roundNumber(totals.supplierTotalJpy) },
   ...(includeInternalFinancials ? [
     { Rubrique: "Coûts", Information: "Total final JPY", Valeur: roundNumber(totals.finalTotalJpy) },
     { Rubrique: "Coûts", Information: "Total final MAD", Valeur: roundNumber(totals.finalTotalMad) },
@@ -4222,7 +4542,8 @@ const calculateQuoteTotals = (
   commissionPct: number,
   exchangeRate: number,
   participants: any[],
-  bookings: any[]
+  bookings: any[],
+  handlingTerms: SupplierHandlingTerms = {percentage:0,categories:[]}
 ) => {
   const sectionTotals = {
     hotels: rows.hotels.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "hotels"), 0),
@@ -4232,13 +4553,17 @@ const calculateQuoteTotals = (
     other: rows.other.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, "other"), 0),
   };
   const grandTotalJpy = Object.values(sectionTotals).reduce((sum, value) => sum + value, 0);
-  const commissionAmountJpy = grandTotalJpy * Number(commissionPct || 0) / 100;
-  const finalTotalJpy = grandTotalJpy + commissionAmountJpy;
+  const legacyHandlingIncludedJpy=rows.other.filter(row=>row.included_in_total!==false && isLegacySupplierHandlingRow(row)).reduce((sum,row)=>sum+subtotal(row,"other"),0);
+  const handlingInvalid=supplierHandlingErrors(handlingTerms).length>0 || Object.values(sectionTotals).some(value=>!Number.isFinite(value)||value<0);
+  const handling=handlingInvalid ? {handlingBaseJpy:0,handlingAmountJpy:0,supplierTotalJpy:grandTotalJpy} : calculateSupplierHandling(sectionTotals,handlingTerms);
+  const commissionAmountJpy = handling.supplierTotalJpy * Number(commissionPct || 0) / 100;
+  const finalTotalJpy = handling.supplierTotalJpy + commissionAmountJpy;
   const finalTotalMad = finalTotalJpy * Number(exchangeRate || 0);
   const participantCount = Math.max(1, participants.length || getParticipantCount([], bookings) || 1);
   return {
     ...sectionTotals,
     grandTotalJpy,
+    ...handling,handlingInvalid,legacyHandlingIncludedJpy,handlingPercentage:handlingTerms.percentage,handlingCategories:handlingTerms.categories,
     commissionAmountJpy,
     finalTotalJpy,
     finalTotalMad,
@@ -4248,6 +4573,8 @@ const calculateQuoteTotals = (
   };
 };
 
+const isLegacySupplierHandlingRow = (row: QuoteRow) => /tapis\s+volant\s+handling/i.test(String(row.label ?? "")) || String(row.comment ?? "").includes("Nature Excel : handling fournisseur");
+
 const versionRowLabel = (section: QuoteSection, row: QuoteRow) => String(
   row.hotel_name || row.description || row.activity_name || row.guide_type || row.label || `${sectionLabels[section]} J${row.day_number ?? ""}`
 ).trim();
@@ -4256,7 +4583,7 @@ const buildVersionChanges = (
   current: Record<QuoteSection, QuoteRow[]>,
   previous: Record<QuoteSection, QuoteRow[]>
 ) => {
-  const changes: string[] = [];
+  const changes: SupplierQuoteVersionChange[] = [];
   for (const section of Object.keys(tableBySection) as QuoteSection[]) {
     const oldById = new Map(previous[section].map((row) => [row.id, row]));
     const retained = new Set<string>();
@@ -4264,22 +4591,22 @@ const buildVersionChanges = (
       const old = row.source_line_id ? oldById.get(row.source_line_id) : undefined;
       const label = versionRowLabel(section, row) || "Ligne sans libellé";
       if (!old) {
-        changes.push(`${sectionLabels[section]} · ${label} : ligne ajoutée`);
+        changes.push({section,kind:"added",detail:`${sectionLabels[section]} · ${label} : ligne ajoutée`});
         continue;
       }
       if (old.id) retained.add(old.id);
       const oldTotal = subtotal(old, section);
       const nextTotal = subtotal(row, section);
-      if (oldTotal !== nextTotal) changes.push(`${sectionLabels[section]} · ${label} : ${fmtJPY(oldTotal)} → ${fmtJPY(nextTotal)} (${nextTotal >= oldTotal ? "+" : ""}${fmtJPY(nextTotal - oldTotal)})`);
-      if ((old.included_in_total !== false) !== (row.included_in_total !== false)) changes.push(`${sectionLabels[section]} · ${label} : ${row.included_in_total === false ? "désactivée" : "réactivée"}`);
+      if (oldTotal !== nextTotal) changes.push({section,kind:"changed",detail:`${sectionLabels[section]} · ${label} : ${fmtJPY(oldTotal)} → ${fmtJPY(nextTotal)} (${nextTotal >= oldTotal ? "+" : ""}${fmtJPY(nextTotal - oldTotal)})`});
+      if ((old.included_in_total !== false) !== (row.included_in_total !== false)) changes.push({section,kind:"changed",detail:`${sectionLabels[section]} · ${label} : ${row.included_in_total === false ? "désactivée" : "réactivée"}`});
       for (const key of ["hotel_name", "room_type", "quantity", "participant_count", "guides_count", "unit_price_jpy", "daily_price_jpy"]) {
         if (String(old[key] ?? "") !== String(row[key] ?? "") && !["unit_price_jpy", "daily_price_jpy"].includes(key)) {
-          changes.push(`${sectionLabels[section]} · ${label} : ${key} modifié (${old[key] ?? "—"} → ${row[key] ?? "—"})`);
+          changes.push({section,kind:"changed",detail:`${sectionLabels[section]} · ${label} : ${key} modifié (${old[key] ?? "—"} → ${row[key] ?? "—"})`});
         }
       }
     }
     for (const old of previous[section]) {
-      if (old.id && !retained.has(old.id)) changes.push(`${sectionLabels[section]} · ${versionRowLabel(section, old)} : ligne retirée`);
+      if (old.id && !retained.has(old.id)) changes.push({section,kind:"removed",detail:`${sectionLabels[section]} · ${versionRowLabel(section, old)} : ligne retirée`});
     }
   }
   return changes;
@@ -4336,7 +4663,8 @@ const buildSupplierValidation = ({
   documents: TripDocument[];
   overrides?: Partial<Record<ValidationItemKey, boolean>>;
 }) => {
-  const confirmed = (items: QuoteRow[]) => items.length > 0 && items.every((row) => row.status === "confirmed");
+  const activeReservationRows = (items: QuoteRow[]) => items.filter(row=>row.included_in_total!==false);
+  const confirmed = (items: QuoteRow[]) => activeReservationRows(items).every((row) => row.status === "confirmed");
   const passportMissing = (participants ?? []).filter((participant) => !isParticipantPassportComplete(participant));
   const assignedParticipantIds = new Set((assignments ?? []).map((assignment) => assignment.participant_id).filter(Boolean));
   const roomsWithAssignments = new Set((assignments ?? []).map((assignment) => assignment.room_id).filter(Boolean));
@@ -4348,10 +4676,10 @@ const buildSupplierValidation = ({
     !(documents ?? []).some((document) => document.category === category && !document.deleted_at && (document.file_path || document.file_url))
   );
 
-  const hotelValidation = withManualValidationOverride("hotels", confirmed(rows.hotels), rows.hotels.length ? `${rows.hotels.filter((row) => row.status === "confirmed").length}/${rows.hotels.length} confirmed` : "No hotel rows", overrides);
-  const transportValidation = withManualValidationOverride("transport", confirmed(rows.transport), rows.transport.length ? `${rows.transport.filter((row) => row.status === "confirmed").length}/${rows.transport.length} confirmed` : "No transport rows", overrides);
-  const activitiesValidation = withManualValidationOverride("activities", confirmed(rows.activities), rows.activities.length ? `${rows.activities.filter((row) => row.status === "confirmed").length}/${rows.activities.length} confirmed` : "No activity rows", overrides);
-  const guidesValidation = withManualValidationOverride("guides", confirmed(rows.guides), rows.guides.length ? `${rows.guides.filter((row) => row.status === "confirmed").length}/${rows.guides.length} confirmed` : "No guide rows", overrides);
+  const hotelValidation = withManualValidationOverride("hotels", confirmed(rows.hotels), rows.hotels.length ? `${activeReservationRows(rows.hotels).filter((row) => row.status === "confirmed").length}/${activeReservationRows(rows.hotels).length} réservations confirmées` : "No hotel rows", overrides);
+  const transportValidation = withManualValidationOverride("transport", confirmed(rows.transport), rows.transport.length ? `${activeReservationRows(rows.transport).filter((row) => row.status === "confirmed").length}/${activeReservationRows(rows.transport).length} réservations confirmées` : "No transport rows", overrides);
+  const activitiesValidation = withManualValidationOverride("activities", confirmed(rows.activities), rows.activities.length ? `${activeReservationRows(rows.activities).filter((row) => row.status === "confirmed").length}/${activeReservationRows(rows.activities).length} réservations confirmées` : "No activity rows", overrides);
+  const guidesValidation = withManualValidationOverride("guides", confirmed(rows.guides), rows.guides.length ? `${activeReservationRows(rows.guides).filter((row) => row.status === "confirmed").length}/${activeReservationRows(rows.guides).length} réservations confirmées` : "No guide rows", overrides);
   const participantsValidation = withManualValidationOverride("participants", (participants ?? []).length > 0 && passportMissing.length === 0, passportMissing.length ? `${passportMissing.length} passport(s) incomplete` : `${participants.length} passport(s) complete`, overrides);
   const roomingValidation = withManualValidationOverride("rooming", roomingComplete, roomingComplete ? "All participants assigned to rooms" : "Room assignments incomplete", overrides);
   const documentsValidation = withManualValidationOverride(
@@ -4372,67 +4700,67 @@ const buildSupplierValidation = ({
   }> = [
     {
       key: "hotels",
-      label: "Hotels",
+      label: "Réservations hôtels",
       complete: hotelValidation.complete,
       detail: hotelValidation.detail,
-      error: "Hotels: all hotel lines must be confirmed.",
+      error: "Réservations hôtels : confirmations à compléter.",
     },
     {
       key: "transport",
       label: "Transport",
       complete: transportValidation.complete,
       detail: transportValidation.detail,
-      error: "Transport: all transport lines must be confirmed.",
+      error: "Réservations transport : confirmations à compléter.",
     },
     {
       key: "activities",
-      label: "Activities",
+      label: "Réservations activités",
       complete: activitiesValidation.complete,
       detail: activitiesValidation.detail,
-      error: "Activities: all activity lines must be confirmed.",
+      error: "Réservations activités : confirmations à compléter.",
     },
     {
       key: "guides",
-      label: "Guides",
+      label: "Réservations guides",
       complete: guidesValidation.complete,
       detail: guidesValidation.detail,
-      error: "Guides: all guide lines must be confirmed.",
+      error: "Réservations guides : confirmations à compléter.",
     },
     {
       key: "participants",
       label: "Participants",
       complete: participantsValidation.complete,
       detail: participantsValidation.detail,
-      error: "Participants: all passports must include number, nationality, birthdate, sex and expiry date.",
+      error: "Participants : passeports à compléter (numéro, nationalité, naissance, sexe, expiration).",
     },
     {
       key: "rooming",
       label: "Rooming",
       complete: roomingValidation.complete,
       detail: roomingValidation.detail,
-      error: "Rooming: every participant must be assigned to a room.",
+      error: "Rooming : affectations des participants aux chambres à compléter.",
     },
     {
       key: "documents",
       label: "Documents",
       complete: documentsValidation.complete,
       detail: documentsValidation.detail,
-      error: "Documents: all mandatory operational files must be uploaded.",
+      error: "Documents : pièces opérationnelles requises à compléter.",
     },
   ];
-  const quoteItems = items.filter((item) => isQuoteSection(item.key));
+  const reservationItems = items.filter((item) => isQuoteSection(item.key));
   const operationItems = items.filter((item) => !isQuoteSection(item.key));
   const blockingErrors = items.filter((item) => !item.complete).map((item) => item.error);
-  const quotationBlockingErrors = quoteItems.filter((item) => !item.complete).map((item) => item.error);
+  const reservationFollowUp = reservationItems.filter((item) => !item.complete).map((item) => item.error);
   const completedItems = items.filter((item) => item.complete).length;
   const totalItems = items.length;
   return {
     items,
-    quoteItems,
+    reservationItems,
     operationItems,
     blockingErrors,
-    quotationBlockingErrors,
-    quotationComplete: quotationBlockingErrors.length === 0,
+    reservationFollowUp,
+    reservationsComplete: reservationFollowUp.length === 0,
     missingDocumentCategories,
     allComplete: blockingErrors.length === 0,
     completedItems,
@@ -4462,7 +4790,7 @@ const validationBlockingErrors = (
   const currentIndex = validationStatusOrder.indexOf(currentStatus);
   if (nextIndex <= currentIndex) return [];
   if (nextStatus === "draft" || nextStatus === "in_progress") return [];
-  if (nextStatus === "ready_for_japan_office" && !validation.quotationComplete) return validation.quotationBlockingErrors;
+  if (nextStatus === "ready_for_japan_office" && !validation.reservationsComplete) return validation.reservationFollowUp;
   if (["japan_office_confirmed", "ready_to_travel"].includes(nextStatus) && !validation.allComplete) return validation.blockingErrors;
   if (nextStatus === "ready_to_travel" && currentStatus !== "japan_office_confirmed" && currentStatus !== "ready_to_travel") {
     return ["Ready To Travel requires Japan Office Confirmed first."];

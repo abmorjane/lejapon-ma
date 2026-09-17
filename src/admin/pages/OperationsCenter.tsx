@@ -29,6 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PageHeader } from "@/admin/components/PageHeader";
 import { fmtDate, fmtDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { isLinkedToArchivedTrip } from "@/lib/trip-archiving";
 
 type Severity = "critical" | "high" | "medium" | "low" | "success";
 
@@ -145,7 +146,7 @@ async function loadBookingContext(bookingIds: string[]) {
   if (bookingIds.length === 0) return new Map<string, any>();
   const { data } = await (supabase as any)
     .from("bookings")
-    .select("id,reference,contact_name,contact_email,status,trip_id,trips(id,title,start_date,end_date)")
+    .select("id,reference,contact_name,contact_email,status,trip_id,trips(id,title,start_date,end_date,archived_at)")
     .in("id", Array.from(new Set(bookingIds)))
     .limit(300);
   return new Map((data ?? []).map((booking: any) => [booking.id, booking]));
@@ -194,7 +195,7 @@ export default function OperationsCenter() {
           .limit(120)),
         runSource<any>("visa_applications", () => (supabase as any)
           .from("visa_applications")
-          .select("id,reference,status,surname,given_names,passport_no,residential_email,submitted_at,created_at")
+          .select("id,reference,status,surname,given_names,passport_no,residential_email,booking_id,submitted_at,created_at")
           .order("created_at", { ascending: false })
           .limit(160)),
         runSource<any>("booking_participants", () => (supabase as any)
@@ -204,7 +205,7 @@ export default function OperationsCenter() {
           .limit(220)),
         runSource<any>("supplier_trip_quotes", () => (supabase as any)
           .from("supplier_trip_quotes")
-          .select("id,trip_id,supplier_id,status,validation_status,updated_at,trips(id,title,start_date,end_date)")
+          .select("id,trip_id,supplier_id,status,validation_status,updated_at,trips(id,title,start_date,end_date,archived_at)")
           .order("updated_at", { ascending: false })
           .limit(120)),
         runSource<any>("supplier_quote_hotel_rows", () => (supabase as any)
@@ -229,19 +230,20 @@ export default function OperationsCenter() {
           .limit(120)),
         runSource<any>("operation_tasks", () => (supabase as any)
           .from("operation_tasks")
-          .select("id,title,description,priority,status,booking_id,trip_id,visa_application_id,deadline,created_at,updated_at")
+          .select("id,title,description,priority,status,booking_id,trip_id,visa_application_id,deadline,created_at,updated_at,trips:trip_id(id,archived_at)")
           .not("status", "in", "(completed,cancelled)")
           .order("deadline", { ascending: true, nullsFirst: false })
           .limit(180)),
         runSource<any>("operation_checklist_items", () => (supabase as any)
           .from("operation_checklist_items")
-          .select("id,title,category,priority,status,deadline,completed_at,operation_checklists(id,title,booking_id,trip_id,visa_application_id,customer_id,client_id,progress_percent)")
+          .select("id,title,category,priority,status,deadline,completed_at,operation_checklists(id,title,booking_id,trip_id,visa_application_id,customer_id,client_id,progress_percent,trips:trip_id(id,archived_at))")
           .not("status", "in", "(completed,cancelled)")
           .order("deadline", { ascending: true, nullsFirst: false })
           .limit(180)),
         runSource<any>("trips", () => (supabase as any)
           .from("trips")
           .select("id,title,start_date,end_date,status")
+          .is("archived_at", null)
           .gte("start_date", new Date().toISOString().slice(0, 10))
           .order("start_date", { ascending: true })
           .limit(120)),
@@ -250,12 +252,15 @@ export default function OperationsCenter() {
       const bookingIds = [
         ...flightResult.rows.map((row: any) => row.booking_id),
         ...participantResult.rows.map((row: any) => row.booking_id),
+        ...visaResult.rows.map((row: any) => row.booking_id),
         ...tasksResult.rows.map((row: any) => row.booking_id),
         ...checklistItemsResult.rows.map((row: any) => row.operation_checklists?.booking_id),
       ].filter(Boolean);
       const bookingMap = await loadBookingContext(bookingIds);
 
-      const quoteMap = new Map((supplierQuoteResult.rows ?? []).map((quote: any) => [quote.id, quote]));
+      const activeSupplierQuotes = supplierQuoteResult.rows.filter((quote: any) => !isLinkedToArchivedTrip(quote.trips));
+      const quoteMap = new Map(activeSupplierQuotes.map((quote: any) => [quote.id, quote]));
+      const bookingIsArchived = (bookingId?: string | null) => isLinkedToArchivedTrip(bookingMap.get(bookingId)?.trips);
       const sourceStatuses = [
         flightResult.status,
         visaResult.status,
@@ -270,7 +275,7 @@ export default function OperationsCenter() {
         tripsResult.status,
       ];
 
-      const flights = flightResult.rows.map((row: any): OpsItem => {
+      const flights = flightResult.rows.filter((row: any) => !bookingIsArchived(row.booking_id)).map((row: any): OpsItem => {
         const booking = bookingMap.get(row.booking_id);
         const missing = [
           !row.pnr && "PNR",
@@ -296,7 +301,7 @@ export default function OperationsCenter() {
       });
 
       const visaActions = visaResult.rows
-        .filter((row: any) => !closedVisaStatuses.has(String(row.status || "").toLowerCase()))
+        .filter((row: any) => !bookingIsArchived(row.booking_id) && !closedVisaStatuses.has(String(row.status || "").toLowerCase()))
         .map((row: any): OpsItem => ({
           id: row.id,
           section: "Visa actions",
@@ -311,7 +316,7 @@ export default function OperationsCenter() {
         }));
 
       const missingPassports = participantResult.rows
-        .filter((row: any) => !String(row.passport_no || "").trim())
+        .filter((row: any) => !bookingIsArchived(row.booking_id) && !String(row.passport_no || "").trim())
         .map((row: any): OpsItem => {
           const booking = bookingMap.get(row.booking_id);
           return {
@@ -347,11 +352,11 @@ export default function OperationsCenter() {
         };
       };
 
-      const hotelsPending = hotelRowsResult.rows.filter((row: any) => pendingStatuses.has(row.status)).map((row: any) => supplierRowToItem(row, "hotels"));
-      const guidesPending = guideRowsResult.rows.filter((row: any) => pendingStatuses.has(row.status)).map((row: any) => supplierRowToItem(row, "guides"));
-      const transportPending = transportRowsResult.rows.filter((row: any) => pendingStatuses.has(row.status)).map((row: any) => supplierRowToItem(row, "transport"));
+      const hotelsPending = hotelRowsResult.rows.filter((row: any) => quoteMap.has(row.quote_id) && pendingStatuses.has(row.status)).map((row: any) => supplierRowToItem(row, "hotels"));
+      const guidesPending = guideRowsResult.rows.filter((row: any) => quoteMap.has(row.quote_id) && pendingStatuses.has(row.status)).map((row: any) => supplierRowToItem(row, "guides"));
+      const transportPending = transportRowsResult.rows.filter((row: any) => quoteMap.has(row.quote_id) && pendingStatuses.has(row.status)).map((row: any) => supplierRowToItem(row, "transport"));
 
-      const supplierQuotesPending = supplierQuoteResult.rows
+      const supplierQuotesPending = activeSupplierQuotes
         .filter((row: any) => {
           const status = String(row.validation_status || row.status || "").toLowerCase();
           return !["japan_office_confirmed", "ready_to_travel", "approved", "reviewed"].includes(status);
@@ -385,7 +390,7 @@ export default function OperationsCenter() {
         }));
 
       const taskItems = [
-        ...tasksResult.rows.map((row: any): OpsItem => ({
+        ...tasksResult.rows.filter((row: any) => !isLinkedToArchivedTrip(row.trips) && !bookingIsArchived(row.booking_id)).map((row: any): OpsItem => ({
           id: row.id,
           section: "Urgent tasks",
           title: row.title,
@@ -397,7 +402,7 @@ export default function OperationsCenter() {
           source: "tasks",
           progress: row.status === "in_progress" ? 45 : 15,
         })),
-        ...checklistItemsResult.rows.map((row: any): OpsItem => ({
+        ...checklistItemsResult.rows.filter((row: any) => !isLinkedToArchivedTrip(row.operation_checklists?.trips) && !bookingIsArchived(row.operation_checklists?.booking_id)).map((row: any): OpsItem => ({
           id: row.id,
           section: "Urgent tasks",
           title: row.title,

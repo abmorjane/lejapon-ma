@@ -89,6 +89,7 @@ const Booking = () => {
       const { data } = await supabase
         .from("trips")
         .select("id,title,slug,season,start_date,end_date,duration_days,short_description,base_price_mad,promo_percent")
+        .is("archived_at", null)
         .in("status", ["open", "completed"])
         .order("start_date", { ascending: true, nullsFirst: false });
       if (active) {

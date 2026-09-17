@@ -6,6 +6,7 @@ import { fmtMAD, fmtDateTime } from "@/lib/format";
 import { motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
 import { SUPPLIER_PORTAL_PATH } from "@/admin/lib/portal-access";
+import { isLinkedToArchivedTrip } from "@/lib/trip-archiving";
 
 type Stats = { trips: number; openTrips: number; leads: number; confirmed: number; paid: number; clients: number; revenue: number };
 type FlightStats = { toReserve: number; reservedToday: number; missing: number };
@@ -23,14 +24,14 @@ export default function Dashboard() {
     if (isSupplierOnly) return;
     (async () => {
       const [tripsAll, tripsOpen, leads, confirmed, paid, clients, payments, recentBookings] = await Promise.all([
-        supabase.from("trips").select("id", { count: "exact", head: true }),
-        supabase.from("trips").select("id", { count: "exact", head: true }).eq("status", "open"),
-        supabase.from("bookings").select("id", { count: "exact", head: true }).eq("status", "lead"),
-        supabase.from("bookings").select("id", { count: "exact", head: true }).eq("status", "confirmed"),
-        supabase.from("bookings").select("id", { count: "exact", head: true }).eq("status", "paid"),
+        supabase.from("trips").select("id", { count: "exact", head: true }).is("archived_at", null),
+        supabase.from("trips").select("id", { count: "exact", head: true }).is("archived_at", null).eq("status", "open"),
+        supabase.from("bookings").select("id,trips!inner(archived_at)", { count: "exact", head: true }).eq("status", "lead").is("trips.archived_at", null),
+        supabase.from("bookings").select("id,trips!inner(archived_at)", { count: "exact", head: true }).eq("status", "confirmed").is("trips.archived_at", null),
+        supabase.from("bookings").select("id,trips!inner(archived_at)", { count: "exact", head: true }).eq("status", "paid").is("trips.archived_at", null),
         supabase.from("clients").select("id", { count: "exact", head: true }),
         supabase.from("payments").select("amount_mad").eq("status", "received"),
-        supabase.from("bookings").select("id, reference, contact_name, contact_email, status, total_amount_mad, created_at").order("created_at", { ascending: false }).limit(8),
+        supabase.from("bookings").select("id,reference,contact_name,contact_email,status,total_amount_mad,created_at,trips!inner(archived_at)").is("trips.archived_at", null).order("created_at", { ascending: false }).limit(8),
       ]);
       setS({
         trips: tripsAll.count ?? 0,
@@ -44,12 +45,12 @@ export default function Dashboard() {
       setRecent(recentBookings.data ?? []);
       const { data: flightRows, error: flightError } = await (supabase as any)
         .from("booking_flight_reservations")
-        .select("id,status,pnr,airline,flight_number,departure_at,return_at,segments,ticket_document_id,ticket_storage_path,ticket_sent_to_customer,required_traveler_count,linked_traveler_count,updated_at")
+        .select("id,status,pnr,airline,flight_number,departure_at,return_at,segments,ticket_document_id,ticket_storage_path,ticket_sent_to_customer,required_traveler_count,linked_traveler_count,updated_at,bookings:booking_id(trips:trip_id(archived_at))")
         .neq("status", "cancelled");
       if (!flightError) {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
-        const rows = flightRows ?? [];
+        const rows = (flightRows ?? []).filter((row: any) => !isLinkedToArchivedTrip(row.bookings?.trips));
         setFlightStats({
           toReserve: rows.filter((row: any) => row.status === "not_booked").length,
           reservedToday: rows.filter((row: any) => ["booked", "ticket_sent"].includes(row.status) && new Date(row.updated_at).getTime() >= todayStart.getTime()).length,
@@ -60,15 +61,16 @@ export default function Dashboard() {
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
       const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
       const [todayTasks, overdueTasks, criticalTasks] = await Promise.all([
-        (supabase as any).from("operation_checklist_items").select("id", { count: "exact", head: true }).gte("deadline", start).lt("deadline", end).not("status", "in", "(completed,cancelled)"),
-        (supabase as any).from("operation_checklist_items").select("id", { count: "exact", head: true }).lt("deadline", now.toISOString()).not("status", "in", "(completed,cancelled)"),
-        (supabase as any).from("operation_checklist_items").select("id", { count: "exact", head: true }).eq("priority", "critical").not("status", "in", "(completed,cancelled)"),
+        (supabase as any).from("operation_checklist_items").select("id,operation_checklists(trips:trip_id(archived_at))").gte("deadline", start).lt("deadline", end).not("status", "in", "(completed,cancelled)"),
+        (supabase as any).from("operation_checklist_items").select("id,operation_checklists(trips:trip_id(archived_at))").lt("deadline", now.toISOString()).not("status", "in", "(completed,cancelled)"),
+        (supabase as any).from("operation_checklist_items").select("id,operation_checklists(trips:trip_id(archived_at))").eq("priority", "critical").not("status", "in", "(completed,cancelled)"),
       ]);
       if (!todayTasks.error && !overdueTasks.error && !criticalTasks.error) {
+        const activeCount = (result: any) => (result.data ?? []).filter((row: any) => !isLinkedToArchivedTrip(row.operation_checklists?.trips)).length;
         setChecklistStats({
-          today: todayTasks.count ?? 0,
-          overdue: overdueTasks.count ?? 0,
-          critical: criticalTasks.count ?? 0,
+          today: activeCount(todayTasks),
+          overdue: activeCount(overdueTasks),
+          critical: activeCount(criticalTasks),
         });
       }
     })();

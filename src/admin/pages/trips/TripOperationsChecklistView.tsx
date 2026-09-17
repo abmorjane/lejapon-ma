@@ -20,6 +20,7 @@ export function TripOperationsChecklistView() {
       const { data } = await supabase
         .from("trips")
         .select("id,title,season,start_date")
+        .is("archived_at", null)
         .order("start_date", { ascending: false })
         .limit(80);
       const rows = (data ?? []) as TripOption[];

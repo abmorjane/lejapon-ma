@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, BedDouble, Bell, Check, ClipboardList, Plane, Ticket, Users } from "lucide-react";
+import { Archive, ArrowRight, BedDouble, Bell, Check, ClipboardList, Plane, Ticket, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { PageHeader } from "../../components/PageHeader";
@@ -8,7 +8,9 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fmtDate } from "@/lib/format";
+import { TripArchiveView, tripsForArchiveView } from "@/lib/trip-archiving";
 
 const db = supabase as any;
 
@@ -25,6 +27,8 @@ type TripCard = {
   extras_count: number;
   quote_status: string;
   quote_id?: string | null;
+  archived_at?: string | null;
+  archive_reason?: string | null;
 };
 
 type SupplierNotification = {
@@ -62,6 +66,7 @@ export default function SupplierTrips() {
   const [loadErrorDetail, setLoadErrorDetail] = useState<string | null>(null);
   const [hasSupplierMembership, setHasSupplierMembership] = useState(true);
   const [notifications, setNotifications] = useState<SupplierNotification[]>([]);
+  const [archiveView, setArchiveView] = useState<TripArchiveView>("active");
 
   useEffect(() => {
     (async () => {
@@ -132,7 +137,7 @@ export default function SupplierTrips() {
 
       let tripQuery = db
         .from("trips")
-        .select("id,title,status,start_date,end_date,duration_days,season")
+        .select("id,title,status,start_date,end_date,duration_days,season,archived_at,archive_reason")
         .order("start_date", { ascending: true, nullsFirst: false });
 
       if (assignedTripIds.length) {
@@ -205,12 +210,15 @@ export default function SupplierTrips() {
     setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read_at: new Date().toISOString() } : item));
   };
 
-  const summary = useMemo(() => ({
-    trips: trips.length,
-    participants: trips.reduce((sum, trip) => sum + trip.participant_count, 0),
-    rooms: trips.reduce((sum, trip) => sum + trip.room_count, 0),
-    extras: trips.reduce((sum, trip) => sum + trip.extras_count, 0),
-  }), [trips]);
+  const activeTrips = tripsForArchiveView(trips, "active");
+  const archivedTrips = tripsForArchiveView(trips, "archived");
+  const visibleTrips = tripsForArchiveView(trips, archiveView);
+  const summary = {
+    trips: activeTrips.length,
+    participants: activeTrips.reduce((sum, trip) => sum + trip.participant_count, 0),
+    rooms: activeTrips.reduce((sum, trip) => sum + trip.room_count, 0),
+    extras: activeTrips.reduce((sum, trip) => sum + trip.extras_count, 0),
+  };
 
   return (
     <div className="space-y-6">
@@ -225,12 +233,20 @@ export default function SupplierTrips() {
         </Card>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard icon={Plane} label="Voyages assignés" value={summary.trips} />
+        <StatCard icon={Archive} label="Voyages archivés" value={archivedTrips.length} />
         <StatCard icon={Users} label="Participants" value={summary.participants} />
-        <StatCard icon={BedDouble} label="Hôtels / blocs" value={summary.rooms} />
-        <StatCard icon={Ticket} label="Extras sélectionnés" value={summary.extras} />
+        <StatCard icon={BedDouble} label="Hôtels actifs" value={summary.rooms} />
+        <StatCard icon={Ticket} label="Extras actifs" value={summary.extras} />
       </div>
+
+      <Tabs value={archiveView} onValueChange={(value) => setArchiveView(value as TripArchiveView)}>
+        <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl sm:w-[420px]">
+          <TabsTrigger value="active" className="rounded-lg">Voyages assignés ({activeTrips.length})</TabsTrigger>
+          <TabsTrigger value="archived" className="rounded-lg">Voyages archivés ({archivedTrips.length})</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {!isAdmin && notifications.length > 0 && (
         <Card className="overflow-hidden">
@@ -267,20 +283,24 @@ export default function SupplierTrips() {
           </p>
           {loadErrorDetail && <p className="mt-3 break-all font-mono text-xs text-destructive">{loadErrorDetail}</p>}
         </Card>
-      ) : trips.length === 0 ? (
+      ) : visibleTrips.length === 0 ? (
         <Card className="p-10 text-center">
           <Plane className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
           <p className="font-medium">
-            {hasSupplierMembership ? "Aucun voyage ne vous est actuellement assigné." : "Votre compte fournisseur n'est pas encore relié à un fournisseur."}
+            {archiveView === "archived"
+              ? "Aucun voyage archivé."
+              : hasSupplierMembership ? "Aucun voyage ne vous est actuellement assigné." : "Votre compte fournisseur n'est pas encore relié à un fournisseur."}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Dès qu'un voyage vous sera assigné, il apparaîtra ici avec ses onglets opérationnels.
+            {archiveView === "archived"
+              ? "Les voyages archivés par l’agence apparaîtront ici en lecture seule."
+              : "Dès qu'un voyage vous sera assigné, il apparaîtra ici avec ses onglets opérationnels."}
           </p>
         </Card>
       ) : (
         <div className="grid gap-3">
-          <h2 className="font-display text-xl">Mes voyages assignés</h2>
-          {trips.map((trip) => (
+          <h2 className="font-display text-xl">{archiveView === "archived" ? "Mes voyages archivés" : "Mes voyages assignés"}</h2>
+          {visibleTrips.map((trip) => (
             <Card key={trip.id} className="p-4 transition-colors hover:border-primary/50">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
@@ -303,7 +323,7 @@ export default function SupplierTrips() {
                 <Button asChild>
                   <Link to={`/supplier/trips/${trip.id}/quote`}>
                     <ClipboardList className="h-4 w-4" />
-                    Préparer le devis
+                    {trip.archived_at ? "Consulter le devis" : "Préparer le devis"}
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                 </Button>

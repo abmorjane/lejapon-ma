@@ -62,7 +62,7 @@ export function CreateBookingDialog({ open, onOpenChange, onCreated }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    supabase.from("trips").select("id,title,season,start_date,end_date,base_price_mad").order("title").then(({ data }) => setTrips(data ?? []));
+    supabase.from("trips").select("id,title,season,start_date,end_date,base_price_mad").is("archived_at", null).order("title").then(({ data }) => setTrips(data ?? []));
   }, [open]);
 
   useEffect(() => {

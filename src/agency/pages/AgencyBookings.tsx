@@ -285,7 +285,7 @@ export default function AgencyBookings() {
     let tripIds: string[] | null = null;
     const destinationNeedle = destination.trim().replace(/,/g, " ");
     if (travelFrom || travelTo || destinationNeedle) {
-      let tripQuery = db.from("trips").select("id").limit(1000);
+      let tripQuery = db.from("trips").select("id").is("archived_at", null).limit(1000);
       if (destinationNeedle) {
         tripQuery = tripQuery.or(`title.ilike.%${destinationNeedle}%,destination.ilike.%${destinationNeedle}%`);
       }
@@ -364,6 +364,7 @@ export default function AgencyBookings() {
     const { data: tripsData, error: tripsError } = await db
       .from("trips")
       .select(tripColumns)
+      .is("archived_at", null)
       .in("status", ["open", "completed"])
       .order("start_date", { ascending: true, nullsFirst: false });
 

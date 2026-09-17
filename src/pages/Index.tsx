@@ -257,6 +257,7 @@ const Index = () => {
         const { data } = await supabase
           .from("trips")
           .select("id,title,slug,label,season,start_date,end_date,duration_days,base_price_mad,currency,cover_url,cover_alt,slots_left,highlights,destinations,badge_type,badge_text,promo_percent,program_link,is_featured,sort_order")
+          .is("archived_at", null)
           .in("status", ["open", "completed"])
           .eq("is_featured", true)
           .order("sort_order", { ascending: true })

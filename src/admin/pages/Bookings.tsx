@@ -430,6 +430,7 @@ export default function Bookings() {
       db
         .from("trips")
         .select(tripColumns)
+        .is("archived_at", null)
         .in("status", ["open", "completed"])
         .order("start_date", { ascending: true, nullsFirst: false }),
       db

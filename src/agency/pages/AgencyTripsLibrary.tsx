@@ -135,6 +135,7 @@ export default function AgencyTripsLibrary() {
       const { data, error } = await db
         .from("trips")
         .select(tripColumns)
+        .is("archived_at", null)
         .in("status", ["open", "completed"])
         .order("sort_order", { ascending: true })
         .order("start_date", { ascending: true, nullsFirst: false });

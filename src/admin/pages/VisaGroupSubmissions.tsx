@@ -175,7 +175,7 @@ export default function VisaGroupSubmissions() {
   const selectedTrip = trips.find((trip) => trip.id === selectedTripId) ?? null;
 
   useEffect(() => {
-    supabase.from("trips").select("id,title,start_date,end_date").order("start_date", { ascending: false })
+    supabase.from("trips").select("id,title,start_date,end_date").is("archived_at", null).order("start_date", { ascending: false })
       .then(({ data, error }) => {
         if (error) toast.error(error.message);
         else setTrips(data ?? []);

@@ -8,14 +8,16 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, Upload, Star, X, Copy } from "lucide-react";
+import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, Upload, Star, X, Copy, Archive, ArchiveRestore } from "lucide-react";
 import { fmtDate, fmtMAD, slugify } from "@/lib/format";
 import { toast } from "sonner";
 import { motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
 import { addDays, daysBetween, duplicateTripHotels } from "@/admin/lib/accommodation-templates";
+import { TripArchiveView, tripsForArchiveView } from "@/lib/trip-archiving";
 
 type Trip = any;
 
@@ -61,6 +63,8 @@ export default function TripsCatalog() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [supplierId, setSupplierId] = useState<string>("");
   const [initialSupplierId, setInitialSupplierId] = useState<string>("");
+  const [archiveView, setArchiveView] = useState<TripArchiveView>("active");
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const reduceMotion = useReducedMotion();
   const isManagerOnly = roles.includes("manager") && !roles.some((r) => ["super_admin", "admin"].includes(r));
@@ -69,6 +73,8 @@ export default function TripsCatalog() {
   const canDeleteTrips = !isManagerOnly;
   const canChangePublicPresentation = !isManagerOnly;
   const canReorderTrips = !isManagerOnly;
+  const canArchiveTrips = roles.some((role) => role === "super_admin" || role === "admin");
+  const visibleRows = tripsForArchiveView(rows, archiveView);
 
   const load = async () => {
     const { data } = await supabase
@@ -286,6 +292,9 @@ export default function TripsCatalog() {
       created_at: undefined,
       updated_at: undefined,
       created_by: undefined,
+      archived_at: undefined,
+      archived_by: undefined,
+      archive_reason: undefined,
       title: copyTitle,
       slug: `${slugify(copyTitle)}-${Date.now().toString().slice(-6)}`,
       status: "draft",
@@ -326,10 +335,10 @@ export default function TripsCatalog() {
   };
 
   const moveRow = async (id: string, dir: -1 | 1) => {
-    const idx = rows.findIndex((r) => r.id === id);
-    const swap = rows[idx + dir];
+    const idx = visibleRows.findIndex((r) => r.id === id);
+    const swap = visibleRows[idx + dir];
     if (!swap) return;
-    const a = rows[idx];
+    const a = visibleRows[idx];
     const aOrder = a.sort_order ?? idx;
     const bOrder = swap.sort_order ?? idx + dir;
     await supabase.from("trips").update({ sort_order: bOrder }).eq("id", a.id);
@@ -340,6 +349,34 @@ export default function TripsCatalog() {
   const toggleFeatured = async (t: Trip) => {
     await supabase.from("trips").update({ is_featured: !t.is_featured }).eq("id", t.id);
     load();
+  };
+
+  const archiveTrip = async (trip: Trip) => {
+    if (!canArchiveTrips) return;
+    const reason = window.prompt(
+      `Archiver « ${trip.title} » ? Le voyage disparaîtra des listes actives sans perdre aucune donnée.\n\nMotif facultatif :`,
+      "",
+    );
+    if (reason === null) return;
+    setArchiveBusyId(trip.id);
+    const { error } = await supabase.rpc("archive_trip", {
+      p_trip_id: trip.id,
+      p_reason: reason.trim() || null,
+    });
+    setArchiveBusyId(null);
+    if (error) return toast.error(error.message);
+    toast.success("Voyage archivé");
+    await load();
+  };
+
+  const restoreTrip = async (trip: Trip) => {
+    if (!canArchiveTrips || !window.confirm(`Restaurer « ${trip.title} » dans les listes actives ?`)) return;
+    setArchiveBusyId(trip.id);
+    const { error } = await supabase.rpc("restore_trip", { p_trip_id: trip.id });
+    setArchiveBusyId(null);
+    if (error) return toast.error(error.message);
+    toast.success("Voyage restauré");
+    await load();
   };
 
   const uploadCover = async (file: File) => {
@@ -395,7 +432,7 @@ export default function TripsCatalog() {
       animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
     >
-      <PageHeader title="Voyages" description="Gérez vos départs, vignettes, badges et tarifs."
+      <PageHeader title="Voyages" description="Gérez vos départs, vignettes, badges, tarifs et archives."
         action={
           <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetDialogState(); }}>
             {canCreateTrips && (
@@ -621,9 +658,16 @@ export default function TripsCatalog() {
         }
       />
 
+      <Tabs value={archiveView} onValueChange={(value) => setArchiveView(value as TripArchiveView)} className="mb-4">
+        <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl sm:w-[420px]">
+          <TabsTrigger value="active" className="rounded-lg">Voyages actifs ({tripsForArchiveView(rows, "active").length})</TabsTrigger>
+          <TabsTrigger value="archived" className="rounded-lg">Voyages archivés ({tripsForArchiveView(rows, "archived").length})</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
       <div className="space-y-3 md:hidden">
-        {rows.length === 0 && <p className="rounded-2xl border border-border bg-background p-6 text-center text-sm text-muted-foreground">Aucun voyage. Créez-en un.</p>}
-        {rows.map((t, idx) => (
+        {visibleRows.length === 0 && <p className="rounded-2xl border border-border bg-background p-6 text-center text-sm text-muted-foreground">{archiveView === "archived" ? "Aucun voyage archivé." : "Aucun voyage actif. Créez-en un."}</p>}
+        {visibleRows.map((t, idx) => (
           <motion.div
             key={t.id}
             initial={reduceMotion ? false : { opacity: 0, y: 8 }}
@@ -656,13 +700,16 @@ export default function TripsCatalog() {
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
-                <Button size="sm" variant="outline" className="min-h-11" disabled={!canReorderTrips || idx === 0} onClick={() => moveRow(t.id, -1)}><ArrowUp className="w-4 h-4" /></Button>
-                <Button size="sm" variant="outline" className="min-h-11" disabled={!canReorderTrips || idx === rows.length - 1} onClick={() => moveRow(t.id, 1)}><ArrowDown className="w-4 h-4" /></Button>
+                <Button size="sm" variant="outline" className="min-h-11" disabled={archiveView === "archived" || !canReorderTrips || idx === 0} onClick={() => moveRow(t.id, -1)}><ArrowUp className="w-4 h-4" /></Button>
+                <Button size="sm" variant="outline" className="min-h-11" disabled={archiveView === "archived" || !canReorderTrips || idx === visibleRows.length - 1} onClick={() => moveRow(t.id, 1)}><ArrowDown className="w-4 h-4" /></Button>
                 <Button size="sm" className="min-h-11" onClick={() => openTrip(t)}><Pencil className="w-4 h-4" /></Button>
               </div>
-              {(canCreateTrips || canDeleteTrips) && (
+              {(canCreateTrips || canDeleteTrips || canArchiveTrips) && (
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   {canCreateTrips && <Button size="sm" variant="ghost" className="min-h-11" onClick={() => duplicateTrip(t)}><Copy className="w-4 h-4" /> Copier</Button>}
+                  {canArchiveTrips && (archiveView === "archived"
+                    ? <Button size="sm" variant="outline" className="min-h-11" disabled={archiveBusyId === t.id} onClick={() => restoreTrip(t)}><ArchiveRestore className="w-4 h-4" /> Restaurer</Button>
+                    : <Button size="sm" variant="outline" className="min-h-11" disabled={archiveBusyId === t.id} onClick={() => archiveTrip(t)}><Archive className="w-4 h-4" /> Archiver</Button>)}
                   {canDeleteTrips && <Button size="sm" variant="ghost" className="min-h-11 text-destructive" onClick={() => remove(t.id)}><Trash2 className="w-4 h-4" /> Supprimer</Button>}
                 </div>
               )}
@@ -688,13 +735,13 @@ export default function TripsCatalog() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {rows.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Aucun voyage. Créez-en un.</td></tr>}
-            {rows.map((t, idx) => (
+            {visibleRows.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">{archiveView === "archived" ? "Aucun voyage archivé." : "Aucun voyage actif. Créez-en un."}</td></tr>}
+            {visibleRows.map((t, idx) => (
               <tr key={t.id} className="hover:bg-secondary/30">
                 <td className="p-4">
                   <div className="flex flex-col gap-0.5">
-                    <Button size="icon" variant="ghost" className="h-6 w-6" disabled={!canReorderTrips || idx === 0} onClick={() => moveRow(t.id, -1)}><ArrowUp className="w-3 h-3" /></Button>
-                    <Button size="icon" variant="ghost" className="h-6 w-6" disabled={!canReorderTrips || idx === rows.length - 1} onClick={() => moveRow(t.id, 1)}><ArrowDown className="w-3 h-3" /></Button>
+                    <Button size="icon" variant="ghost" className="h-6 w-6" disabled={archiveView === "archived" || !canReorderTrips || idx === 0} onClick={() => moveRow(t.id, -1)}><ArrowUp className="w-3 h-3" /></Button>
+                    <Button size="icon" variant="ghost" className="h-6 w-6" disabled={archiveView === "archived" || !canReorderTrips || idx === visibleRows.length - 1} onClick={() => moveRow(t.id, 1)}><ArrowDown className="w-3 h-3" /></Button>
                   </div>
                 </td>
                 <td className="p-4">
@@ -729,6 +776,9 @@ export default function TripsCatalog() {
                 <td className="p-4 text-right whitespace-nowrap">
                   <Button size="sm" variant="ghost" onClick={() => openTrip(t)}><Pencil className="w-4 h-4" /></Button>
                   {canCreateTrips && <Button size="sm" variant="ghost" onClick={() => duplicateTrip(t)}><Copy className="w-4 h-4" /></Button>}
+                  {canArchiveTrips && (archiveView === "archived"
+                    ? <Button size="sm" variant="ghost" disabled={archiveBusyId === t.id} onClick={() => restoreTrip(t)}><ArchiveRestore className="w-4 h-4" /> Restaurer</Button>
+                    : <Button size="sm" variant="ghost" disabled={archiveBusyId === t.id} onClick={() => archiveTrip(t)}><Archive className="w-4 h-4" /> Archiver</Button>)}
                   {canDeleteTrips && <Button size="sm" variant="ghost" onClick={() => remove(t.id)}><Trash2 className="w-4 h-4" /></Button>}
                 </td>
               </tr>

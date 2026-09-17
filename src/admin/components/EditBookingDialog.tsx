@@ -60,8 +60,17 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
       id: e.id, extra_id: e.extra_id, name_snapshot: e.name_snapshot, qty: e.qty, unit_price_mad: Number(e.unit_price_mad),
     }));
     setItems(nextItems);
-    supabase.from("trips").select("id,title,season,base_price_mad,promo_percent").order("title").then(({ data }) => {
-      const nextTrips = data ?? [];
+    void (async () => {
+      const { data } = await supabase.from("trips").select("id,title,season,base_price_mad,promo_percent").is("archived_at", null).order("title");
+      const nextTrips = [...(data ?? [])];
+      if (booking.trip_id && !nextTrips.some((trip) => trip.id === booking.trip_id)) {
+        const { data: currentTrip } = await supabase
+          .from("trips")
+          .select("id,title,season,base_price_mad,promo_percent")
+          .eq("id", booking.trip_id)
+          .maybeSingle();
+        if (currentTrip) nextTrips.push(currentTrip);
+      }
       setTrips(nextTrips);
       const selectedTrip = nextTrips.find((t) => t.id === booking.trip_id);
       const tripUnitPrice = resolveBookingTripUnitPrice({ booking, trip: selectedTrip, extras: nextItems });
@@ -86,7 +95,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         total_amount_mad: Number(booking.total_amount_mad ?? 0),
         paid_amount_mad: Number(booking.paid_amount_mad ?? 0),
       });
-    });
+    })();
   }, [open, booking?.id]);
 
   const trip = trips.find((t) => t.id === form.trip_id);

@@ -200,6 +200,7 @@ export default function VisaForm() {
     supabase
       .from("trips")
       .select("id,title,season,start_date,end_date,duration_days,total_trip_days,japan_stay_days,visa_japan_arrival_date,visa_japan_departure_date")
+      .is("archived_at", null)
       .in("status", ["open", "completed"])
       .order("start_date", { ascending: true, nullsFirst: false })
       .then(({ data }) => setTripOptions((data ?? []) as VisaTripOption[]));

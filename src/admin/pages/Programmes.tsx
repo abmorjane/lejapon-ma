@@ -109,6 +109,7 @@ export default function Programmes() {
       supabase
         .from("trips")
         .select("id,title,start_date,end_date,duration_days,programme_id")
+        .is("archived_at", null)
         .order("start_date", { ascending: false }),
     ]);
     if (error) toast.error(error.message);

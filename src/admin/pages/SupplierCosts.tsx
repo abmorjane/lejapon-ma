@@ -5,7 +5,9 @@ import { PageHeader } from "../components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ClipboardList } from "lucide-react";
+import { TripArchiveView, tripsForArchiveView } from "@/lib/trip-archiving";
 
 const db = supabase as any;
 
@@ -17,10 +19,11 @@ export default function SupplierCosts() {
   const [quoteRowCounts, setQuoteRowCounts] = useState<Record<string, number>>({});
   const [quoteCalculatedTotals, setQuoteCalculatedTotals] = useState<Record<string, any>>({});
   const [suppliers, setSuppliers] = useState<Record<string, string>>({});
+  const [archiveView, setArchiveView] = useState<TripArchiveView>("active");
 
   useEffect(() => {
     (async () => {
-      const { data: t } = await supabase.from("trips").select("id,title,duration_days,start_date").order("start_date", { ascending: false });
+      const { data: t } = await supabase.from("trips").select("id,title,duration_days,start_date,archived_at").order("start_date", { ascending: false });
       setTrips(t ?? []);
       const { data: s } = await supabase.from("suppliers").select("id,name");
       const map: Record<string, string> = {};
@@ -118,16 +121,23 @@ export default function SupplierCosts() {
   const fmt = (n: number, c: string) => new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(n) + " " + c;
   const fmtJPY = (n: number) => fmt(Number(n || 0), "JPY");
   const fmtMAD = (n: number) => fmt(Number(n || 0), "MAD");
+  const visibleTrips = tripsForArchiveView(trips, archiveView);
 
   return (
     <div>
       <PageHeader title="Coûts fournisseurs" description="Synthèse des coûts logistiques saisis par les partenaires japonais." />
+      <Tabs value={archiveView} onValueChange={(value) => { setArchiveView(value as TripArchiveView); setTripId(""); }} className="mb-4">
+        <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl sm:w-[420px]">
+          <TabsTrigger value="active" className="rounded-lg">Voyages actifs ({tripsForArchiveView(trips, "active").length})</TabsTrigger>
+          <TabsTrigger value="archived" className="rounded-lg">Voyages archivés ({tripsForArchiveView(trips, "archived").length})</TabsTrigger>
+        </TabsList>
+      </Tabs>
       <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="max-w-md flex-1">
           <Select value={tripId} onValueChange={setTripId}>
             <SelectTrigger><SelectValue placeholder="Choisir un voyage…" /></SelectTrigger>
             <SelectContent>
-              {trips.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}
+              {visibleTrips.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
