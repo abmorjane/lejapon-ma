@@ -301,6 +301,7 @@ export default function SupplierTripCosts() {
   const [messageFiles, setMessageFiles] = useState<File[]>([]);
   const [messageBusy, setMessageBusy] = useState(false);
   const [messagesSqlMissing, setMessagesSqlMissing] = useState(false);
+  const [messagesLoadError, setMessagesLoadError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<TripDocument[]>([]);
   const [documentCategory, setDocumentCategory] = useState<TripDocumentCategory>("hotel_vouchers");
   const [documentTitle, setDocumentTitle] = useState("");
@@ -309,6 +310,7 @@ export default function SupplierTripCosts() {
   const [documentFilter, setDocumentFilter] = useState<TripDocumentCategory | "all">("all");
   const [documentBusy, setDocumentBusy] = useState(false);
   const [documentsSqlMissing, setDocumentsSqlMissing] = useState(false);
+  const [documentsLoadError, setDocumentsLoadError] = useState<string | null>(null);
   const excelFileInputRef = useRef<HTMLInputElement>(null);
   const [excelPreview, setExcelPreview] = useState<SupplierQuoteExcelPreview | null>(null);
   const [excelImportOpen, setExcelImportOpen] = useState(false);
@@ -372,7 +374,7 @@ export default function SupplierTripCosts() {
 
   useEffect(() => {
     if (activeTab === "messages") void markMessagesRead(messages);
-  }, [activeTab, messages.length]);
+  }, [activeTab, messages.length, tripArchived, isAdmin]);
 
   const load = async () => {
     if (!tripId || !user) return;
@@ -611,50 +613,59 @@ export default function SupplierTripCosts() {
   const loadMessages = async (targetTripId = tripId) => {
     if (!targetTripId || !user) return;
     setMessagesSqlMissing(false);
-    const { data, error } = await db
-      .from("trip_messages")
-      .select("*")
-      .eq("trip_id", targetTripId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: true });
-    if (error) {
-      if (isMissingTableError(error)) setMessagesSqlMissing(true);
-      return;
-    }
-
-    const messageRows = (data ?? []) as TripMessage[];
-    const messageIds = messageRows.map((message) => message.id);
-    let attachmentsByMessage = new Map<string, TripMessageAttachment[]>();
-    if (messageIds.length) {
-      const { data: attachmentRows } = await db
-        .from("trip_message_attachments")
+    setMessagesLoadError(null);
+    try {
+      const { data, error } = await db
+        .from("trip_messages")
         .select("*")
-        .in("message_id", messageIds)
+        .eq("trip_id", targetTripId)
+        .is("deleted_at", null)
         .order("created_at", { ascending: true });
-      const signedAttachments = await Promise.all((attachmentRows ?? []).map(async (attachment: TripMessageAttachment) => ({
-        ...attachment,
-        file_url: await signedAttachmentUrl(attachment),
-      })));
-      attachmentsByMessage = signedAttachments.reduce((map, attachment) => {
-        map.set(attachment.message_id, [...(map.get(attachment.message_id) ?? []), attachment]);
-        return map;
-      }, new Map<string, TripMessageAttachment[]>());
+      if (error) throw error;
+
+      const messageRows = (data ?? []) as TripMessage[];
+      const messageIds = messageRows.map((message) => message.id);
+      let attachmentsByMessage = new Map<string, TripMessageAttachment[]>();
+      if (messageIds.length) {
+        const { data: attachmentRows, error: attachmentError } = await db
+          .from("trip_message_attachments")
+          .select("*")
+          .in("message_id", messageIds)
+          .order("created_at", { ascending: true });
+        if (attachmentError) throw attachmentError;
+        const signedAttachments = await Promise.all((attachmentRows ?? []).map(async (attachment: TripMessageAttachment) => ({
+          ...attachment,
+          file_url: await signedAttachmentUrl(attachment),
+        })));
+        attachmentsByMessage = signedAttachments.reduce((map, attachment) => {
+          map.set(attachment.message_id, [...(map.get(attachment.message_id) ?? []), attachment]);
+          return map;
+        }, new Map<string, TripMessageAttachment[]>());
+      }
+
+      const { data: readRows, error: readsError } = messageIds.length
+        ? await db.from("trip_message_reads").select("message_id,read_at").eq("user_id", user.id).in("message_id", messageIds)
+        : { data: [], error: null };
+      if (readsError) throw readsError;
+
+      const nextMessages = messageRows.map((message) => ({
+        ...message,
+        attachments: attachmentsByMessage.get(message.id) ?? [],
+      }));
+      setMessages(nextMessages);
+      setMessageReads(Object.fromEntries((readRows ?? []).map((row: any) => [row.message_id, row.read_at])));
+      if (activeTab === "messages") await markMessagesRead(nextMessages);
+    } catch (error) {
+      console.error("Trip messages load failed", { tripId: targetTripId, error });
+      setMessagesSqlMissing(isMissingTableError(error));
+      setMessagesLoadError(formatSupabaseError(error));
+      setMessages([]);
+      setMessageReads({});
     }
-
-    const { data: readRows } = messageIds.length
-      ? await db.from("trip_message_reads").select("message_id,read_at").eq("user_id", user.id).in("message_id", messageIds)
-      : { data: [] };
-
-    const nextMessages = messageRows.map((message) => ({
-      ...message,
-      attachments: attachmentsByMessage.get(message.id) ?? [],
-    }));
-    setMessages(nextMessages);
-    setMessageReads(Object.fromEntries((readRows ?? []).map((row: any) => [row.message_id, row.read_at])));
-    if (activeTab === "messages") await markMessagesRead(nextMessages);
   };
 
   const markMessagesRead = async (messageList: TripMessage[]) => {
+    if (!isAdmin && tripArchived) return;
     if (!user?.id || !messageList.length) return;
     const unread = messageList.filter((message) => message.sender_id !== user.id && !messageReads[message.id]);
     if (!unread.length) return;
@@ -666,6 +677,9 @@ export default function SupplierTripCosts() {
         ...current,
         ...Object.fromEntries(unread.map((message) => [message.id, now])),
       }));
+    } else {
+      console.error("Trip message read receipt failed", { tripId, error });
+      setMessagesLoadError(`Accusé de lecture : ${formatSupabaseError(error)}`);
     }
   };
 
@@ -725,22 +739,27 @@ export default function SupplierTripCosts() {
   const loadDocuments = async (targetTripId = tripId) => {
     if (!targetTripId || !user) return;
     setDocumentsSqlMissing(false);
-    const { data, error } = await db
-      .from("trip_documents")
-      .select("*")
-      .eq("trip_id", targetTripId)
-      .is("deleted_at", null)
-      .order("category", { ascending: true })
-      .order("uploaded_at", { ascending: false });
-    if (error) {
-      if (isMissingTableError(error)) setDocumentsSqlMissing(true);
-      return;
+    setDocumentsLoadError(null);
+    try {
+      const { data, error } = await db
+        .from("trip_documents")
+        .select("*")
+        .eq("trip_id", targetTripId)
+        .is("deleted_at", null)
+        .order("category", { ascending: true })
+        .order("uploaded_at", { ascending: false });
+      if (error) throw error;
+      const signedDocuments = await Promise.all((data ?? []).map(async (document: TripDocument) => ({
+        ...document,
+        file_url: await signedTripDocumentUrl(document),
+      })));
+      setDocuments(signedDocuments);
+    } catch (error) {
+      console.error("Trip documents load failed", { tripId: targetTripId, error });
+      setDocumentsSqlMissing(isMissingTableError(error));
+      setDocumentsLoadError(formatSupabaseError(error));
+      setDocuments([]);
     }
-    const signedDocuments = await Promise.all((data ?? []).map(async (document: TripDocument) => ({
-      ...document,
-      file_url: await signedTripDocumentUrl(document),
-    })));
-    setDocuments(signedDocuments);
   };
 
   const uploadTripDocument = async () => {
@@ -792,9 +811,8 @@ export default function SupplierTripCosts() {
       const path = `${tripId}/${document.category}/${document.id}/v${Number(document.version || 1) + 1}-${Date.now()}-${safeName}`;
       const upload = await supabase.storage.from(tripDocumentBucket).upload(path, file, { upsert: false });
       if (upload.error) throw upload.error;
-      if (document.file_path) await supabase.storage.from(tripDocumentBucket).remove([document.file_path]);
       const now = new Date().toISOString();
-      const { error } = await db
+      const { data: updatedDocument, error } = await db
         .from("trip_documents")
         .update({
           file_name: file.name,
@@ -808,12 +826,23 @@ export default function SupplierTripCosts() {
           uploaded_at: now,
           updated_at: now,
         })
-        .eq("id", document.id);
+        .eq("id", document.id)
+        .select("id")
+        .maybeSingle();
       if (error) throw error;
+      if (!updatedDocument) throw new Error("Document non modifié : accès refusé ou voyage devenu non modifiable.");
+      if (document.file_path) {
+        const removal = await supabase.storage.from(tripDocumentBucket).remove([document.file_path]);
+        if (removal.error) {
+          console.error("Previous trip document file removal failed", removal.error);
+          toast.warning(`Nouvelle version sauvegardée ; ancien fichier conservé : ${formatSupabaseError(removal.error)}`);
+        }
+      }
       toast.success("Version remplacée.");
       await loadDocuments(tripId);
     } catch (error: any) {
-      toast.error(error?.message ?? "Remplacement impossible.");
+      console.error("Trip document replacement failed", error);
+      toast.error(formatSupabaseError(error));
     } finally {
       setDocumentBusy(false);
     }
@@ -824,13 +853,22 @@ export default function SupplierTripCosts() {
     if (!tripId) return;
     setDocumentBusy(true);
     try {
-      if (document.file_path) await supabase.storage.from(tripDocumentBucket).remove([document.file_path]);
-      const { error } = await db.from("trip_documents").update({ deleted_at: new Date().toISOString() }).eq("id", document.id);
+      const { data: deletedDocument, error } = await db.from("trip_documents")
+        .update({ deleted_at: new Date().toISOString() }).eq("id", document.id).select("id").maybeSingle();
       if (error) throw error;
+      if (!deletedDocument) throw new Error("Document non supprimé : accès refusé ou voyage devenu non modifiable.");
+      if (document.file_path) {
+        const removal = await supabase.storage.from(tripDocumentBucket).remove([document.file_path]);
+        if (removal.error) {
+          console.error("Deleted trip document file removal failed", removal.error);
+          toast.warning(`Document retiré de la liste ; fichier conservé : ${formatSupabaseError(removal.error)}`);
+        }
+      }
       toast.success("Document supprimé.");
       await loadDocuments(tripId);
     } catch (error: any) {
-      toast.error(error?.message ?? "Suppression impossible.");
+      console.error("Trip document deletion failed", error);
+      toast.error(formatSupabaseError(error));
     } finally {
       setDocumentBusy(false);
     }
@@ -1797,6 +1835,8 @@ export default function SupplierTripCosts() {
             messageFilter={messageFilter}
             messageBusy={messageBusy}
             messagesSqlMissing={messagesSqlMissing}
+            loadError={messagesLoadError}
+            onRetry={() => void loadMessages()}
             currentUserId={user?.id ?? null}
             canSend={Boolean(user) && (isAdmin || !tripArchived)}
             onTypeChange={setMessageType}
@@ -1818,6 +1858,8 @@ export default function SupplierTripCosts() {
             filter={documentFilter}
             busy={documentBusy}
             sqlMissing={documentsSqlMissing}
+            loadError={documentsLoadError}
+            onRetry={() => void loadDocuments()}
             isAdmin={isAdmin}
             canEdit={isAdmin || !tripArchived}
             currentUserId={user?.id ?? null}
@@ -2131,6 +2173,8 @@ function TripMessagesCenter({
   messageFilter,
   messageBusy,
   messagesSqlMissing,
+  loadError,
+  onRetry,
   currentUserId,
   canSend,
   onTypeChange,
@@ -2148,6 +2192,8 @@ function TripMessagesCenter({
   messageFilter: TripMessageType | "all";
   messageBusy: boolean;
   messagesSqlMissing: boolean;
+  loadError: string | null;
+  onRetry: () => void;
   currentUserId: string | null;
   canSend: boolean;
   onTypeChange: (value: TripMessageType) => void;
@@ -2189,6 +2235,10 @@ function TripMessagesCenter({
             Migration SQL du centre de messages requise avant utilisation.
           </div>
         )}
+        {loadError && <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-950">
+          <p>Le centre de messages n’a pas pu être chargé : {loadError}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>Réessayer les messages</Button>
+        </div>}
 
         <div className="mt-4 space-y-3">
           <div>
@@ -2262,11 +2312,11 @@ function TripMessagesCenter({
               </SelectContent>
             </Select>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">{filteredMessages.length} message(s) affiché(s) sur {messages.length}.</p>
+          {!loadError && <p className="mt-2 text-xs text-muted-foreground">{filteredMessages.length} message(s) affiché(s) sur {messages.length}.</p>}
         </div>
 
         <div className="max-h-[720px] space-y-3 overflow-y-auto p-4">
-          {filteredMessages.length === 0 && (
+          {!loadError && filteredMessages.length === 0 && (
             <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
               Aucun message pour ce filtre.
             </div>
@@ -2322,6 +2372,8 @@ function TripDocumentsCenter({
   filter,
   busy,
   sqlMissing,
+  loadError,
+  onRetry,
   isAdmin,
   canEdit,
   currentUserId,
@@ -2342,6 +2394,8 @@ function TripDocumentsCenter({
   filter: TripDocumentCategory | "all";
   busy: boolean;
   sqlMissing: boolean;
+  loadError: string | null;
+  onRetry: () => void;
   isAdmin: boolean;
   canEdit: boolean;
   currentUserId: string | null;
@@ -2386,6 +2440,10 @@ function TripDocumentsCenter({
             Migration SQL du centre documents requise avant utilisation.
           </div>
         )}
+        {loadError && <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-950">
+          <p>Les documents n’ont pas pu être chargés : {loadError}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>Réessayer les documents</Button>
+        </div>}
 
         <div className="mt-4 space-y-3">
           <div>
@@ -2438,11 +2496,11 @@ function TripDocumentsCenter({
               </SelectContent>
             </Select>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">{filteredDocuments.length} document(s) affiché(s) sur {documents.length}.</p>
+          {!loadError && <p className="mt-2 text-xs text-muted-foreground">{filteredDocuments.length} document(s) affiché(s) sur {documents.length}.</p>}
         </div>
 
         <div className="space-y-4 p-4">
-          {filteredDocuments.length === 0 && (
+          {!loadError && filteredDocuments.length === 0 && (
             <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
               Aucun document opérationnel pour ce filtre.
             </div>
@@ -3145,7 +3203,8 @@ const signedAttachmentUrl = async (attachment: TripMessageAttachment) => {
   const { data, error } = await supabase.storage
     .from(tripMessageAttachmentBucket)
     .createSignedUrl(attachment.file_path, 60 * 60);
-  return error ? attachment.file_url ?? null : data?.signedUrl ?? attachment.file_url ?? null;
+  if (error) throw error;
+  return data?.signedUrl ?? null;
 };
 
 const signedTripDocumentUrl = async (document: TripDocument) => {
@@ -3153,7 +3212,8 @@ const signedTripDocumentUrl = async (document: TripDocument) => {
   const { data, error } = await supabase.storage
     .from(tripDocumentBucket)
     .createSignedUrl(document.file_path, 60 * 60);
-  return error ? document.file_url ?? null : data?.signedUrl ?? document.file_url ?? null;
+  if (error) throw error;
+  return data?.signedUrl ?? null;
 };
 
 function ParticipantsTable({
