@@ -1,3 +1,4 @@
+import { SupplierLanguageProvider } from "@/i18n/supplier/SupplierLanguageProvider";
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
@@ -75,6 +76,7 @@ const AdminLogin = lazy(() => import("@/admin/pages/Login"));
 const AdminPasswordRecovery = lazy(() => import("@/admin/pages/PasswordRecovery"));
 const AdminDashboard = lazy(() => import("@/admin/pages/Dashboard"));
 const AdminTrips = lazy(() => import("@/admin/pages/Trips"));
+const AdminTripWorkspace = lazy(() => import("@/admin/pages/trips/TripWorkspace"));
 const AdminBookings = lazy(() => import("@/admin/pages/Bookings"));
 const AdminBookingDetail = lazy(() => import("@/admin/pages/BookingDetail"));
 const AdminAccounting = lazy(() => import("@/admin/pages/Accounting"));
@@ -84,6 +86,7 @@ const AdminTravelAgreements = lazy(() => import("@/admin/pages/TravelAgreements"
 const AdminClients = lazy(() => import("@/admin/pages/Clients"));
 const AdminExtras = lazy(() => import("@/admin/pages/Extras"));
 const AdminSuppliers = lazy(() => import("@/admin/pages/Suppliers"));
+const AdminSupplierQuote = lazy(() => import("@/admin/pages/AdminSupplierQuote"));
 const AdminSupplierCosts = lazy(() => import("@/admin/pages/SupplierCosts"));
 const AdminFitQuotes = lazy(() => import("@/admin/pages/FitQuotes"));
 const AdminFitControlTower = lazy(() => import("@/admin/pages/FitControlTower"));
@@ -337,7 +340,7 @@ const AppRoutes = () => {
       <Route path="/admin/mot-de-passe-oublie" element={<AdminPasswordRecovery />} />
       <Route path="/admin/nouveau-mot-de-passe" element={<AdminPasswordRecovery />} />
       <Route path="/unsubscribe/:token" element={<Unsubscribe />} />
-      <Route path="/supplier/login" element={<AdminLogin />} />
+      <Route path="/supplier/login" element={<SupplierLanguageProvider><AdminLogin /></SupplierLanguageProvider>} />
       <Route path="/supplier" element={<SupplierLayout />}>
         <Route index element={<SupplierTrips />} />
         <Route path="trips" element={<SupplierTrips />} />
@@ -351,6 +354,8 @@ const AppRoutes = () => {
       <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<AdminDashboard />} />
         <Route path="trips" element={<RequireRole module="trips"><AdminTrips /></RequireRole>} />
+        <Route path="trips/:tripId/workspace" element={<RequireRole module="trips"><AdminTripWorkspace /></RequireRole>} />
+        <Route path="trips/:tripId/workspace/:tab" element={<RequireRole module="trips"><AdminTripWorkspace /></RequireRole>} />
         <Route path="bookings" element={<RequireRole module="bookings"><AdminBookings /></RequireRole>} />
         <Route path="bookings/:id" element={<RequireRole module="bookings"><AdminBookingDetail /></RequireRole>} />
         <Route path="accounting" element={<RequireRole module="accounting"><AdminAccounting /></RequireRole>} />
@@ -364,6 +369,8 @@ const AppRoutes = () => {
         <Route path="extras" element={<RequireRole module="extras"><AdminExtras /></RequireRole>} />
         <Route path="suppliers" element={<RequireRole module="suppliers"><AdminSuppliers /></RequireRole>} />
         <Route path="supplier-costs" element={<RequireRole module="supplier_costs"><AdminSupplierCosts /></RequireRole>} />
+        <Route path="supplier-costs/:tripId" element={<RequireRole module="supplier_costs"><AdminSupplierQuote /></RequireRole>} />
+        <Route path="supplier-costs/:tripId/:quoteId" element={<RequireRole module="supplier_costs"><AdminSupplierQuote /></RequireRole>} />
         <Route path="fit-supplier-control" element={<RequireRole module="supplier_costs"><AdminFitSupplierControl /></RequireRole>} />
         <Route path="fit-quotes" element={<RequireRole module="fit_quotes"><AdminFitQuotes /></RequireRole>} />
         <Route path="fit-control-tower" element={<RequireRole module="fit_control_tower"><AdminFitControlTower /></RequireRole>} />

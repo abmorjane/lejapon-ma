@@ -1,0 +1,17 @@
+新規旅行の見積依頼 — Japan Office preview — Tokyo / Kyoto
+
+新しい旅行案件を担当いただくことになりました。Japan Officeポータルよりお見積りの作成をお願いいたします。
+
+旅行名: Japan Office preview — Tokyo / Kyoto
+日本到着日: 2026年10月3日
+日本出発日: 2026年10月13日
+到着空港・港: Narita NRT
+到着便名: JL123
+日本出発便の詳細: EY 871 G NRTAUH 1730 0005+1
+EY 613 G AUHCMN 0225 0740
+予定参加人数: 19
+
+見積を作成する
+https://example.invalid/supplier/trips/example/quote
+
+LeJapon.maからの自動通知

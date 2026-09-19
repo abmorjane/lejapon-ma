@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "../../components/PageHeader";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Search, Calendar, Users } from "lucide-react";
+import { Search, Calendar, Users } from "lucide-react";
 import { fmtDate, fmtMAD } from "@/lib/format";
-import TripOperations from "./TripOperations";
 import { motion, useReducedMotion } from "framer-motion";
+import { Link } from "react-router-dom";
+import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { TripArchiveView, tripsForArchiveView } from "@/lib/trip-archiving";
@@ -21,7 +21,6 @@ const displayTripDays = (trip: any) => {
 export default function TripsManagement() {
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [archiveView, setArchiveView] = useState<TripArchiveView>("active");
   const reduceMotion = useReducedMotion();
 
@@ -42,19 +41,6 @@ export default function TripsManagement() {
     return (t.title || "").toLowerCase().includes(s) || (t.season || "").toLowerCase().includes(s) || (t.label || "").toLowerCase().includes(s);
   });
 
-  const selected = rows.find((r) => r.id === selectedId);
-
-  if (selected) {
-    return (
-      <div>
-        <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)} className="mb-4 min-h-11">
-          <ArrowLeft className="w-4 h-4" /> Retour aux départs
-        </Button>
-        <TripOperations trip={selected} />
-      </div>
-    );
-  }
-
   return (
     <motion.div
       initial={reduceMotion ? false : { opacity: 0, y: 8 }}
@@ -68,7 +54,7 @@ export default function TripsManagement() {
           : "Sélectionnez un départ pour gérer inscrits, chambres, activités et paiements."}
       />
 
-      <Tabs value={archiveView} onValueChange={(value) => { setArchiveView(value as TripArchiveView); setSelectedId(null); }} className="mb-4">
+      <Tabs value={archiveView} onValueChange={(value) => setArchiveView(value as TripArchiveView)} className="mb-4">
         <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl sm:w-[440px]">
           <TabsTrigger value="active" className="rounded-lg">Opérations actives ({tripsForArchiveView(rows, "active").length})</TabsTrigger>
           <TabsTrigger value="archived" className="rounded-lg">Voyages archivés ({tripsForArchiveView(rows, "archived").length})</TabsTrigger>
@@ -89,9 +75,9 @@ export default function TripsManagement() {
           </div>
         )}
         {filtered.map((t) => (
-          <button
+          <Link
             key={t.id}
-            onClick={() => setSelectedId(t.id)}
+            to={tripWorkspacePath(t.id)}
             className="group overflow-hidden rounded-2xl border border-border bg-background text-left shadow-sm transition-all hover:border-primary hover:shadow-lg"
           >
             {t.cover_url && <img src={t.cover_url} alt={t.title} className="w-full h-32 object-cover" />}
@@ -109,7 +95,7 @@ export default function TripsManagement() {
               {displayTripDays(t) && <p className="mt-2 text-xs text-muted-foreground">{displayTripDays(t)}</p>}
               <div className="mt-2 text-sm font-semibold">{fmtMAD(t.base_price_mad)}</div>
             </div>
-          </button>
+          </Link>
         ))}
       </div>
     </motion.div>

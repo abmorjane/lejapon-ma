@@ -1,8 +1,10 @@
+import { adminSupplierQuotePath, organizedTripRevenue, supplierProfitability, supplierReviewCounts, type TripRevenue } from "@/admin/lib/supplier-admin-review";
+import { supplierErrorMessage, useSupplierTranslation } from "@/i18n/supplier/SupplierLanguageProvider";
 import { SupplierHandlingFields } from "./SupplierHandlingFields";
 import { SupplierQuoteVersionHistory, type SupplierQuoteVersionChange } from "./SupplierQuoteVersionHistory";
 import { calculateSupplierHandling, supplierHandlingErrors, HANDLING_CATEGORY_LABELS, EXECUTION_STATUS_LABELS, type SupplierHandlingTerms, type SupplierExecutionStatus } from "@/admin/lib/supplier-quote-business-model";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowUp, Download, History, MessageSquare, Paperclip, Plane, Plus, Save, Search, Send, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -242,8 +244,11 @@ const transportTypes = ["bus", "metro", "taxi", "train", "shinkansen", "boat", "
 const guideTypes = ["francophone", "anglophone", "japanese", "assistant", "other"];
 const roomTypes = ["double/twin", "single", "triple", "TL"];
 
-export default function SupplierTripCosts() {
-  const { tripId } = useParams();
+export default function SupplierTripCosts({ context = "supplier" }: { context?: "admin" | "supplier" } = {}) {
+  const { t, language, formatDate: fmtDate } = useSupplierTranslation();
+  const { tripId, quoteId: routeQuoteId } = useParams();
+  const navigate = useNavigate();
+  const returnPath = context === "admin" ? `/admin/supplier-costs?tripId=${encodeURIComponent(tripId ?? "")}` : "/supplier/trips";
   const { user, roles, isInternalStaff: isAdmin } = useAuth();
   const [trip, setTrip] = useState<any>(null);
   const [supplierId, setSupplierId] = useState<string | null>(null);
@@ -273,6 +278,7 @@ export default function SupplierTripCosts() {
   const [programmeDays, setProgrammeDays] = useState<any[]>([]);
   const [participants, setParticipants] = useState<any[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
+  const [revenue, setRevenue] = useState<TripRevenue>({ state: "loading", amountMad: null });
   const [hotels, setHotels] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -322,7 +328,9 @@ export default function SupplierTripCosts() {
   const canEditSupplierValues = handlingSchemaAvailable && !quoteDataUnavailable && !isAdmin && !tripArchived && ["draft", "revision_requested"].includes(status);
   const canEditOperations = !quoteDataUnavailable && status === "approved" && (isAdmin || !tripArchived);
   const canConfirmReservations = Boolean(quote?.id) && canEditOperations;
-  const canReviewLines = !quoteDataUnavailable && isAdmin && ["submitted", "reviewed"].includes(status);
+  const reviewCounts = useMemo(() => supplierReviewCounts(rows), [rows]);
+  const reviewUnresolved = reviewCounts.pending + reviewCounts.rejected;
+  const canReviewLines = !busy && !quoteDataUnavailable && isAdmin && ["submitted", "reviewed"].includes(status);
   const canImportExcel = handlingSchemaAvailable && !quoteDataUnavailable && !isAdmin && !tripArchived && Boolean(supplierId);
   const hasPersistedQuoteLines = useMemo(
     () => (Object.keys(tableBySection) as QuoteSection[]).some((section) => rows[section].some((row) => Boolean(row.id))),
@@ -370,14 +378,22 @@ export default function SupplierTripCosts() {
 
   useEffect(() => {
     void load();
-  }, [isAdmin, tripId, user?.id]);
+  }, [isAdmin, tripId, routeQuoteId, user?.id, context]);
+
+  useEffect(() => { if (!isAdmin && status === "approved") setActiveTab("operations"); }, [isAdmin, quote?.id, status]);
 
   useEffect(() => {
     if (activeTab === "messages") void markMessagesRead(messages);
   }, [activeTab, messages.length, tripArchived, isAdmin]);
 
+  useEffect(() => { if (quote?.id && !quoteDataUnavailable) void loadVersionComparison(quote, rows); }, [language]);
+
   const load = async () => {
     if (!tripId || !user) return;
+    if (context === "admin" && !isAdmin) { setAccessDenied("Accès réservé au personnel LeJapon.ma."); return; }
+    quoteReadsBlockedRef.current = true;
+    setQuoteSectionsLoading(true);
+    setRevenue({ state: "loading", amountMad: null });
     setSqlMissing(false);
     setAccessDenied(null);
 
@@ -419,16 +435,32 @@ export default function SupplierTripCosts() {
         db.from("trip_suppliers").select("supplier_id,suppliers(name)").eq("trip_id", tripId).neq("status", "cancelled"),
       ]);
       if (suppliersError) {
-        toast.error(`Fournisseurs: ${formatSupabaseError(suppliersError)}`);
+        toast.error(supplierErrorMessage(t, t("Fournisseurs: {{value0}}", { value0: formatSupabaseError(suppliersError) })));
         return;
       }
       setSupplierOptions(allSuppliers ?? []);
-      currentSupplierId = assignedSuppliers?.[0]?.supplier_id ?? null;
-      member = assignedSuppliers?.[0] ?? null;
+      if (context === "admin" && routeQuoteId) {
+        const result = await db.from("supplier_trip_quotes").select("id,trip_id,supplier_id").eq("trip_id", tripId).eq("id", routeQuoteId).maybeSingle();
+        if (result.error || !result.data) {
+          setAccessDenied(`Version du devis introuvable. ${formatSupabaseError(result.error)}`);
+          return;
+        }
+        currentSupplierId = result.data.supplier_id;
+        const supplier = (allSuppliers ?? []).find((item: any) => item.id === currentSupplierId);
+        member = supplier ? { suppliers: { name: supplier.name } } : (assignedSuppliers ?? []).find((item: any) => item.supplier_id === currentSupplierId);
+        if (!member && currentSupplierId) {
+          const result = await db.from("suppliers").select("id,name").eq("id", currentSupplierId).maybeSingle();
+          if (result.error) { setAccessDenied(formatSupabaseError(result.error)); return; }
+          member = { suppliers: { name: result.data?.name ?? "Fournisseur" } };
+        }
+      } else {
+        currentSupplierId = assignedSuppliers?.[0]?.supplier_id ?? null;
+        member = assignedSuppliers?.[0] ?? null;
+      }
     }
 
     setSupplierId(currentSupplierId);
-    setSupplierName(member?.suppliers?.name ?? (isAdmin ? "Aucun fournisseur assigné" : "Fournisseur Japon"));
+    setSupplierName(member?.suppliers?.name ?? (isAdmin ? t("Aucun fournisseur assigné") : t("Fournisseur Japon")));
 
     let tripRow: any;
     let dayRows: any[] = [];
@@ -468,7 +500,7 @@ export default function SupplierTripCosts() {
         .eq("id", tripId)
         .maybeSingle();
       if (tripError || !data) {
-        toast.error(tripError?.message ?? "Voyage introuvable.");
+        toast.error(supplierErrorMessage(t, tripError?.message ?? t("Voyage introuvable.")));
         return;
       }
       tripRow = data;
@@ -476,12 +508,15 @@ export default function SupplierTripCosts() {
         tripRow.programme_id
           ? db.from("programme_days").select("*").eq("programme_id", tripRow.programme_id).order("day_number", { ascending: true }).order("sort_order", { ascending: true })
           : Promise.resolve({ data: [] }),
-        db.from("bookings").select("id,reference,contact_name,contact_email,contact_phone,contact_city,num_adults,num_children,room_type,formula,status,source,agency_organization_id,special_requests,total_amount_mad,paid_amount_mad,metadata,created_at").eq("trip_id", tripId),
+        db.from("bookings").select("*", { count: "exact" }).eq("trip_id", tripId),
         db.from("trip_hotels").select("*").eq("trip_id", tripId).order("sort_order", { ascending: true }),
         db.from("extras").select("*").eq("is_active", true).order("sort_order"),
       ]);
       dayRows = baseResults[0].data ?? [];
       bookingRows = baseResults[1].data ?? [];
+      const salesResult = organizedTripRevenue(baseResults[1].data, baseResults[1].error, baseResults[1].count ?? null);
+      setRevenue(salesResult.state === "unavailable" ? { ...salesResult, reason: baseResults[1].error ? formatSupabaseError(baseResults[1].error) : salesResult.reason ?? "Montants ou statuts des réservations indisponibles." } : salesResult);
+      if (baseResults[1].error) console.error("Supplier admin revenue load failed", baseResults[1].error);
       hotelRows = baseResults[2].data ?? [];
       extraRows = baseResults[3].data ?? [];
       const bookingIds = bookingRows.map((booking: any) => booking.id);
@@ -520,7 +555,7 @@ export default function SupplierTripCosts() {
     setAssignments(assignmentRows ?? []);
     setParticipantActivitySelections(selectionRows ?? []);
 
-    const loadedQuote = await loadQuote(tripId, currentSupplierId, isAdmin);
+    const loadedQuote = await loadQuote(tripId, currentSupplierId, isAdmin, context === "admin" ? routeQuoteId : undefined);
     if (loadedQuote) {
       setQuote(loadedQuote.quote);
       setHandlingTerms({percentage:Number(loadedQuote.quote.supplier_handling_percentage ?? 0),categories:loadedQuote.quote.supplier_handling_categories ?? []});
@@ -601,11 +636,11 @@ export default function SupplierTripCosts() {
       return;
     }
     const previousRows = Object.fromEntries(results.map((result) => [result.section, normalizeRows(result.section, result.data!)])) as Record<QuoteSection, QuoteRow[]>;
-    const changes=buildVersionChanges(currentRows, previousRows);
+    const changes=buildVersionChanges(currentRows, previousRows, t);
     const parent=parentResult.data;
     setComparisonParentVersion(Number(parent?.version_number ?? 1));
     for(const key of ["supplier_handling_percentage","supplier_handling_categories","supplier_handling_amount_jpy"]) {
-      if(JSON.stringify(parent?.[key] ?? (key.endsWith("categories") ? [] : 0))!==JSON.stringify(targetQuote[key] ?? (key.endsWith("categories") ? [] : 0))) changes.push({section:"handling",kind:"changed",detail:key==="supplier_handling_percentage" ? `Pourcentage fournisseur : ${parent?.[key] ?? 0} % → ${targetQuote[key] ?? 0} %` : key==="supplier_handling_amount_jpy" ? `Montant du handling : ${fmtJPY(parent?.[key] ?? 0)} → ${fmtJPY(targetQuote[key] ?? 0)}` : `Périmètre : ${(parent?.[key] ?? []).map((category:QuoteSection)=>HANDLING_CATEGORY_LABELS[category]).join(", ") || "Aucun"} → ${(targetQuote[key] ?? []).map((category:QuoteSection)=>HANDLING_CATEGORY_LABELS[category]).join(", ") || "Aucun"}`});
+      if(JSON.stringify(parent?.[key] ?? (key.endsWith("categories") ? [] : 0))!==JSON.stringify(targetQuote[key] ?? (key.endsWith("categories") ? [] : 0))) changes.push({section:"handling",kind:"changed",detail:key==="supplier_handling_percentage" ? t("Pourcentage fournisseur : {{value0}} % → {{value1}} %", { value0: parent?.[key] ?? 0, value1: targetQuote[key] ?? 0 }) : key==="supplier_handling_amount_jpy" ? t("Montant du handling : {{value0}} → {{value1}}", { value0: fmtJPY(parent?.[key] ?? 0), value1: fmtJPY(targetQuote[key] ?? 0) }) : t("Périmètre : {{value0}} → {{value1}}", { value0: (parent?.[key] ?? []).map((category:QuoteSection)=>t(HANDLING_CATEGORY_LABELS[category])).join(", ") || t("Aucun"), value1: (targetQuote[key] ?? []).map((category:QuoteSection)=>t(HANDLING_CATEGORY_LABELS[category])).join(", ") || t("Aucun") })});
     }
     setVersionChanges(changes);
   };
@@ -696,9 +731,9 @@ export default function SupplierTripCosts() {
           trip_id: tripId,
           quote_id: quote?.id ?? null,
           message_type: messageType,
-          body: body || "Pièce jointe",
+          body: body || t("Pièce jointe"),
           sender_id: user.id,
-          sender_name: user.user_metadata?.full_name || user.email || "Utilisateur",
+          sender_name: user.user_metadata?.full_name || user.email || t("Utilisateur"),
           sender_role: roles[0] ?? (isAdmin ? "admin" : "supplier"),
           sender_source: isAdmin ? "morocco_office" : "japan_office",
           metadata: { notify: isAdmin ? "supplier_users" : "admin_users" },
@@ -706,7 +741,7 @@ export default function SupplierTripCosts() {
         .select("*")
         .maybeSingle();
       if (error) throw error;
-      if (!message?.id) throw new Error("Message non sauvegardé.");
+      if (!message?.id) throw new Error(t("Message non sauvegardé."));
 
       for (const file of messageFiles) {
         const safeName = safeStorageFilename(file.name);
@@ -726,11 +761,11 @@ export default function SupplierTripCosts() {
 
       setMessageDraft("");
       setMessageFiles([]);
-      toast.success("Message envoyé.");
+      toast.success(t("Message envoyé."));
       await loadMessages(tripId);
     } catch (error: any) {
       if (isMissingTableError(error)) setMessagesSqlMissing(true);
-      toast.error(error?.message ?? "Envoi du message impossible.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Envoi du message impossible.")));
     } finally {
       setMessageBusy(false);
     }
@@ -783,7 +818,7 @@ export default function SupplierTripCosts() {
         size_bytes: documentFile.size,
         version: 1,
         uploaded_by: user.id,
-        uploaded_by_name: user.user_metadata?.full_name || user.email || "Utilisateur",
+        uploaded_by_name: user.user_metadata?.full_name || user.email || t("Utilisateur"),
         uploaded_by_role: roles[0] ?? (isAdmin ? "admin" : "supplier"),
         uploaded_at: now,
         updated_at: now,
@@ -792,11 +827,11 @@ export default function SupplierTripCosts() {
       if (error) throw error;
       setDocumentTitle("");
       setDocumentFile(null);
-      toast.success("Document ajouté.");
+      toast.success(t("Document ajouté."));
       await loadDocuments(tripId);
     } catch (error: any) {
       if (isMissingTableError(error)) setDocumentsSqlMissing(true);
-      toast.error(error?.message ?? "Upload du document impossible.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Upload du document impossible.")));
     } finally {
       setDocumentBusy(false);
     }
@@ -821,7 +856,7 @@ export default function SupplierTripCosts() {
           size_bytes: file.size,
           version: Number(document.version || 1) + 1,
           uploaded_by: user.id,
-          uploaded_by_name: user.user_metadata?.full_name || user.email || "Utilisateur",
+          uploaded_by_name: user.user_metadata?.full_name || user.email || t("Utilisateur"),
           uploaded_by_role: roles[0] ?? (isAdmin ? "admin" : "supplier"),
           uploaded_at: now,
           updated_at: now,
@@ -830,19 +865,19 @@ export default function SupplierTripCosts() {
         .select("id")
         .maybeSingle();
       if (error) throw error;
-      if (!updatedDocument) throw new Error("Document non modifié : accès refusé ou voyage devenu non modifiable.");
+      if (!updatedDocument) throw new Error(t("Document non modifié : accès refusé ou voyage devenu non modifiable."));
       if (document.file_path) {
         const removal = await supabase.storage.from(tripDocumentBucket).remove([document.file_path]);
         if (removal.error) {
           console.error("Previous trip document file removal failed", removal.error);
-          toast.warning(`Nouvelle version sauvegardée ; ancien fichier conservé : ${formatSupabaseError(removal.error)}`);
+          toast.warning(t("Nouvelle version sauvegardée ; ancien fichier conservé : {{value0}}", { value0: formatSupabaseError(removal.error) }));
         }
       }
-      toast.success("Version remplacée.");
+      toast.success(t("Version remplacée."));
       await loadDocuments(tripId);
     } catch (error: any) {
       console.error("Trip document replacement failed", error);
-      toast.error(formatSupabaseError(error));
+      toast.error(supplierErrorMessage(t, formatSupabaseError(error)));
     } finally {
       setDocumentBusy(false);
     }
@@ -856,19 +891,19 @@ export default function SupplierTripCosts() {
       const { data: deletedDocument, error } = await db.from("trip_documents")
         .update({ deleted_at: new Date().toISOString() }).eq("id", document.id).select("id").maybeSingle();
       if (error) throw error;
-      if (!deletedDocument) throw new Error("Document non supprimé : accès refusé ou voyage devenu non modifiable.");
+      if (!deletedDocument) throw new Error(t("Document non supprimé : accès refusé ou voyage devenu non modifiable."));
       if (document.file_path) {
         const removal = await supabase.storage.from(tripDocumentBucket).remove([document.file_path]);
         if (removal.error) {
           console.error("Deleted trip document file removal failed", removal.error);
-          toast.warning(`Document retiré de la liste ; fichier conservé : ${formatSupabaseError(removal.error)}`);
+          toast.warning(t("Document retiré de la liste ; fichier conservé : {{value0}}", { value0: formatSupabaseError(removal.error) }));
         }
       }
-      toast.success("Document supprimé.");
+      toast.success(t("Document supprimé."));
       await loadDocuments(tripId);
     } catch (error: any) {
       console.error("Trip document deletion failed", error);
-      toast.error(formatSupabaseError(error));
+      toast.error(supplierErrorMessage(t, formatSupabaseError(error)));
     } finally {
       setDocumentBusy(false);
     }
@@ -884,7 +919,7 @@ export default function SupplierTripCosts() {
     try {
       let loadedQuote: any;
       if (!admin) {
-        if (!currentSupplierId) throw new Error("Rattachement fournisseur introuvable.");
+        if (!currentSupplierId) throw new Error(t("Rattachement fournisseur introuvable."));
         const { data, error } = quoteId
           ? await db.rpc("get_supplier_quote_version_v2", { p_quote_id: quoteId })
           : await db.rpc("get_supplier_trip_quote", { p_trip_id: tripId, p_supplier_id: currentSupplierId });
@@ -900,7 +935,7 @@ export default function SupplierTripCosts() {
         loadedQuote = data?.[0];
       }
       if (!loadedQuote?.id) {
-        if (quoteId) throw new Error("Version du devis introuvable.");
+        if (quoteId) throw new Error(t("Version du devis introuvable."));
         quoteReadsBlockedRef.current = false;
         return null;
       }
@@ -922,7 +957,7 @@ export default function SupplierTripCosts() {
       quoteReadsBlockedRef.current = Object.keys(errors).length > 0;
       if (quoteReadsBlockedRef.current) {
         setLastQuoteEngineError(Object.values(errors).join(" | "));
-        toast.error("Certaines lignes du devis n’ont pas pu être chargées. Consultez les erreurs affichées.");
+        toast.error(supplierErrorMessage(t, t("Certaines lignes du devis n’ont pas pu être chargées. Consultez les erreurs affichées.")));
       }
       return { quote: loadedQuote, rows: loadedRows };
     } catch (error) {
@@ -931,7 +966,7 @@ export default function SupplierTripCosts() {
       setQuoteReadError(message);
       setLastQuoteEngineError(message);
       if (isMissingTableError(error)) setSqlMissing(true);
-      toast.error(`Chargement du devis impossible : ${message}`);
+      toast.error(supplierErrorMessage(t, t("Chargement du devis impossible : {{value0}}", { value0: message })));
       return null;
     } finally {
       setQuoteSectionsLoading(false);
@@ -943,7 +978,7 @@ export default function SupplierTripCosts() {
     setBusy(true);
     try {
       const loaded = await loadQuote(tripId, supplierId, isAdmin, quoteId);
-      if (!loaded) throw new Error("Version du devis introuvable.");
+      if (!loaded) throw new Error(t("Version du devis introuvable."));
       setQuote(loaded.quote);
       setHandlingTerms({percentage:Number(loaded.quote.supplier_handling_percentage ?? 0),categories:loaded.quote.supplier_handling_categories ?? []});
       setStatus((loaded.quote.status ?? "draft") as QuoteStatus);
@@ -959,7 +994,7 @@ export default function SupplierTripCosts() {
       await loadLineComments(loaded.quote.id);
       await loadVersionComparison(loaded.quote, loaded.rows);
     } catch (error: any) {
-      toast.error(error?.message ?? "Chargement de la version impossible.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Chargement de la version impossible.")));
     } finally {
       setBusy(false);
     }
@@ -971,15 +1006,15 @@ export default function SupplierTripCosts() {
     const changed = nextSupplierId !== supplierId;
     if (changed) {
       const { data: assignment, error: assignmentError } = await db.rpc("assign_supplier_trip_quote_v2", { p_trip_id: tripId, p_supplier_id: nextSupplierId });
-      if (assignmentError) return toast.error(assignmentError.message);
+      if (assignmentError) return toast.error(supplierErrorMessage(t, assignmentError.message));
       const { data: emailData, error: emailError } = await db.functions.invoke("send-admin-notification", {
         body: { event_type: "supplier_trip_assigned", trip_id: tripId, supplier_id: nextSupplierId },
       });
-      if (emailError || emailData?.ok === false) toast.warning("Fournisseur assigné. L’email reste en échec dans la file de notifications.");
+      if (emailError || emailData?.ok === false) toast.warning(t("Fournisseur assigné. L’email reste en échec dans la file de notifications."));
       if (assignment?.quote_id) await loadQuoteVersions(tripId, nextSupplierId);
     }
     setSupplierId(nextSupplierId);
-    setSupplierName(selectedSupplier?.name ?? "Fournisseur Japon");
+    setSupplierName(selectedSupplier?.name ?? t("Fournisseur Japon"));
     const loadedQuote = await loadQuote(tripId, nextSupplierId, true);
     if (loadedQuote) {
       setQuote(loadedQuote.quote);
@@ -1035,17 +1070,17 @@ export default function SupplierTripCosts() {
     } = {}
   ) => {
     if (!tripId) return null;
-    if(!isAdmin && !handlingSchemaAvailable) {toast.error("Conditions de handling fournisseur indisponibles.");return null;}
+    if(!isAdmin && !handlingSchemaAvailable) {toast.error(supplierErrorMessage(t, t("Conditions de handling fournisseur indisponibles.")));return null;}
     if (quoteReadsBlockedRef.current) {
-      toast.error("Enregistrement bloqué : rechargez toutes les lignes du devis avant de sauvegarder.");
+      toast.error(supplierErrorMessage(t, t("Enregistrement bloqué : rechargez toutes les lignes du devis avant de sauvegarder.")));
       return null;
     }
     if (!supplierId) {
-      toast.error("Choisissez le fournisseur avant d'enregistrer ou de soumettre le devis.");
+      toast.error(supplierErrorMessage(t, t("Choisissez le fournisseur avant d'enregistrer ou de soumettre le devis.")));
       return null;
     }
     if (sqlMissing) {
-      toast.error(lastQuoteEngineError ? `Migration SQL quote engine requise: ${lastQuoteEngineError}` : "Migration SQL quote engine requise avant l'enregistrement.");
+      toast.error(supplierErrorMessage(t, lastQuoteEngineError ? t("Migration SQL quote engine requise: {{value0}}", { value0: lastQuoteEngineError }) : t("Migration SQL quote engine requise avant l'enregistrement.")));
       return null;
     }
     setBusy(true);
@@ -1054,7 +1089,7 @@ export default function SupplierTripCosts() {
       if (!isAdmin && nextStatus === "submitted") {
         const quoteErrors = [...quotationSubmissionErrors(rowsToSave),...supplierHandlingErrors(handlingTerms)];
         if (quoteErrors.length) {
-          toast.error(quoteErrors[0]);
+          toast.error(supplierErrorMessage(t, quoteErrors[0]));
           return null;
         }
       }
@@ -1145,19 +1180,19 @@ export default function SupplierTripCosts() {
       }
       if (quoteResult?.error) throw withQueryContext(quoteResult.error, "supplier_trip_quotes save");
       const savedQuote = quoteResult.data;
-      if (!savedQuote?.id) throw new Error("Demande de devis non sauvegardée.");
+      if (!savedQuote?.id) throw new Error(t("Demande de devis non sauvegardée."));
       if (!isAdmin && nextStatus === "submitted") {
         const { data: emailData, error: emailError } = await db.functions.invoke("send-admin-notification", {
           body: { event_type: "supplier_quote_submitted", quote_id: savedQuote.id },
         });
-        if (emailError || emailData?.ok === false) toast.warning("Devis soumis. La notification email admin a échoué et reste traçable dans les logs email.");
+        if (emailError || emailData?.ok === false) toast.warning(t("Devis soumis. La notification email admin a échoué et reste traçable dans les logs email."));
       }
 
       setQuote(savedQuote);
       setHandlingTerms({percentage:Number(savedQuote.supplier_handling_percentage ?? 0),categories:savedQuote.supplier_handling_categories ?? []});
       setStatus(nextStatus as QuoteStatus);
       setValidationStatus(validationStatusToSave);
-      toast.success(nextStatus === "submitted" ? "Devis soumis à l'équipe LeJapon.ma." : "Devis enregistré.");
+      toast.success(nextStatus === "submitted" ? t("Devis soumis à l'équipe LeJapon.ma.") : t("Devis enregistré."));
       await load();
       return savedQuote;
     } catch (error: any) {
@@ -1169,9 +1204,9 @@ export default function SupplierTripCosts() {
       setLastQuoteEngineError(formatSupabaseError(error));
       if (isMissingTableError(error)) {
         setSqlMissing(true);
-        toast.error(`Migration SQL quote engine requise: ${formatSupabaseError(error)}`);
+        toast.error(supplierErrorMessage(t, t("Migration SQL quote engine requise: {{value0}}", { value0: formatSupabaseError(error) })));
       } else {
-        toast.error(error?.message ?? "Enregistrement impossible.");
+        toast.error(supplierErrorMessage(t, error?.message ?? t("Enregistrement impossible.")));
       }
       return null;
     } finally {
@@ -1183,17 +1218,17 @@ export default function SupplierTripCosts() {
     if (!tripId || !user) return;
     const blockingErrors = validationBlockingErrors(nextStatus, validationStatus, validation);
     if (blockingErrors.length > 0) {
-      toast.error(blockingErrors[0]);
+      toast.error(supplierErrorMessage(t, blockingErrors[0]));
       return;
     }
     setValidationBusy(true);
     try {
       const saved = await saveOperationalState(nextStatus);
-      if (!saved?.id) throw new Error("Enregistrez le devis avant de modifier le workflow.");
+      if (!saved?.id) throw new Error(t("Enregistrez le devis avant de modifier le workflow."));
       setValidationStatus(nextStatus);
-      toast.success(`Statut workflow: ${validationStatusLabel[nextStatus]}`);
+      toast.success(t("Statut workflow: {{value0}}", { value0: t(validationStatusLabel[nextStatus]) }));
     } catch (error: any) {
-      toast.error(error?.message ?? "Mise à jour du workflow impossible.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Mise à jour du workflow impossible.")));
     } finally {
       setValidationBusy(false);
     }
@@ -1214,11 +1249,11 @@ export default function SupplierTripCosts() {
       p_validation_completion: validationForSave.completionPercentage,
     });
     if (error) {
-      toast.error(error.message);
+      toast.error(supplierErrorMessage(t, error.message));
       return null;
     }
     setQuote(data);
-    toast.success("Préparation opérationnelle enregistrée.");
+    toast.success(t("Préparation opérationnelle enregistrée."));
     return data;
   };
 
@@ -1228,17 +1263,21 @@ export default function SupplierTripCosts() {
     try {
       const { data, error } = await db.rpc("create_supplier_quote_version_v2", { p_quote_id: quote.id });
       if (error) throw error;
-      toast.success(`Version V${data.version_number} créée à partir de la version sélectionnée.`);
+      toast.success(t("Version V{{value0}} créée à partir de la version sélectionnée.", { value0: data.version_number }));
       await load();
     } catch (error: any) {
-      toast.error(error?.message ?? "Création de la nouvelle version impossible.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Création de la nouvelle version impossible.")));
     } finally {
       setBusy(false);
     }
   };
 
   const reviewQuote = async (action: "reviewed" | "revision_requested" | "approved" | "rejected") => {
-    if (!isAdmin || !quote?.id || quoteReadsBlockedRef.current) return;
+    if (!isAdmin || !quote?.id || quoteReadsBlockedRef.current || busy) return;
+    if (action === "approved" && reviewUnresolved > 0) {
+      toast.error(t("Approuvez ou excluez les lignes à revoir ou rejetées avant l’approbation commerciale."));
+      return;
+    }
     setBusy(true);
     try {
       const { data, error } = await db.rpc("review_supplier_quote_v2", {
@@ -1253,12 +1292,12 @@ export default function SupplierTripCosts() {
         const { data: emailData, error: emailError } = await db.functions.invoke("send-admin-notification", {
           body: { event_type: action === "approved" ? "supplier_quote_approved" : "supplier_quote_revision_requested", quote_id: quote.id },
         });
-        if (emailError || emailData?.ok === false) toast.warning("Statut enregistré. L’email fournisseur a échoué et reste traçable.");
+        if (emailError || emailData?.ok === false) toast.warning(t("Statut enregistré. L’email fournisseur a échoué et reste traçable."));
       }
-      toast.success(action === "approved" ? "Devis approuvé." : action === "revision_requested" ? "Correction demandée." : "Statut de revue enregistré.");
+      toast.success(action === "approved" ? t("Devis approuvé.") : action === "revision_requested" ? t("Correction demandée.") : t("Statut de revue enregistré."));
       await load();
     } catch (error: any) {
-      toast.error(error?.message ?? "Revue du devis impossible.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Revue du devis impossible.")));
     } finally {
       setBusy(false);
     }
@@ -1266,21 +1305,24 @@ export default function SupplierTripCosts() {
 
   const reviewLine = async (section: QuoteSection, row: QuoteRow, included: boolean, reviewStatus: "pending" | "approved" | "rejected") => {
     if (!quote?.id || !row.id || !canReviewLines) return;
-    const { error } = await db.rpc("review_supplier_quote_line_v2", {
-      p_quote_id: quote.id,
-      p_row_table: tableBySection[section],
-      p_row_id: row.id,
-      p_included: included,
-      p_review_status: reviewStatus,
-    });
-    if (error) return toast.error(error.message);
-    updateRows(section, rows[section].map((item) => item.id === row.id ? { ...item, included_in_total: included, review_status: reviewStatus } : item));
-    toast.success(included ? "Ligne incluse dans le total." : "Ligne exclue du total sans modifier son prix.");
+    setBusy(true);
+    try {
+      const { error } = await db.rpc("review_supplier_quote_line_v2", {
+        p_quote_id: quote.id,
+        p_row_table: tableBySection[section],
+        p_row_id: row.id,
+        p_included: included,
+        p_review_status: reviewStatus,
+      });
+      if (error) throw error;
+      updateRows(section, rows[section].map((item) => item.id === row.id ? { ...item, included_in_total: included, review_status: reviewStatus } : item));
+    } catch (error) { toast.error(supplierErrorMessage(t, formatSupabaseError(error))); }
+    finally { setBusy(false); }
   };
 
   const addLineComment = async (section: QuoteSection, row: QuoteRow, body: string, internal: boolean) => {
     if (!quote?.id || !row.id) {
-      toast.error("Enregistrez la ligne avant d’ajouter un commentaire.");
+      toast.error(supplierErrorMessage(t, t("Enregistrez la ligne avant d’ajouter un commentaire.")));
       return false;
     }
     const { data, error } = await db.rpc("add_supplier_quote_comment_v2", {
@@ -1292,7 +1334,7 @@ export default function SupplierTripCosts() {
       p_requires_attention: !internal,
     });
     if (error) {
-      toast.error(error.message);
+      toast.error(supplierErrorMessage(t, error.message));
       return false;
     }
     setLineComments((current) => [...current, data]);
@@ -1300,7 +1342,7 @@ export default function SupplierTripCosts() {
       const { data: emailData, error: emailError } = await db.functions.invoke("send-admin-notification", {
         body: { event_type: "supplier_quote_comment", quote_id: quote.id, comment_id: data.id },
       });
-      if (emailError || emailData?.ok === false) toast.warning("Commentaire enregistré. L’email associé a échoué et reste traçable.");
+      if (emailError || emailData?.ok === false) toast.warning(t("Commentaire enregistré. L’email associé a échoué et reste traçable."));
     }
     return true;
   };
@@ -1312,8 +1354,8 @@ export default function SupplierTripCosts() {
       const {error}=await db.rpc("set_supplier_quote_reservation_status_v1",{p_quote_id:quote.id,p_row_table:tableBySection[section],p_row_id:rowId,p_status:nextStatus});
       if(error) throw error;
       await selectQuoteVersion(quote.id);
-      toast.success("Statut de réservation enregistré.");
-    } catch(error:any) {toast.error(formatSupabaseError(error));}
+      toast.success(t("Statut de réservation enregistré."));
+    } catch(error:any) {toast.error(supplierErrorMessage(t, formatSupabaseError(error)));}
     finally {setValidationBusy(false);}
   };
 
@@ -1324,8 +1366,8 @@ export default function SupplierTripCosts() {
       const {error}=await db.rpc("set_supplier_quote_execution_status_v1",{p_quote_id:quote.id,p_status:nextStatus});
       if(error) throw error;
       await selectQuoteVersion(quote.id);
-      toast.success("Statut d’exécution enregistré.");
-    } catch(error:any) {toast.error(formatSupabaseError(error));}
+      toast.success(t("Statut d’exécution enregistré."));
+    } catch(error:any) {toast.error(supplierErrorMessage(t, formatSupabaseError(error)));}
     finally {setValidationBusy(false);}
   };
 
@@ -1346,9 +1388,9 @@ export default function SupplierTripCosts() {
         setValidationOverrides(nextOverrides);
         await saveOperationalState(validationStatus, nextOverrides);
       }
-      toast.success(confirmed ? "Suivi opérationnel confirmé." : "Suivi opérationnel à compléter.");
+      toast.success(confirmed ? t("Suivi opérationnel confirmé.") : t("Suivi opérationnel à compléter."));
     } catch (error: any) {
-      toast.error(error?.message ?? "Mise à jour de la validation impossible.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Mise à jour de la validation impossible.")));
     } finally {
       setValidationBusy(false);
     }
@@ -1365,24 +1407,24 @@ export default function SupplierTripCosts() {
   const readExcelImportFile = async (file: File | null) => {
     if (!file) return;
     if (!/\.xlsx$/i.test(file.name)) {
-      toast.error("Sélectionnez un fichier Excel .xlsx.");
+      toast.error(supplierErrorMessage(t, t("Sélectionnez un fichier Excel .xlsx.")));
       return;
     }
     if (file.size > 25 * 1024 * 1024) {
-      toast.error("Le fichier Excel dépasse la limite de 25 Mo.");
+      toast.error(supplierErrorMessage(t, t("Le fichier Excel dépasse la limite de 25 Mo.")));
       return;
     }
     setExcelReading(true);
     try {
       const preview = await parseSupplierQuoteWorkbook(await file.arrayBuffer(), file.name);
       if (preview.counts.importable === 0 && preview.counts.unresolved === 0) {
-        throw new Error("Aucune ligne de devis reconnue dans la première feuille.");
+        throw new Error(t("Aucune ligne de devis reconnue dans la première feuille."));
       }
       setExcelPreview(preview);
       setExcelImportOpen(true);
     } catch (error: any) {
       setExcelPreview(null);
-      toast.error(error?.message ?? "Lecture du fichier Excel impossible.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Lecture du fichier Excel impossible.")));
     } finally {
       setExcelReading(false);
     }
@@ -1391,11 +1433,11 @@ export default function SupplierTripCosts() {
   const confirmExcelImport = async () => {
     if (!tripId || !supplierId || !excelPreview || !canImportExcel || quoteReadsBlockedRef.current) return;
     if (hasUnresolvedSupplierQuoteImportRows(excelPreview)) {
-      toast.error("Choisissez une décision pour chaque ligne sans sous-total Excel.");
+      toast.error(supplierErrorMessage(t, t("Choisissez une décision pour chaque ligne sans sous-total Excel.")));
       return;
     }
     const handlingErrors=supplierQuoteImportHandlingErrors(excelPreview);
-    if(handlingErrors.length) {toast.error(handlingErrors[0]);return;}
+    if(handlingErrors.length) {toast.error(supplierErrorMessage(t, handlingErrors[0]));return;}
     setExcelImportBusy(true);
     try {
       // Freeze the selected strategy before saveQuote() reloads React state.
@@ -1403,7 +1445,7 @@ export default function SupplierTripCosts() {
       let sourceQuoteId = quote?.id ?? null;
       if (importMode === "new_version" && ["draft", "revision_requested"].includes(status)) {
         const savedSource = await saveQuote("draft");
-        if (!savedSource?.id) throw new Error("Le brouillon courant n’a pas pu être sécurisé avant l’import.");
+        if (!savedSource?.id) throw new Error(t("Le brouillon courant n’a pas pu être sécurisé avant l’import."));
         sourceQuoteId = savedSource.id;
       }
       const importRows = buildSupplierQuoteImportPayload(excelPreview);
@@ -1430,21 +1472,21 @@ export default function SupplierTripCosts() {
 
       const importedQuoteId = data?.id;
       if (!importedQuoteId) {
-        throw new Error("L’import a réussi mais la nouvelle version du devis n’a pas été identifiée.");
+        throw new Error(t("L’import a réussi mais la nouvelle version du devis n’a pas été identifiée."));
       }
 
       setExcelImportOpen(false);
       setExcelPreview(null);
       toast.success(importMode === "new_version"
-        ? `Import terminé dans V${data?.version_number ?? nextQuoteVersionNumber} (brouillon). La version précédente reste intacte.`
-        : `Import terminé : ${data?.imported_line_count ?? excelPreview.counts.importable} lignes ajoutées au brouillon.`);
+        ? t("Import terminé dans V{{value0}} (brouillon). La version précédente reste intacte.", { value0: data?.version_number ?? nextQuoteVersionNumber })
+        : t("Import terminé : {{value0}} lignes ajoutées au brouillon.", { value0: data?.imported_line_count ?? excelPreview.counts.importable }));
 
       // The import RPC returns the exact quote/version that received the Excel rows.
       // Reload that version explicitly instead of asking load() to rediscover it.
       await loadQuoteVersions(tripId, supplierId);
       await selectQuoteVersion(importedQuoteId);
     } catch (error: any) {
-      toast.error(error?.message ?? "Import Excel impossible. Aucune ligne n’a été écrite.");
+      toast.error(supplierErrorMessage(t, error?.message ?? t("Import Excel impossible. Aucune ligne n’a été écrite.")));
     } finally {
       setExcelImportBusy(false);
     }
@@ -1470,17 +1512,17 @@ export default function SupplierTripCosts() {
     const fileBase = supplierExcelFilename(trip);
     if (scope === "quote") {
       await exportWorkbook(`${fileBase}-devis.xlsx`, [
-        { name: "Devis", rows: context.quoteRows },
-        { name: "Totaux", rows: context.totalRows },
+        { name: t("Devis"), rows: context.quoteRows },
+        { name: t("Totaux"), rows: context.totalRows },
       ]);
     } else if (scope === "operations") {
-      await exportWorkbook(`${fileBase}-vue-operationnelle.xlsx`, [{ name: "Vue opérationnelle", rows: context.operationalRows }]);
+      await exportWorkbook(`${fileBase}-vue-operationnelle.xlsx`, [{ name: t("Vue opérationnelle"), rows: context.operationalRows }]);
     } else if (scope === "participants") {
-      await exportWorkbook(`${fileBase}-participants.xlsx`, [{ name: "Participants", rows: context.participantRows }]);
+      await exportWorkbook(`${fileBase}-participants.xlsx`, [{ name: t("Participants"), rows: context.participantRows }]);
     } else if (scope === "rooms_extras") {
       await exportWorkbook(`${fileBase}-chambres-extras.xlsx`, [
-        { name: "Chambres", rows: context.roomRows },
-        { name: "Extras", rows: context.extraRows },
+        { name: t("Chambres"), rows: context.roomRows },
+        { name: t("Extras"), rows: context.extraRows },
       ]);
     } else if (scope === "operational_book") {
       const book = buildOperationalBookContext({
@@ -1501,30 +1543,30 @@ export default function SupplierTripCosts() {
         includeInternalFinancials: isAdmin,
       });
       await exportWorkbook(`${fileBase}-dossier-operationnel.xlsx`, [
-        { name: "Summary", rows: book.summaryRows },
-        { name: "Flights", rows: book.flightRows },
-        { name: "Hotels", rows: book.hotelRows },
-        { name: "Rooming List", rows: book.roomingRows },
-        { name: "Participants", rows: book.participantRows },
-        { name: "Activities", rows: book.activityRows },
-        { name: "Guides", rows: book.guideRows },
-        { name: "Transport", rows: book.transportRows },
-        { name: "Emergency Contacts", rows: book.emergencyContactRows },
+        { name: t("Summary"), rows: book.summaryRows },
+        { name: t("Flights"), rows: book.flightRows },
+        { name: t("Hotels"), rows: book.hotelRows },
+        { name: t("Rooming List"), rows: book.roomingRows },
+        { name: t("Participants"), rows: book.participantRows },
+        { name: t("Activities"), rows: book.activityRows },
+        { name: t("Guides"), rows: book.guideRows },
+        { name: t("Transport"), rows: book.transportRows },
+        { name: t("Emergency Contacts"), rows: book.emergencyContactRows },
       ]);
     } else {
       const commentRows = buildCommentsExportRows({ operationalState, messages });
       await exportWorkbook(`${fileBase}-global.xlsx`, [
-        { name: "Summary", rows: buildOperationalSummaryRows({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName, includeInternalFinancials: isAdmin }) },
-        { name: "Financial Quote", rows: context.totalRows },
-        { name: "Hotels", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.hotels) },
-        { name: "Transport", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.transport) },
-        { name: "Activities", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.activities) },
-        { name: "Guides", rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.guides) },
-        { name: "Participants", rows: context.participantRows },
-        { name: "Rooming List", rows: context.roomRows },
-        { name: "Extras", rows: context.extraRows },
-        { name: "Operational Programme", rows: context.operationalRows },
-        { name: "Comments", rows: commentRows },
+        { name: t("Summary"), rows: buildOperationalSummaryRows({ trip, totals, participants, bookings, hotels, rooms, rows, supplierName, includeInternalFinancials: isAdmin }) },
+        { name: t("Financial Quote"), rows: context.totalRows },
+        { name: t("Hotels"), rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.hotels) },
+        { name: t("Transport"), rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.transport) },
+        { name: t("Activities"), rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.activities) },
+        { name: t("Guides"), rows: context.quoteRows.filter((row: any) => row.section === sectionLabels.guides) },
+        { name: t("Participants"), rows: context.participantRows },
+        { name: t("Rooming List"), rows: context.roomRows },
+        { name: t("Extras"), rows: context.extraRows },
+        { name: t("Operational Programme"), rows: context.operationalRows },
+        { name: t("Comments"), rows: commentRows },
       ]);
     }
   };
@@ -1588,58 +1630,52 @@ export default function SupplierTripCosts() {
     return (
       <Card className="p-10 text-center">
         <Plane className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-        <h1 className="font-display text-xl">Accès fournisseur restreint</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{accessDenied}</p>
+        <h1 className="font-display text-xl">{t("Accès fournisseur restreint")}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{supplierErrorMessage(t, accessDenied)}</p>
         <Button asChild variant="outline" className="mt-5">
-          <Link to="/supplier/trips">Retour à mes voyages</Link>
+          <Link to={returnPath}>{context === "admin" ? "Retour aux Coûts fournisseurs" : t("Retour à mes voyages")}</Link>
         </Button>
       </Card>
     );
   }
 
-  if (!trip) return <p className="text-muted-foreground">Chargement…</p>;
+  if (!trip) return <p className="text-muted-foreground">{t("Chargement…")}</p>;
 
   return (
     <div className="space-y-6">
-      <Link to="/supplier/trips" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" />
-        Voyages fournisseur
-      </Link>
+      <Link to={returnPath} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" /> {context === "admin" ? "Retour aux Coûts fournisseurs" : t("Voyages fournisseur")} </Link>
 
       <PageHeader
-        title={`Devis Japon - ${trip.title}`}
-        description={`${supplierName} · ${fmtDate(trip.start_date)} → ${fmtDate(trip.end_date)} · ${trip.duration_days ?? (programmeDays.length || "?")} jours`}
+        breadcrumbCurrent={context === "admin" ? `${supplierName} · V${quote?.version_number ?? 1}` : undefined}
+        title={t("Devis Japon - {{value0}}", { value0: trip.title })}
+        description={t("{{value0}} · {{value1}} → {{value2}} · {{value3}} jours", { value0: supplierName, value1: fmtDate(trip.start_date), value2: fmtDate(trip.end_date), value3: trip.duration_days ?? (programmeDays.length || "?") })}
         action={
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => saveQuote(status)} disabled={busy || quoteDataUnavailable || (isAdmin ? !quote?.id || ["approved", "archived"].includes(status) : !canEditSupplierValues)}>
-              <Save className="h-4 w-4" /> Enregistrer
-            </Button>
+              <Save className="h-4 w-4" /> {t("Enregistrer")} </Button>
             {!isAdmin && <Button onClick={() => saveQuote("submitted")} disabled={busy || !canEditSupplierValues}>
-              <Send className="h-4 w-4" /> Soumettre
-            </Button>}
+              <Send className="h-4 w-4" /> {t("Soumettre")} </Button>}
             {!isAdmin && ["approved","revision_requested"].includes(status) && <Button onClick={createNewVersion} disabled={busy || tripArchived || quoteDataUnavailable}>
-              <History className="h-4 w-4" /> Créer une nouvelle version
-            </Button>}
+              <History className="h-4 w-4" /> {t("Créer une nouvelle version")} </Button>}
           </div>
         }
       />
 
       {tripArchived && !isAdmin && (
-        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          Ce voyage est archivé. Les devis, versions, commentaires, documents et données opérationnelles restent consultables en lecture seule.
-        </Card>
+        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"> {t("Ce voyage est archivé. Les devis, versions, commentaires, documents et données opérationnelles restent consultables en lecture seule.")} </Card>
       )}
 
       {quoteVersions.length > 0 && <Card className="p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <Label>Versions du devis fournisseur</Label>
-            <p className="text-xs text-muted-foreground">Les versions validées restent consultables et ne sont jamais écrasées.</p>
+            <Label>{t("Versions du devis fournisseur")}</Label>
+            <p className="text-xs text-muted-foreground">{t("Les versions validées restent consultables et ne sont jamais écrasées.")}</p>
           </div>
-          <Select disabled={busy || quoteSectionsLoading} value={quote?.id ?? ""} onValueChange={(value) => void selectQuoteVersion(value)}>
+          <Select disabled={busy || quoteSectionsLoading} value={quote?.id ?? ""} onValueChange={(value) => context === "admin" ? navigate(adminSupplierQuotePath(tripId!, value)) : void selectQuoteVersion(value)}>
             <SelectTrigger className="w-full sm:w-[260px]"><SelectValue /></SelectTrigger>
             <SelectContent>{quoteVersions.map((version) => (
-              <SelectItem key={version.id} value={version.id}>V{version.version_number ?? 1} · {quoteStatusLabel[(version.status ?? "draft") as QuoteStatus] ?? version.status}</SelectItem>
+              <SelectItem key={version.id} value={version.id}>V{version.version_number ?? 1} · {t(quoteStatusLabel[(version.status ?? "draft") as QuoteStatus] ?? version.status)}</SelectItem>
             ))}</SelectContent>
           </Select>
         </div>
@@ -1647,75 +1683,76 @@ export default function SupplierTripCosts() {
       {quote?.parent_quote_id && <SupplierQuoteVersionHistory key={quote.id} previousVersion={comparisonParentVersion ?? Math.max(1,Number(quote.version_number || 1)-1)} changes={versionChanges} error={versionComparisonError} loading={versionComparisonLoading} />}
 
 
-      {quoteReadError && <Card role="alert" className="border-destructive p-4 text-sm text-destructive">
-        Le devis n’a pas pu être chargé. {quoteReadError}
+      {quoteReadError && <Card role="alert" className="border-destructive p-4 text-sm text-destructive"> {t("Le devis n’a pas pu être chargé.")} {supplierErrorMessage(t, quoteReadError)}
       </Card>}
-      {(quoteReadError || Object.keys(sectionLoadErrors).length > 0) && <Button variant="outline" disabled={busy || quoteSectionsLoading} onClick={() => quote?.id ? void selectQuoteVersion(quote.id) : void load()}>
-        Réessayer le chargement des lignes
-      </Button>}
+      {(quoteReadError || Object.keys(sectionLoadErrors).length > 0) && <Button variant="outline" disabled={busy || quoteSectionsLoading} onClick={() => quote?.id ? void selectQuoteVersion(quote.id) : void load()}> {t("Réessayer le chargement des lignes")} </Button>}
 
       {sqlMissing && (
-        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          Une table du devis fournisseur est introuvable. Vérifiez le schéma et l’erreur ci-dessous avant d’appliquer un correctif SQL.
-          {lastQuoteEngineError && <p className="mt-2 font-mono text-xs">{lastQuoteEngineError}</p>}
+        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"> {t("Une table du devis fournisseur est introuvable. Vérifiez le schéma et l’erreur ci-dessous avant d’appliquer un correctif SQL.")} {lastQuoteEngineError && <p className="mt-2 font-mono text-xs">{lastQuoteEngineError}</p>}
         </Card>
       )}
 
-      {isAdmin && (
+      {isAdmin && !routeQuoteId && (
         <Card className="p-4">
-          <Label>Fournisseur assigné au devis</Label>
+          <Label>{t("Fournisseur assigné au devis")}</Label>
           <Select value={supplierId ?? ""} onValueChange={(value) => void selectAdminSupplier(value)}>
-            <SelectTrigger className="mt-2"><SelectValue placeholder="Choisir le fournisseur" /></SelectTrigger>
+            <SelectTrigger className="mt-2"><SelectValue placeholder={t("Choisir le fournisseur")} /></SelectTrigger>
             <SelectContent>{supplierOptions.map((supplier) => <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>)}</SelectContent>
           </Select>
-          <p className="mt-2 text-xs text-muted-foreground">Changer ce fournisseur met immédiatement à jour l’assignation, crée V1 si nécessaire et envoie la demande de devis.</p>
+          <p className="mt-2 text-xs text-muted-foreground">{t("Changer ce fournisseur met immédiatement à jour l’assignation, crée V1 si nécessaire et envoie la demande de devis.")}</p>
         </Card>
       )}
 
-      {!handlingSchemaAvailable && !quoteDataUnavailable && <Card role="alert" className="p-4 text-sm">Les conditions de handling fournisseur ne sont pas encore disponibles. L’enregistrement fournisseur et l’import sont suspendus ; contactez LeJapon.ma.</Card>}
+      {!handlingSchemaAvailable && !quoteDataUnavailable && <Card role="alert" className="p-4 text-sm">{t("Les conditions de handling fournisseur ne sont pas encore disponibles. L’enregistrement fournisseur et l’import sont suspendus ; contactez LeJapon.ma.")}</Card>}
       <Card className="p-4 text-sm">
-        <p className="font-medium">Devis commercial : {quoteStatusLabel[status]}</p>
-        <p className="mt-1 text-muted-foreground">LeJapon.ma approuve le devis ou demande une révision. Passeports, rooming, documents et réservations sont suivis dans la vue opérationnelle après approbation et ne bloquent pas la soumission.</p>
-        {quote?.admin_feedback && <p className="mt-2 whitespace-pre-wrap">Retour LeJapon.ma : {quote.admin_feedback}</p>}
+        <p className="font-medium">{t("Devis commercial :")} {t(quoteStatusLabel[status])}</p>
+        <p className="mt-1 text-muted-foreground">{t("LeJapon.ma approuve le devis ou demande une révision. Passeports, rooming, documents et réservations sont suivis dans la vue opérationnelle après approbation et ne bloquent pas la soumission.")}</p>
+        {quote?.admin_feedback && <p className="mt-2 whitespace-pre-wrap">{t("Retour LeJapon.ma :")} {quote.admin_feedback}</p>}
       </Card>
 
+      {!isAdmin && status === "approved" && <Card className="border-emerald-200 bg-emerald-50 p-4">
+        <p className="font-medium">{t("Devis approuvé par LeJapon.ma")}</p>
+        <p className="mt-1 text-sm">{t("Vous pouvez maintenant procéder aux réservations et à la préparation opérationnelle.")}</p>
+        <Button variant="outline" className="mt-3" onClick={() => setActiveTab("operations")}>{t("Ouvrir le suivi opérationnel")}</Button>
+      </Card>}
+
       {!quoteDataUnavailable && <div className="grid gap-3 lg:grid-cols-5">
-        <TotalCard label="Hôtels" value={totals.hotels} />
-        <TotalCard label="Transport" value={totals.transport} />
-        <TotalCard label="Activités" value={totals.activities} />
-        <TotalCard label="Guides" value={totals.guides} />
-        <TotalCard label="Autres" value={totals.other} />
+        <TotalCard label={t("Hôtels")} value={totals.hotels} />
+        <TotalCard label={t("Transport")} value={totals.transport} />
+        <TotalCard label={t("Activités")} value={totals.activities} />
+        <TotalCard label={t("Guides")} value={totals.guides} />
+        <TotalCard label={t("Autres")} value={totals.other} />
       </div>}
 
       <Card className="sticky top-20 z-10 border-primary/20 bg-background/95 p-4 shadow-sm backdrop-blur">
         <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
           <div>
-            <Label>Statut</Label>
-            <div className="mt-2"><Badge variant="outline">V{quote?.version_number ?? 1} · {quoteStatusLabel[status] ?? status}</Badge></div>
+            <Label>{t("Statut")}</Label>
+            <div className="mt-2"><Badge variant="outline">V{quote?.version_number ?? 1} · {t(quoteStatusLabel[status] ?? status)}</Badge></div>
           </div>
           {isAdmin && <div>
-            <Label>Commission office (%)</Label>
+            <Label>{t("Commission office (%)")}</Label>
             <Input className="mt-1" type="number" value={commissionPct} onChange={(event) => setCommissionPct(Number(event.target.value))} />
           </div>}
           {isAdmin && <div>
-            <Label>JPY → MAD</Label>
+            <Label>{t("JPY → MAD")}</Label>
             <Input className="mt-1" type="number" step="0.001" value={exchangeRate} onChange={(event) => setExchangeRate(Number(event.target.value))} />
           </div>}
-          <SummaryMetric label="Sous-total services JPY" value={quoteDataUnavailable ? "Indisponible" : fmtJPY(totals.grandTotalJpy-totals.legacyHandlingIncludedJpy)} />
-          <SummaryMetric label={totals.legacyHandlingIncludedJpy>0 ? "Handling historique JPY" : "Handling fournisseur JPY"} value={quoteDataUnavailable || totals.handlingInvalid ? "Indisponible" : fmtJPY(totals.handlingAmountJpy+totals.legacyHandlingIncludedJpy)} />
-          <SummaryMetric label="Total fournisseur JPY" value={quoteDataUnavailable || totals.handlingInvalid ? "Indisponible" : fmtJPY(totals.supplierTotalJpy)} strong />
-          {isAdmin && <SummaryMetric label="Commission JPY" value={quoteDataUnavailable ? "Indisponible" : fmtJPY(totals.commissionAmountJpy)} />}
-          {isAdmin && <SummaryMetric label="Total avec commission interne JPY" value={quoteDataUnavailable || totals.handlingInvalid ? "Indisponible" : fmtJPY(totals.finalTotalJpy)} strong />}
-          {isAdmin && <SummaryMetric label="Total final MAD" value={quoteDataUnavailable ? "Indisponible" : fmtMAD(totals.finalTotalMad)} strong />}
-          {isAdmin && <SummaryMetric label="Coût / personne" value={quoteDataUnavailable ? "Indisponible" : `${fmtJPY(totals.costPerPersonJpy)} · ${fmtMAD(totals.costPerPersonMad)}`} />}
+          <SummaryMetric label={t("Sous-total services JPY")} value={quoteDataUnavailable ? t("Indisponible") : fmtJPY(totals.grandTotalJpy-totals.legacyHandlingIncludedJpy)} />
+          <SummaryMetric label={totals.legacyHandlingIncludedJpy>0 ? t("Handling historique JPY") : t("Handling fournisseur JPY")} value={quoteDataUnavailable || totals.handlingInvalid ? t("Indisponible") : fmtJPY(totals.handlingAmountJpy+totals.legacyHandlingIncludedJpy)} />
+          <SummaryMetric label={t("Total fournisseur JPY")} value={quoteDataUnavailable || totals.handlingInvalid ? t("Indisponible") : fmtJPY(totals.supplierTotalJpy)} strong />
+          {isAdmin && <SummaryMetric label={t("Commission interne office JPY")} value={quoteDataUnavailable ? t("Indisponible") : fmtJPY(totals.commissionAmountJpy)} />}
+          {isAdmin && <SummaryMetric label={t("Coût total interne JPY")} value={quoteDataUnavailable || totals.handlingInvalid ? t("Indisponible") : fmtJPY(totals.finalTotalJpy)} strong />}
+          {isAdmin && <SummaryMetric label={t("Coût total interne MAD")} value={quoteDataUnavailable ? t("Indisponible") : fmtMAD(totals.finalTotalMad)} strong />}
+          {isAdmin && <SummaryMetric label={t("Coût / personne")} value={quoteDataUnavailable ? t("Indisponible") : `${fmtJPY(totals.costPerPersonJpy)} · ${fmtMAD(totals.costPerPersonMad)}`} />}
         </div>
       </Card>
 
       <Card className="p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h2 className="font-display text-lg">Exports Excel</h2>
-            <p className="text-sm text-muted-foreground">Données opérationnelles bureau Japon, sans paiements ni marge commerciale.</p>
+            <h2 className="font-display text-lg">{t("Exports Excel")}</h2>
+            <p className="text-sm text-muted-foreground">{t("Données opérationnelles bureau Japon, sans paiements ni marge commerciale.")}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {!isAdmin && <>
@@ -1736,15 +1773,15 @@ export default function SupplierTripCosts() {
                 onClick={() => excelFileInputRef.current?.click()}
                 disabled={!canImportExcel || excelReading || excelImportBusy}
               >
-                <Upload className="h-4 w-4" /> {excelReading ? "Lecture…" : "Importer Excel"}
+                <Upload className="h-4 w-4" /> {excelReading ? t("Lecture…") : t("Importer Excel")}
               </Button>
             </>}
-            <Button variant="outline" size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("quote")}><Download className="h-4 w-4" /> Export devis Excel</Button>
-            <Button variant="outline" size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("operations")}><Download className="h-4 w-4" /> Export vue opérationnelle Excel</Button>
-            <Button variant="outline" size="sm" onClick={() => void exportExcel("participants")}><Download className="h-4 w-4" /> Export participants Excel</Button>
-            <Button variant="outline" size="sm" onClick={() => void exportExcel("rooms_extras")}><Download className="h-4 w-4" /> Export chambres & extras Excel</Button>
-            <Button size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("global")}><Download className="h-4 w-4" /> Export dossier global Excel</Button>
-            <Button size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("operational_book")}><Download className="h-4 w-4" /> Exporter dossier opérationnel</Button>
+            <Button variant="outline" size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("quote")}><Download className="h-4 w-4" /> {t("Export devis Excel")}</Button>
+            <Button variant="outline" size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("operations")}><Download className="h-4 w-4" /> {t("Export vue opérationnelle Excel")}</Button>
+            <Button variant="outline" size="sm" onClick={() => void exportExcel("participants")}><Download className="h-4 w-4" /> {t("Export participants Excel")}</Button>
+            <Button variant="outline" size="sm" onClick={() => void exportExcel("rooms_extras")}><Download className="h-4 w-4" /> {t("Export chambres & extras Excel")}</Button>
+            <Button size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("global")}><Download className="h-4 w-4" /> {t("Export dossier global Excel")}</Button>
+            <Button size="sm" disabled={quoteDataUnavailable} onClick={() => void exportExcel("operational_book")}><Download className="h-4 w-4" /> {t("Exporter dossier opérationnel")}</Button>
           </div>
         </div>
       </Card>
@@ -1768,24 +1805,22 @@ export default function SupplierTripCosts() {
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value)} className="space-y-4">
         <TabsList className={`grid h-auto w-full grid-cols-1 ${isAdmin ? "md:grid-cols-4 xl:grid-cols-7" : "md:grid-cols-3 xl:grid-cols-6"}`}>
-          <TabsTrigger value="quote">Devis</TabsTrigger>
-          {isAdmin && <TabsTrigger value="financial">Bilan financier</TabsTrigger>}
-          <TabsTrigger value="messages" className="gap-2">
-            Messages
-            {unreadMessageCount > 0 && <Badge variant="destructive" className="px-1.5 py-0 text-[10px]">{unreadMessageCount}</Badge>}
+          <TabsTrigger value="quote">{t("Devis")}</TabsTrigger>
+          {isAdmin && <TabsTrigger value="financial">{t("Bilan financier")}</TabsTrigger>}
+          <TabsTrigger value="messages" className="gap-2"> {t("Messages")} {unreadMessageCount > 0 && <Badge variant="destructive" className="px-1.5 py-0 text-[10px]">{unreadMessageCount}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="documents">Documents</TabsTrigger>
-          <TabsTrigger value="operations">Vue opérationnelle</TabsTrigger>
-          <TabsTrigger value="participants">Participants</TabsTrigger>
-          <TabsTrigger value="rooms">Chambres & extras</TabsTrigger>
+          <TabsTrigger value="documents">{t("Documents")}</TabsTrigger>
+          <TabsTrigger value="operations">{t("Vue opérationnelle")}</TabsTrigger>
+          <TabsTrigger value="participants">{t("Participants")}</TabsTrigger>
+          <TabsTrigger value="rooms">{t("Chambres & extras")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="quote" className="space-y-5">
           {!quoteDataUnavailable && <Card className="space-y-3 p-4">
-            {totals.legacyHandlingIncludedJpy>0 && !canEditSupplierValues ? <p className="text-sm">Handling historique conservé : {fmtJPY(totals.legacyHandlingIncludedJpy)}{quote?.validation_metadata?.excel_import?.financial_summary?.supplierHandlingPercentage!=null ? ` · ${quote.validation_metadata.excel_import.financial_summary.supplierHandlingPercentage} % (source Excel)` : ""}. Le périmètre historique n’est pas présumé. Une nouvelle révision permet de confirmer les catégories.</p> : <SupplierHandlingFields value={handlingTerms} disabled={!canEditSupplierValues} onChange={changeHandlingTerms} />}
-            <p className="text-sm text-muted-foreground">Base incluse des catégories sélectionnées : {totals.handlingInvalid ? "À confirmer" : fmtJPY(totals.handlingBaseJpy)}. Le handling est calculé par le serveur à l’enregistrement.</p>
-            {rows.other.some(isLegacySupplierHandlingRow) && <p className="text-sm text-amber-700">Cette version conserve une ancienne ligne de handling Excel. Sur un brouillon, renseigner un handling supérieur à zéro l’exclut du total, sans supprimer la ligne ni modifier les versions historiques.</p>}
-            {isAdmin && <p className="text-sm text-muted-foreground">Les conditions financières du fournisseur sont consultables. Demandez une révision pour modifier le pourcentage, le périmètre ou les prix.</p>}
+            {totals.legacyHandlingIncludedJpy>0 && !canEditSupplierValues ? <p className="text-sm">{t("Handling historique conservé :")} {fmtJPY(totals.legacyHandlingIncludedJpy)}{quote?.validation_metadata?.excel_import?.financial_summary?.supplierHandlingPercentage!=null ? t(" · {{value0}} % (source Excel)", { value0: quote.validation_metadata.excel_import.financial_summary.supplierHandlingPercentage }) : ""}{t(". Le périmètre historique n’est pas présumé. Une nouvelle révision permet de confirmer les catégories.")}</p> : <SupplierHandlingFields value={handlingTerms} disabled={!canEditSupplierValues} onChange={changeHandlingTerms} />}
+            <p className="text-sm text-muted-foreground">{t("Base incluse des catégories sélectionnées :")} {totals.handlingInvalid ? t("À confirmer") : fmtJPY(totals.handlingBaseJpy)}{t(". Le handling est calculé par le serveur à l’enregistrement.")}</p>
+            {rows.other.some(isLegacySupplierHandlingRow) && <p className="text-sm text-amber-700">{t("Cette version conserve une ancienne ligne de handling Excel. Sur un brouillon, renseigner un handling supérieur à zéro l’exclut du total, sans supprimer la ligne ni modifier les versions historiques.")}</p>}
+            {isAdmin && <p className="text-sm text-muted-foreground">{t("Les conditions financières du fournisseur sont consultables. Demandez une révision pour modifier le pourcentage, le périmètre ou les prix.")}</p>}
           </Card>}
           {(Object.keys(tableBySection) as QuoteSection[]).map((section) => <QuoteTable
             key={section}
@@ -1805,23 +1840,30 @@ export default function SupplierTripCosts() {
             onAddComment={(row, body, internal) => addLineComment(section, row, body, internal)}
           />)}
           {isAdmin && quote?.id && <Card className="p-4">
-            <Label>Commentaire de revue partagé avec le fournisseur</Label>
-            <Textarea className="mt-2" rows={3} value={adminFeedback} onChange={(event) => setAdminFeedback(event.target.value)} placeholder="Motif de correction ou note de validation…" />
+            <div aria-label="Synthèse de revue" className="mb-4 grid gap-3 sm:grid-cols-4">
+              <SummaryMetric label="Approuvées (incluses)" value={String(reviewCounts.approved)} />
+              <SummaryMetric label="À revoir (incluses)" value={String(reviewCounts.pending)} />
+              <SummaryMetric label="Rejetées (incluses)" value={String(reviewCounts.rejected)} />
+              <SummaryMetric label="Exclues du total" value={String(reviewCounts.excluded)} />
+            </div>
+            {canReviewLines && reviewUnresolved > 0 && <p role="status" className="mb-3 text-sm text-amber-800">{t("Approuvez ou excluez les lignes à revoir ou rejetées avant l’approbation commerciale.")}</p>}
+            <Label>{t("Commentaire de revue partagé avec le fournisseur")}</Label>
+            <Textarea className="mt-2" rows={3} value={adminFeedback} onChange={(event) => setAdminFeedback(event.target.value)} placeholder={t("Motif de correction ou note de validation…")} />
             <div className="mt-3 flex flex-wrap gap-2">
-              {status === "submitted" && <Button variant="outline" onClick={() => void reviewQuote("reviewed")} disabled={busy || quoteDataUnavailable}>Passer en revue</Button>}
-              {["submitted", "reviewed"].includes(status) && <Button variant="outline" onClick={() => void reviewQuote("revision_requested")} disabled={busy || quoteDataUnavailable}>Demander une correction</Button>}
-              {["submitted", "reviewed"].includes(status) && <Button onClick={() => void reviewQuote("approved")} disabled={busy || quoteDataUnavailable}>Approuver le devis commercial</Button>}
+              {status === "submitted" && <Button variant="outline" onClick={() => void reviewQuote("reviewed")} disabled={busy || quoteDataUnavailable}>{t("Passer en revue")}</Button>}
+              {["submitted", "reviewed"].includes(status) && <Button variant="outline" onClick={() => void reviewQuote("revision_requested")} disabled={busy || quoteDataUnavailable}>{t("Demander une correction")}</Button>}
+              {["submitted", "reviewed"].includes(status) && <Button onClick={() => void reviewQuote("approved")} disabled={busy || quoteDataUnavailable || reviewUnresolved > 0}>{t("Approuver le devis commercial")}</Button>}
             </div>
           </Card>}
           {isAdmin && <Card className="p-4">
-            <Label>Notes internes admin / Japan office</Label>
+            <Label>{t("Notes internes admin / Japan office")}</Label>
             <Textarea className="mt-2" rows={3} value={internalNotes} onChange={(event) => setInternalNotes(event.target.value)} disabled={!isAdmin} />
           </Card>}
         </TabsContent>
 
         {isAdmin && (
           <TabsContent value="financial">
-            {quoteDataUnavailable ? <p role="status">Bilan indisponible tant que toutes les lignes du devis ne sont pas chargées.</p> : <FinancialDashboard rows={rows} totals={totals} bookings={bookings} participants={participants} exchangeRate={exchangeRate} />}
+            {quoteDataUnavailable ? <p role="status">{t("Bilan indisponible tant que toutes les lignes du devis ne sont pas chargées.")}</p> : <FinancialDashboard rows={rows} totals={totals} bookings={bookings} participants={participants} exchangeRate={exchangeRate} revenue={revenue} />}
           </TabsContent>
         )}
 
@@ -1875,12 +1917,12 @@ export default function SupplierTripCosts() {
         </TabsContent>
 
         <TabsContent value="operations" className="space-y-3">
-          {status!=="approved" && <p className="text-sm text-muted-foreground">Suivi opérationnel consultable. Les réservations commencent après l’approbation commerciale par LeJapon.ma.</p>}
+          {status!=="approved" && <p className="text-sm text-muted-foreground">{t("Suivi opérationnel consultable. Les réservations commencent après l’approbation commerciale par LeJapon.ma.")}</p>}
           <Card className="p-4">
-            <Label>Exécution des réservations (après approbation)</Label>
+            <Label>{t("Exécution des réservations (après approbation)")}</Label>
             <Select value={quote?.supplier_execution_status ?? "to_book"} disabled={!canEditOperations || validationBusy} onValueChange={value=>void setExecutionStatus(value as SupplierExecutionStatus)}>
               <SelectTrigger className="mt-2 w-full sm:w-[280px]"><SelectValue /></SelectTrigger>
-              <SelectContent>{Object.entries(EXECUTION_STATUS_LABELS).map(([value,label])=><SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+              <SelectContent>{Object.entries(EXECUTION_STATUS_LABELS).map(([value,label])=><SelectItem key={value} value={value}>{t(label)}</SelectItem>)}</SelectContent>
             </Select>
           </Card>
           <SupplierValidationWorkflow
@@ -1892,7 +1934,7 @@ export default function SupplierTripCosts() {
         onStatusChange={updateValidationStatus}
         onBulkSectionChange={bulkSetValidationSection}
       />
-          <div className="flex justify-end"><Button variant="outline" onClick={() => void saveOperationalState()} disabled={busy || !canEditOperations || !quote?.id}><Save className="h-4 w-4" /> Enregistrer les opérations</Button></div>
+          <div className="flex justify-end"><Button variant="outline" onClick={() => void saveOperationalState()} disabled={busy || !canEditOperations || !quote?.id}><Save className="h-4 w-4" /> {t("Enregistrer les opérations")}</Button></div>
           <OperationProgramme
             trip={trip}
             days={programmeDays}
@@ -1938,88 +1980,72 @@ export default function SupplierTripCosts() {
   );
 }
 
-function FinancialDashboard({
-  rows,
-  totals,
-  bookings,
-  participants,
-  exchangeRate,
-}: {
-  rows: Record<QuoteSection, QuoteRow[]>;
-  totals: any;
-  bookings: any[];
-  participants: any[];
-  exchangeRate: number;
+export function FinancialDashboard({ rows, totals, bookings, participants, exchangeRate, revenue }: {
+  rows: Record<QuoteSection, QuoteRow[]>; totals: any; bookings: any[]; participants: any[];
+  exchangeRate: number; revenue: TripRevenue;
 }) {
+  const { t } = useSupplierTranslation();
   const passengerCount = participants.length || getParticipantCount([], bookings) || 0;
-  const safePassengerCount = Math.max(1, passengerCount || 1);
-  const safeExchangeRate = Number(exchangeRate || 0);
-  const revenueMad = bookings.reduce((sum, booking) => sum + numeric(booking.total_amount_mad), 0);
-  const revenueJpy = safeExchangeRate > 0 ? revenueMad / safeExchangeRate : 0;
-  const revenuePerPassengerMad = passengerCount > 0 ? revenueMad / safePassengerCount : 0;
-  const revenuePerPassengerJpy = passengerCount > 0 ? revenueJpy / safePassengerCount : 0;
-  const supplierCostMad = totals.supplierTotalJpy * safeExchangeRate;
-  const grossMarginMad = revenueMad - supplierCostMad;
-  const grossMarginJpy = revenueJpy - totals.supplierTotalJpy;
-  const netProfitMad = revenueMad - totals.finalTotalMad;
-  const netProfitJpy = revenueJpy - totals.finalTotalJpy;
-  const marginPercent = revenueMad > 0 ? (netProfitMad / revenueMad) * 100 : 0;
-
-  return (
-    <div className="space-y-5">
-      <Card className="p-4">
-        <SectionTitle title="Supplier costs" subtitle="Coûts consolidés depuis les lignes du devis fournisseur." />
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          <FinancialMetric label="Hotels total" value={fmtJPY(totals.hotels)} />
-          <FinancialMetric label="Transport total" value={fmtJPY(totals.transport)} />
-          <FinancialMetric label="Activities total" value={fmtJPY(totals.activities)} />
-          <FinancialMetric label="Guides total" value={fmtJPY(totals.guides)} />
-          <FinancialMetric label="Other costs total" value={fmtJPY(totals.other)} />
-          <FinancialMetric label="Total fournisseur avec handling" value={fmtJPY(totals.supplierTotalJpy)} strong />
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <SectionTitle title="Revenue" subtitle="Chiffre d'affaires calculé depuis les réservations rattachées au voyage." />
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <FinancialMetric label="Total passengers" value={String(passengerCount)} />
-          <FinancialMetric label="Revenue MAD" value={fmtMAD(revenueMad)} strong />
-          <FinancialMetric label="Revenue JPY" value={fmtJPY(revenueJpy)} />
-          <FinancialMetric label="Revenue per passenger" value={`${fmtMAD(revenuePerPassengerMad)} · ${fmtJPY(revenuePerPassengerJpy)}`} />
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <SectionTitle title="Profitability" subtitle="Lecture marge brute et profit net après commission bureau Japon." />
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          <FinancialMetric label="Gross margin MAD" value={fmtMAD(grossMarginMad)} tone={grossMarginMad >= 0 ? "positive" : "negative"} />
-          <FinancialMetric label="Gross margin JPY" value={fmtJPY(grossMarginJpy)} tone={grossMarginJpy >= 0 ? "positive" : "negative"} />
-          <FinancialMetric label="Margin %" value={`${formatPercent(marginPercent)}`} tone={marginPercent >= 0 ? "positive" : "negative"} strong />
-          <FinancialMetric label="Cost per passenger" value={`${fmtMAD(totals.costPerPersonMad)} · ${fmtJPY(totals.costPerPersonJpy)}`} />
-          <FinancialMetric label="Revenue per passenger" value={`${fmtMAD(revenuePerPassengerMad)} · ${fmtJPY(revenuePerPassengerJpy)}`} />
-          <FinancialMetric label="Net profit" value={`${fmtMAD(netProfitMad)} · ${fmtJPY(netProfitJpy)}`} tone={netProfitMad >= 0 ? "positive" : "negative"} strong />
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <SectionTitle title="Supplier status" subtitle="Progression par poste selon les lignes marquées confirmées." />
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SupplierStatusCard label="Réservations hôtels" status={sectionConfirmationStatus(rows.hotels)} />
-          <SupplierStatusCard label="Réservations transport" status={sectionConfirmationStatus(rows.transport)} />
-          <SupplierStatusCard label="Réservations activités" status={sectionConfirmationStatus(rows.activities)} />
-          <SupplierStatusCard label="Réservations guides" status={sectionConfirmationStatus(rows.guides)} />
-        </div>
-      </Card>
-    </div>
-  );
+  const profit = supplierProfitability(revenue, totals.handlingInvalid ? Number.NaN : totals.supplierTotalJpy, totals.handlingInvalid ? Number.NaN : totals.finalTotalJpy, exchangeRate);
+  const unavailable = t("Indisponible");
+  const mad = (value: number | null) => value === null ? unavailable : fmtMAD(value);
+  const jpy = (value: number | null) => value === null ? unavailable : fmtJPY(value);
+  const tone = (value: number | null): "positive" | "negative" | undefined => value === null ? undefined : value >= 0 ? "positive" : "negative";
+  const perPassenger = passengerCount > 0 ? `${mad(profit.revenueMad === null ? null : profit.revenueMad / passengerCount)} · ${jpy(profit.revenueJpy === null ? null : profit.revenueJpy / passengerCount)}` : unavailable;
+  return <div className="space-y-5">
+    <Card className="p-4">
+      <SectionTitle title="Hiérarchie des coûts" subtitle="Coûts retenus du fournisseur et commission interne LeJapon.ma, présentés séparément." />
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <FinancialMetric label="Sous-total services fournisseur" value={fmtJPY(totals.grandTotalJpy - totals.legacyHandlingIncludedJpy)} />
+        <FinancialMetric label={totals.legacyHandlingIncludedJpy > 0 ? "Handling fournisseur (historique)" : "Handling fournisseur"} value={totals.handlingInvalid ? unavailable : fmtJPY(totals.handlingAmountJpy + totals.legacyHandlingIncludedJpy)} />
+        <FinancialMetric label="Total fournisseur" value={totals.handlingInvalid ? unavailable : fmtJPY(totals.supplierTotalJpy)} strong />
+        <FinancialMetric label="Commission interne office" value={totals.handlingInvalid ? unavailable : fmtJPY(totals.commissionAmountJpy)} />
+        <FinancialMetric label="Coût total interne" value={totals.handlingInvalid ? unavailable : `${fmtJPY(totals.finalTotalJpy)} · ${exchangeRate > 0 ? fmtMAD(totals.finalTotalMad) : unavailable}`} strong />
+      </div>
+    </Card>
+    <Card className="p-4">
+      <SectionTitle title="Chiffre d’affaires engagé" subtitle="Prix négociés des réservations confirmées, payées ou terminées, avec ajustements. Les leads et annulations sont exclus. Ce montant est distinct des encaissements." />
+      {revenue.state !== "available" && <p role="status" className="mt-3 text-sm">{revenue.state === "loading" ? "Chargement du CA…" : "CA non disponible"}</p>}
+      {revenue.state === "unavailable" && revenue.reason && <p role="alert" className="mt-2 break-words text-xs text-destructive">{supplierErrorMessage(t, revenue.reason)}</p>}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <FinancialMetric label="Participants" value={String(passengerCount)} />
+        <FinancialMetric label="CA MAD" value={revenue.state === "available" ? fmtMAD(revenue.amountMad) : "CA non disponible"} strong />
+        <FinancialMetric label="CA JPY" value={jpy(profit.revenueJpy)} />
+        <FinancialMetric label="CA / participant" value={perPassenger} />
+      </div>
+    </Card>
+    <Card className="p-4">
+      <SectionTitle title="Rentabilité prévisionnelle" subtitle="Marge brute après coût fournisseur ; résultat net après commission interne office. Périmètre : coûts de ce devis." />
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <FinancialMetric label="Marge brute MAD" value={mad(profit.grossMad)} tone={tone(profit.grossMad)} />
+        <FinancialMetric label="Marge brute JPY" value={jpy(profit.grossJpy)} tone={tone(profit.grossJpy)} />
+        <FinancialMetric label="Marge nette (%)" value={profit.marginPercent === null ? unavailable : formatPercent(profit.marginPercent)} tone={tone(profit.marginPercent)} strong />
+        <FinancialMetric label="Coût interne / participant" value={totals.handlingInvalid || passengerCount <= 0 ? unavailable : `${exchangeRate > 0 ? fmtMAD(totals.costPerPersonMad) : unavailable} · ${fmtJPY(totals.costPerPersonJpy)}`} />
+        <FinancialMetric label="CA / participant" value={perPassenger} />
+        <FinancialMetric label="Résultat net prévisionnel" value={`${mad(profit.netMad)} · ${jpy(profit.netJpy)}`} tone={tone(profit.netMad)} strong />
+      </div>
+    </Card>
+    <Card className="p-4">
+      <SectionTitle title="Suivi des réservations" subtitle="Confirmations opérationnelles, distinctes de l’approbation commerciale." />
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SupplierStatusCard label={t("Réservations hôtels")} status={sectionConfirmationStatus(rows.hotels)} />
+        <SupplierStatusCard label={t("Réservations transport")} status={sectionConfirmationStatus(rows.transport)} />
+        <SupplierStatusCard label={t("Réservations activités")} status={sectionConfirmationStatus(rows.activities)} />
+        <SupplierStatusCard label={t("Réservations guides")} status={sectionConfirmationStatus(rows.guides)} />
+      </div>
+    </Card>
+  </div>;
 }
 
-const SectionTitle = ({ title, subtitle }: { title: string; subtitle: string }) => (
+const SectionTitle = ({ title, subtitle }: { title: string; subtitle: string }) => {
+  const { t } = useSupplierTranslation();
+  return (
   <div>
     <h2 className="font-display text-lg">{title}</h2>
     <p className="text-sm text-muted-foreground">{subtitle}</p>
   </div>
 );
+};
 
 const FinancialMetric = ({
   label,
@@ -2031,30 +2057,34 @@ const FinancialMetric = ({
   value: string;
   strong?: boolean;
   tone?: "positive" | "negative";
-}) => (
+}) => {
+  const { t } = useSupplierTranslation();
+  return (
   <div className="rounded-lg border border-border bg-background p-3">
-    <p className="text-xs text-muted-foreground">{label}</p>
+    <p className="text-xs text-muted-foreground">{t(label)}</p>
     <p className={`mt-1 break-words ${strong ? "font-display text-xl" : "text-base font-semibold"} ${tone === "positive" ? "text-emerald-700" : tone === "negative" ? "text-red-700" : ""}`}>
       {value}
     </p>
   </div>
 );
+};
 
 const SupplierStatusCard = ({ label, status }: { label: string; status: ReturnType<typeof sectionConfirmationStatus> }) => {
+  const { t } = useSupplierTranslation();
   const styles = {
     complete: "border-emerald-200 bg-emerald-50 text-emerald-900",
     pending: "border-orange-200 bg-orange-50 text-orange-950",
     missing: "border-red-200 bg-red-50 text-red-950",
   }[status.state];
-  const badgeLabel = status.state === "complete" ? "Complet" : status.state === "pending" ? "En attente" : "Manquant";
+  const badgeLabel = status.state === "complete" ? t("Complet") : status.state === "pending" ? t("En attente") : t("Manquant");
   return (
     <div className={`rounded-lg border p-4 ${styles}`}>
       <div className="flex items-center justify-between gap-3">
-        <p className="font-medium">{label}</p>
+        <p className="font-medium">{t(label)}</p>
         <Badge variant="outline" className="border-current text-current">{badgeLabel}</Badge>
       </div>
       <p className="mt-3 font-display text-2xl">{formatPercent(status.percent)}</p>
-      <p className="text-xs opacity-80">{status.confirmed} / {status.total} ligne(s) confirmée(s)</p>
+      <p className="text-xs opacity-80">{status.confirmed} / {status.total} {t("ligne(s) confirmée(s)")}</p>
     </div>
   );
 };
@@ -2076,22 +2106,23 @@ function SupplierValidationWorkflow({
   onStatusChange: (status: SupplierValidationStatus) => void;
   onBulkSectionChange: (section: ValidationItemKey, confirmed: boolean) => void;
 }) {
+  const { t } = useSupplierTranslation();
   const blockingErrors = validationBlockingErrors(nextValidationStatus(status), status, validation);
   return (
     <Card className="overflow-hidden border-primary/20">
       <div className="border-b border-border bg-secondary/30 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="font-display text-lg">Suivi opérationnel du voyage</h2>
-            <p className="text-sm text-muted-foreground">Le devis financier et la préparation opérationnelle sont suivis séparément. Passeports, rooming et documents ne bloquent jamais la soumission du devis.</p>
+            <h2 className="font-display text-lg">{t("Suivi opérationnel du voyage")}</h2>
+            <p className="text-sm text-muted-foreground">{t("Le devis financier et la préparation opérationnelle sont suivis séparément. Passeports, rooming et documents ne bloquent jamais la soumission du devis.")}</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Badge variant={validation.allComplete ? "default" : "outline"}>{validationStatusLabel[status]}</Badge>
+            <Badge variant={validation.allComplete ? "default" : "outline"}>{t(validationStatusLabel[status])}</Badge>
             <Select value={status} onValueChange={(value) => onStatusChange(value as SupplierValidationStatus)} disabled={busy || !canEdit}>
               <SelectTrigger className="w-full sm:w-[250px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {validationStatusOrder.filter((item) => isAdmin || ["draft", "in_progress", "ready_for_japan_office"].includes(item)).map((item) => (
-                  <SelectItem key={item} value={item}>{validationStatusLabel[item]}</SelectItem>
+                  <SelectItem key={item} value={item}>{t(validationStatusLabel[item])}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -2101,12 +2132,12 @@ function SupplierValidationWorkflow({
 
       <div className="grid gap-4 p-4 xl:grid-cols-[280px_1fr]">
         <div className="rounded-lg border border-border p-4">
-          <p className="text-xs text-muted-foreground">Préparation opérationnelle</p>
+          <p className="text-xs text-muted-foreground">{t("Préparation opérationnelle")}</p>
           <p className="mt-1 font-display text-4xl">{validation.completionPercentage}%</p>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary">
             <div className={`h-full rounded-full ${validation.allComplete ? "bg-emerald-600" : "bg-amber-500"}`} style={{ width: `${validation.completionPercentage}%` }} />
           </div>
-          <p className="mt-3 text-sm text-muted-foreground">{validation.completedItems} / {validation.totalItems} item(s) complets</p>
+          <p className="mt-3 text-sm text-muted-foreground">{validation.completedItems} / {validation.totalItems} {t("item(s) complets")}</p>
         </div>
 
         <div className="space-y-4">
@@ -2117,10 +2148,10 @@ function SupplierValidationWorkflow({
               <div key={item.key} className={`rounded-lg border p-3 ${item.complete ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "border-amber-200 bg-amber-50 text-amber-950"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-medium">{item.label}</p>
-                    <p className="mt-1 text-xs opacity-80">{item.detail}</p>
+                    <p className="font-medium">{t(item.label)}</p>
+                    <p className="mt-1 text-xs opacity-80">{item.key === "documents" && validation.missingDocumentCategories.length && !["Validé manuellement", "Remis à faire manuellement"].includes(item.detail) ? t("Missing: {{value0}}", { value0: validation.missingDocumentCategories.map(category => t(tripDocumentCategoryLabel[category])).join(", ") }) : t(item.detail)}</p>
                   </div>
-                  <Badge variant="outline" className="border-current text-current">{item.complete ? "OK" : operational ? "Suivi opérations" : "Réservations à confirmer"}</Badge>
+                  <Badge variant="outline" className="border-current text-current">{item.complete ? "OK" : operational ? t("Suivi opérations") : t("Réservations à confirmer")}</Badge>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button
@@ -2130,7 +2161,7 @@ function SupplierValidationWorkflow({
                     disabled={busy || !canEdit}
                     onClick={() => onBulkSectionChange(item.key, true)}
                   >
-                    {operational ? "Confirmer le suivi" : "Confirmer les réservations"}
+                    {operational ? t("Confirmer le suivi") : t("Confirmer les réservations")}
                   </Button>
                   <Button
                     type="button"
@@ -2139,7 +2170,7 @@ function SupplierValidationWorkflow({
                     disabled={busy || !canEdit}
                     onClick={() => onBulkSectionChange(item.key, false)}
                   >
-                    {operational ? "Suivi à compléter" : "Réservations à refaire"}
+                    {operational ? t("Suivi à compléter") : t("Réservations à refaire")}
                   </Button>
                 </div>
               </div>
@@ -2148,15 +2179,15 @@ function SupplierValidationWorkflow({
 
           {validation.blockingErrors.length > 0 && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-950">
-              <p className="font-semibold">Suivi opérationnel restant</p>
+              <p className="font-semibold">{t("Suivi opérationnel restant")}</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
-                {validation.blockingErrors.map((error) => <li key={error}>{error}</li>)}
+                {validation.blockingErrors.map((error) => <li key={error}>{supplierErrorMessage(t, error)}</li>)}
               </ul>
             </div>
           )}
 
           {blockingErrors.length > 0 && (
-            <p className="text-xs text-muted-foreground">Prochaine étape bloquée: {blockingErrors[0]}</p>
+            <p className="text-xs text-muted-foreground">{t("Prochaine étape bloquée:")} {t(blockingErrors[0])}</p>
           )}
         </div>
       </div>
@@ -2203,6 +2234,7 @@ function TripMessagesCenter({
   onFilterChange: (value: TripMessageType | "all") => void;
   onSend: () => void;
 }) {
+  const { t, formatDateTime: fmtDateTimeLabel } = useSupplierTranslation();
   const filteredMessages = useMemo(() => {
     const search = normalizeSearch(messageSearch);
     return messages.filter((message) => {
@@ -2225,44 +2257,42 @@ function TripMessagesCenter({
         <div className="flex items-center gap-2">
           <MessageSquare className="h-5 w-5 text-primary" />
           <div>
-            <h2 className="font-display text-lg">Messages voyage</h2>
-            <p className="text-sm text-muted-foreground">Communication Maroc / Bureau Japon.</p>
+            <h2 className="font-display text-lg">{t("Messages voyage")}</h2>
+            <p className="text-sm text-muted-foreground">{t("Communication Maroc / Bureau Japon.")}</p>
           </div>
         </div>
 
         {messagesSqlMissing && (
-          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-            Migration SQL du centre de messages requise avant utilisation.
-          </div>
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"> {t("Migration SQL du centre de messages requise avant utilisation.")} </div>
         )}
         {loadError && <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-950">
-          <p>Le centre de messages n’a pas pu être chargé : {loadError}</p>
-          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>Réessayer les messages</Button>
+          <p>{t("Le centre de messages n’a pas pu être chargé :")} {supplierErrorMessage(t, loadError)}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>{t("Réessayer les messages")}</Button>
         </div>}
 
         <div className="mt-4 space-y-3">
           <div>
-            <Label>Type de message</Label>
+            <Label>{t("Type de message")}</Label>
             <Select value={messageType} disabled={!canSend} onValueChange={(value) => onTypeChange(value as TripMessageType)}>
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {messageTypes.map((type) => <SelectItem key={type} value={type}>{messageTypeLabel[type]}</SelectItem>)}
+                {messageTypes.map((type) => <SelectItem key={type} value={type}>{t(messageTypeLabel[type])}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div>
-            <Label>Message</Label>
+            <Label>{t("Message")}</Label>
             <Textarea
               className="mt-1"
               rows={6}
               disabled={!canSend}
               value={messageDraft}
               onChange={(event) => onDraftChange(event.target.value)}
-              placeholder="Écrire un message pour l’équipe Maroc ou le bureau Japon..."
+              placeholder={t("Écrire un message pour l’équipe Maroc ou le bureau Japon...")}
             />
           </div>
           <div>
-            <Label>Pièces jointes</Label>
+            <Label>{t("Pièces jointes")}</Label>
             <Input
               className="mt-1"
               type="file"
@@ -2276,18 +2306,16 @@ function TripMessagesCenter({
                   <div key={`${file.name}-${file.size}`} className="flex items-center gap-1">
                     <Paperclip className="h-3 w-3" />
                     <span className="truncate">{file.name}</span>
-                    <span>{formatFileSize(file.size)}</span>
+                    <span>{t(formatFileSize(file.size))}</span>
                   </div>
                 ))}
-                <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => onFilesChange([])}>
-                  Retirer les fichiers
-                </Button>
+                <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => onFilesChange([])}> {t("Retirer les fichiers")} </Button>
               </div>
             )}
           </div>
           <Button onClick={onSend} disabled={!canSend || messageBusy || (!messageDraft.trim() && messageFiles.length === 0)} className="w-full">
             <Send className="h-4 w-4" />
-            {messageBusy ? "Envoi..." : "Envoyer le message"}
+            {messageBusy ? t("Envoi...") : t("Envoyer le message")}
           </Button>
         </div>
       </Card>
@@ -2301,25 +2329,23 @@ function TripMessagesCenter({
                 className="pl-9"
                 value={messageSearch}
                 onChange={(event) => onSearchChange(event.target.value)}
-                placeholder="Rechercher dans les messages, auteurs, pièces jointes..."
+                placeholder={t("Rechercher dans les messages, auteurs, pièces jointes...")}
               />
             </div>
             <Select value={messageFilter} onValueChange={(value) => onFilterChange(value as TripMessageType | "all")}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Tous les types</SelectItem>
-                {messageTypes.map((type) => <SelectItem key={type} value={type}>{messageTypeLabel[type]}</SelectItem>)}
+                <SelectItem value="all">{t("Tous les types")}</SelectItem>
+                {messageTypes.map((type) => <SelectItem key={type} value={type}>{t(messageTypeLabel[type])}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-          {!loadError && <p className="mt-2 text-xs text-muted-foreground">{filteredMessages.length} message(s) affiché(s) sur {messages.length}.</p>}
+          {!loadError && <p className="mt-2 text-xs text-muted-foreground">{filteredMessages.length} {t("message(s) affiché(s) sur")} {messages.length}.</p>}
         </div>
 
         <div className="max-h-[720px] space-y-3 overflow-y-auto p-4">
           {!loadError && filteredMessages.length === 0 && (
-            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              Aucun message pour ce filtre.
-            </div>
+            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"> {t("Aucun message pour ce filtre.")} </div>
           )}
           {filteredMessages.map((message) => {
             const mine = message.sender_id === currentUserId;
@@ -2328,13 +2354,13 @@ function TripMessagesCenter({
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={message.message_type === "urgent" ? "destructive" : "outline"}>{messageTypeLabel[message.message_type]}</Badge>
-                      <span className="font-medium">{message.sender_name || "Utilisateur"}</span>
-                      <span className="text-xs text-muted-foreground">{senderSourceLabel(message.sender_source)} · {message.sender_role || "—"}</span>
+                      <Badge variant={message.message_type === "urgent" ? "destructive" : "outline"}>{t(messageTypeLabel[message.message_type])}</Badge>
+                      <span className="font-medium">{message.sender_name || t("Utilisateur")}</span>
+                      <span className="text-xs text-muted-foreground">{t(senderSourceLabel(message.sender_source))} · {message.sender_role || "—"}</span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">{fmtDateTimeLabel(message.created_at)}</p>
                   </div>
-                  {mine && <Badge variant="secondary">Moi</Badge>}
+                  {mine && <Badge variant="secondary">{t("Moi")}</Badge>}
                 </div>
                 <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{message.body}</p>
                 {(message.attachments ?? []).length > 0 && (
@@ -2349,7 +2375,7 @@ function TripMessagesCenter({
                       >
                         <Paperclip className="h-3.5 w-3.5 shrink-0" />
                         <span className="truncate">{attachment.file_name}</span>
-                        {attachment.size_bytes ? <span className="text-muted-foreground">{formatFileSize(attachment.size_bytes)}</span> : null}
+                        {attachment.size_bytes ? <span className="text-muted-foreground">{t(formatFileSize(attachment.size_bytes))}</span> : null}
                       </a>
                     ))}
                   </div>
@@ -2408,6 +2434,7 @@ function TripDocumentsCenter({
   onReplace: (document: TripDocument, file: File) => void;
   onDelete: (document: TripDocument) => void;
 }) {
+  const { t, formatDateTime: fmtDateTimeLabel } = useSupplierTranslation();
   const filteredDocuments = useMemo(() => {
     const query = normalizeSearch(search);
     return documents.filter((document) => {
@@ -2431,47 +2458,45 @@ function TripDocumentsCenter({
     <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
       <Card className="p-4">
         <div>
-          <h2 className="font-display text-lg">Ajouter un document</h2>
-          <p className="text-sm text-muted-foreground">Documents opérationnels du voyage stockés dans Supabase Storage.</p>
+          <h2 className="font-display text-lg">{t("Ajouter un document")}</h2>
+          <p className="text-sm text-muted-foreground">{t("Documents opérationnels du voyage stockés dans Supabase Storage.")}</p>
         </div>
 
         {sqlMissing && (
-          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-            Migration SQL du centre documents requise avant utilisation.
-          </div>
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"> {t("Migration SQL du centre documents requise avant utilisation.")} </div>
         )}
         {loadError && <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-950">
-          <p>Les documents n’ont pas pu être chargés : {loadError}</p>
-          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>Réessayer les documents</Button>
+          <p>{t("Les documents n’ont pas pu être chargés :")} {supplierErrorMessage(t, loadError)}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>{t("Réessayer les documents")}</Button>
         </div>}
 
         <div className="mt-4 space-y-3">
           <div>
-            <Label>Catégorie</Label>
+            <Label>{t("Catégorie")}</Label>
             <Select value={category} disabled={!canEdit} onValueChange={(value) => onCategoryChange(value as TripDocumentCategory)}>
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {tripDocumentCategories.map((item) => <SelectItem key={item} value={item}>{tripDocumentCategoryLabel[item]}</SelectItem>)}
+                {tripDocumentCategories.map((item) => <SelectItem key={item} value={item}>{t(tripDocumentCategoryLabel[item])}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div>
-            <Label>Titre</Label>
-            <Input className="mt-1" disabled={!canEdit} value={title} onChange={(event) => onTitleChange(event.target.value)} placeholder="Ex: Voucher hôtel Tokyo" />
+            <Label>{t("Titre")}</Label>
+            <Input className="mt-1" disabled={!canEdit} value={title} onChange={(event) => onTitleChange(event.target.value)} placeholder={t("Ex: Voucher hôtel Tokyo")} />
           </div>
           <div>
-            <Label>Fichier</Label>
+            <Label>{t("Fichier")}</Label>
             <Input className="mt-1" type="file" disabled={!canEdit} onChange={(event) => onFileChange(event.target.files?.[0] ?? null)} />
             {file && (
               <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
                 <Paperclip className="h-3 w-3" />
-                {file.name} {formatFileSize(file.size)}
+                {file.name} {t(formatFileSize(file.size))}
               </p>
             )}
           </div>
           <Button className="w-full" onClick={onUpload} disabled={!canEdit || busy || !file}>
             <Plus className="h-4 w-4" />
-            {busy ? "Upload..." : "Uploader"}
+            {busy ? t("Upload...") : t("Uploader")}
           </Button>
         </div>
       </Card>
@@ -2485,43 +2510,41 @@ function TripDocumentsCenter({
                 className="pl-9"
                 value={search}
                 onChange={(event) => onSearchChange(event.target.value)}
-                placeholder="Rechercher par titre, fichier, auteur..."
+                placeholder={t("Rechercher par titre, fichier, auteur...")}
               />
             </div>
             <Select value={filter} onValueChange={(value) => onFilterChange(value as TripDocumentCategory | "all")}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Toutes catégories</SelectItem>
-                {tripDocumentCategories.map((item) => <SelectItem key={item} value={item}>{tripDocumentCategoryLabel[item]}</SelectItem>)}
+                <SelectItem value="all">{t("Toutes catégories")}</SelectItem>
+                {tripDocumentCategories.map((item) => <SelectItem key={item} value={item}>{t(tripDocumentCategoryLabel[item])}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-          {!loadError && <p className="mt-2 text-xs text-muted-foreground">{filteredDocuments.length} document(s) affiché(s) sur {documents.length}.</p>}
+          {!loadError && <p className="mt-2 text-xs text-muted-foreground">{filteredDocuments.length} {t("document(s) affiché(s) sur")} {documents.length}.</p>}
         </div>
 
         <div className="space-y-4 p-4">
           {!loadError && filteredDocuments.length === 0 && (
-            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              Aucun document opérationnel pour ce filtre.
-            </div>
+            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"> {t("Aucun document opérationnel pour ce filtre.")} </div>
           )}
 
           {grouped.map((group) => (
             <section key={group.category} className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="font-semibold">{tripDocumentCategoryLabel[group.category]}</h3>
+                <h3 className="font-semibold">{t(tripDocumentCategoryLabel[group.category])}</h3>
                 <Badge variant="outline">{group.documents.length}</Badge>
               </div>
               <div className="overflow-x-auto rounded-lg border border-border">
                 <table className="w-full min-w-[920px] text-sm">
                   <thead className="bg-secondary/50 text-left text-xs text-muted-foreground">
                     <tr>
-                      <th className="px-3 py-2">Document</th>
-                      <th className="px-3 py-2">Version</th>
-                      <th className="px-3 py-2">Uploadé par</th>
-                      <th className="px-3 py-2">Date</th>
-                      <th className="px-3 py-2">Taille</th>
-                      <th className="px-3 py-2 text-right">Actions</th>
+                      <th className="px-3 py-2">{t("Document")}</th>
+                      <th className="px-3 py-2">{t("Version")}</th>
+                      <th className="px-3 py-2">{t("Uploadé par")}</th>
+                      <th className="px-3 py-2">{t("Date")}</th>
+                      <th className="px-3 py-2">{t("Taille")}</th>
+                      <th className="px-3 py-2 text-right">{t("Actions")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -2534,24 +2557,21 @@ function TripDocumentsCenter({
                         </td>
                         <td className="px-3 py-2">v{document.version || 1}</td>
                         <td className="px-3 py-2">
-                          <p>{document.uploaded_by_name || "Utilisateur"}</p>
+                          <p>{document.uploaded_by_name || t("Utilisateur")}</p>
                           <p className="text-xs text-muted-foreground">{document.uploaded_by_role || "—"}</p>
                         </td>
                         <td className="px-3 py-2">{fmtDateTimeLabel(document.uploaded_at)}</td>
-                        <td className="px-3 py-2">{formatFileSize(document.size_bytes)}</td>
+                        <td className="px-3 py-2">{t(formatFileSize(document.size_bytes))}</td>
                         <td className="px-3 py-2">
                           <div className="flex flex-wrap justify-end gap-2">
                             <Button asChild variant="outline" size="sm" disabled={!document.file_url}>
-                              <a href={document.file_url ?? "#"} target="_blank" rel="noreferrer">Prévisualiser</a>
+                              <a href={document.file_url ?? "#"} target="_blank" rel="noreferrer">{t("Prévisualiser")}</a>
                             </Button>
                             <Button asChild variant="outline" size="sm" disabled={!document.file_url}>
                               <a href={document.file_url ?? "#"} download={document.file_name}>
-                                <Download className="h-4 w-4" /> Télécharger
-                              </a>
+                                <Download className="h-4 w-4" /> {t("Télécharger")} </a>
                             </Button>
-                            {canManageDocument && <label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent">
-                              Remplacer
-                              <input
+                            {canManageDocument && <label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent"> {t("Remplacer")} <input
                                 type="file"
                                 className="sr-only"
                                 disabled={busy}
@@ -2562,7 +2582,7 @@ function TripDocumentsCenter({
                                 }}
                               />
                             </label>}
-                            {canManageDocument && <Button variant="ghost" size="icon" disabled={busy} onClick={() => onDelete(document)} aria-label="Supprimer le document">
+                            {canManageDocument && <Button variant="ghost" size="icon" disabled={busy} onClick={() => onDelete(document)} aria-label={t("Supprimer le document")}>
                               <Trash2 className="h-4 w-4" />
                             </Button>}
                           </div>
@@ -2596,13 +2616,14 @@ export function QuoteTable({ section, rows, loading = false, loadError, canEdit,
   onReview: (row: QuoteRow, included: boolean, reviewStatus: "pending" | "approved" | "rejected") => void;
   onAddComment: (row: QuoteRow, body: string, internal: boolean) => Promise<boolean>;
 }) {
+  const { t } = useSupplierTranslation();
   if (loading || loadError) return <Card className="overflow-hidden p-4">
-    <h2 className="font-display text-lg">{sectionLabels[section]}</h2>
+    <h2 className="font-display text-lg">{t(sectionLabels[section])}</h2>
     {loading
-      ? <p role="status" className="mt-2 text-sm text-muted-foreground">Chargement des lignes…</p>
+      ? <p role="status" className="mt-2 text-sm text-muted-foreground">{t("Chargement des lignes…")}</p>
       : <div role="alert" className="mt-2 text-sm text-destructive">
-        <p>Les lignes n’ont pas pu être chargées. Le nombre de lignes et le total sont indisponibles.</p>
-        <p className="mt-2 break-words font-mono text-xs">{loadError}</p>
+        <p>{t("Les lignes n’ont pas pu être chargées. Le nombre de lignes et le total sont indisponibles.")}</p>
+        <p className="mt-2 break-words font-mono text-xs">{supplierErrorMessage(t, loadError)}</p>
       </div>}
   </Card>;
   const total = rows.filter((row) => row.included_in_total !== false).reduce((sum, row) => sum + subtotal(row, section), 0);
@@ -2630,49 +2651,44 @@ export function QuoteTable({ section, rows, loading = false, loadError, canEdit,
     <Card className="overflow-hidden">
       <div className="flex flex-col gap-3 border-b border-border p-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="font-display text-lg">{sectionLabels[section]}</h2>
-          <p className="text-sm text-muted-foreground">{rows.length} ligne(s) · Total {fmtJPY(total)}</p>
+          <h2 className="font-display text-lg">{t(sectionLabels[section])}</h2>
+          <p className="text-sm text-muted-foreground">{rows.length} {t("ligne(s) · Total")} {fmtJPY(total)}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("confirmed")} disabled={!canConfirmReservations || rows.length === 0}>
-            Confirmer les réservations
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("todo")} disabled={!canConfirmReservations || rows.length === 0}>
-            Réservations à refaire
-          </Button>
+          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("confirmed")} disabled={!canConfirmReservations || rows.length === 0}> {t("Confirmer les réservations")} </Button>
+          <Button variant="outline" size="sm" onClick={() => bulkSetStatus("todo")} disabled={!canConfirmReservations || rows.length === 0}> {t("Réservations à refaire")} </Button>
           <Button variant="outline" size="sm" onClick={onAdd} disabled={!canEdit}>
-            <Plus className="h-4 w-4" /> Ajouter une ligne
-          </Button>
+            <Plus className="h-4 w-4" /> {t("Ajouter une ligne")} </Button>
         </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1120px] text-sm">
           <thead className="bg-secondary/50 text-left text-xs text-muted-foreground">
             <tr>
-              <th className="px-3 py-2 font-medium">Ordre</th>
-              {columns.map((column) => <th key={column.key} className="px-3 py-2 font-medium">{column.label}</th>)}
-              <th className="px-3 py-2 text-right font-medium">Sous-total</th>
-              <th className="px-3 py-2 font-medium">Réservation</th>
-              <th className="px-3 py-2 font-medium">Assigné</th>
-              <th className="px-3 py-2 font-medium">Commentaire</th>
-              <th className="px-3 py-2 font-medium">Calcul</th>
-              <th className="px-3 py-2 font-medium">Revue</th>
-              <th className="px-3 py-2 font-medium">Échanges</th>
+              <th className="px-3 py-2 font-medium">{t("Ordre")}</th>
+              {columns.map((column) => <th key={column.key} className="px-3 py-2 font-medium">{t(column.label)}</th>)}
+              <th className="px-3 py-2 text-right font-medium">{t("Sous-total")}</th>
+              <th className="px-3 py-2 font-medium">{t("Réservation")}</th>
+              <th className="px-3 py-2 font-medium">{t("Assigné")}</th>
+              <th className="px-3 py-2 font-medium">{t("Commentaire")}</th>
+              <th className="px-3 py-2 font-medium">{t("Calcul")}</th>
+              <th className="px-3 py-2 font-medium">{t("Revue")}</th>
+              <th className="px-3 py-2 font-medium">{t("Échanges")}</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {rows.length === 0 && (
-              <tr><td colSpan={columns.length + 9} className="p-8 text-center text-muted-foreground">Aucune ligne.</td></tr>
+              <tr><td colSpan={columns.length + 9} className="p-8 text-center text-muted-foreground">{t("Aucune ligne.")}</td></tr>
             )}
             {rows.map((row, index) => (
               <tr key={row.local_id} className={`align-top ${row.included_in_total === false ? "bg-muted/50 text-muted-foreground" : ""}`}>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" disabled={!canEdit || index === 0} onClick={() => move(index, -1)} aria-label="Monter la ligne">
+                    <Button variant="ghost" size="icon" disabled={!canEdit || index === 0} onClick={() => move(index, -1)} aria-label={t("Monter la ligne")}>
                       <ArrowUp className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" disabled={!canEdit || index === rows.length - 1} onClick={() => move(index, 1)} aria-label="Descendre la ligne">
+                    <Button variant="ghost" size="icon" disabled={!canEdit || index === rows.length - 1} onClick={() => move(index, 1)} aria-label={t("Descendre la ligne")}>
                       <ArrowDown className="h-4 w-4" />
                     </Button>
                   </div>
@@ -2686,7 +2702,7 @@ export function QuoteTable({ section, rows, loading = false, loadError, canEdit,
                 <td className="px-3 py-2">
                   <Select value={row.status ?? "todo"} disabled={!canConfirmReservations || !row.id} onValueChange={(value) => onReservationStatusChange?.(row.id!,value as RowStatus)}>
                     <SelectTrigger className="h-9 min-w-[130px]"><SelectValue /></SelectTrigger>
-                    <SelectContent>{Object.entries(rowStatusLabel).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}</SelectContent>
+                    <SelectContent>{Object.entries(rowStatusLabel).map(([key, label]) => <SelectItem key={key} value={key}>{t(label)}</SelectItem>)}</SelectContent>
                   </Select>
                 </td>
                 <td className="px-3 py-2"><Input className="h-9 min-w-[130px]" value={row.assigned_to ?? ""} disabled={!canEdit} onChange={(event) => update(index, "assigned_to", event.target.value)} /></td>
@@ -2694,16 +2710,16 @@ export function QuoteTable({ section, rows, loading = false, loadError, canEdit,
                 <td className="px-3 py-2">
                   <label className="flex min-w-[105px] items-center gap-2 text-xs">
                     <input type="checkbox" checked={row.included_in_total !== false} disabled={!canReview || (section==="other" && isLegacySupplierHandlingRow(row))} onChange={(event) => onReview(row, event.target.checked, row.review_status ?? "pending")} />
-                    {row.included_in_total === false ? "Exclue" : "Incluse"}
+                    {row.included_in_total === false ? t("Exclue") : t("Incluse")}
                   </label>
                 </td>
                 <td className="px-3 py-2">
                   <Select value={row.review_status ?? "pending"} disabled={!canReview} onValueChange={(value) => onReview(row, row.included_in_total !== false, value as "pending" | "approved" | "rejected")}>
                     <SelectTrigger className="h-9 min-w-[120px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="pending">À revoir</SelectItem>
-                      <SelectItem value="approved">Approuvée</SelectItem>
-                      <SelectItem value="rejected">Rejetée</SelectItem>
+                      <SelectItem value="pending">{t("À revoir")}</SelectItem>
+                      <SelectItem value="approved">{t("Approuvée")}</SelectItem>
+                      <SelectItem value="rejected">{t("Rejetée")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </td>
@@ -2724,17 +2740,17 @@ export function QuoteTable({ section, rows, loading = false, loadError, canEdit,
           {section === "activities" && rows.length > 0 && (
             <tfoot className="border-t border-border bg-secondary/30 text-sm">
               <tr>
-                <td colSpan={columns.length + 1} className="px-3 py-3 font-medium">Total activités requises</td>
+                <td colSpan={columns.length + 1} className="px-3 py-3 font-medium">{t("Total activités requises")}</td>
                 <td className="px-3 py-3 text-right font-semibold">{fmtJPY(requiredActivityTotal)}</td>
                 <td colSpan={4}></td>
               </tr>
               <tr>
-                <td colSpan={columns.length + 1} className="px-3 py-3 font-medium">Total activités optionnelles</td>
+                <td colSpan={columns.length + 1} className="px-3 py-3 font-medium">{t("Total activités optionnelles")}</td>
                 <td className="px-3 py-3 text-right font-semibold">{fmtJPY(optionalActivityTotal)}</td>
                 <td colSpan={4}></td>
               </tr>
               <tr>
-                <td colSpan={columns.length + 1} className="px-3 py-3 font-semibold">Total toutes activités</td>
+                <td colSpan={columns.length + 1} className="px-3 py-3 font-semibold">{t("Total toutes activités")}</td>
                 <td className="px-3 py-3 text-right font-bold">{fmtJPY(total)}</td>
                 <td colSpan={4}></td>
               </tr>
@@ -2752,6 +2768,7 @@ function LineComments({ comments, isAdmin, disabled, onAdd }: {
   disabled: boolean;
   onAdd: (body: string, internal: boolean) => Promise<boolean>;
 }) {
+  const { t, formatDateTime: fmtDateTimeLabel } = useSupplierTranslation();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [internal, setInternal] = useState(false);
@@ -2764,21 +2781,21 @@ function LineComments({ comments, isAdmin, disabled, onAdd }: {
   };
   return <div className="min-w-[240px] space-y-2">
     <Button type="button" variant="outline" size="sm" onClick={() => setOpen((value) => !value)} disabled={disabled}>
-      <MessageSquare className="h-3.5 w-3.5" /> {comments.length} commentaire(s)
-    </Button>
+      <MessageSquare className="h-3.5 w-3.5" /> {comments.length} {t("commentaire(s)")} </Button>
     {open && <div className="space-y-2 rounded-md border border-border bg-background p-2">
       {comments.map((comment) => <div key={comment.id} className="rounded bg-secondary/40 p-2 text-xs">
-        <p className="font-medium">{comment.author_name || "Utilisateur"} · {fmtDateTimeLabel(comment.created_at)} {comment.visibility === "internal" ? "· Interne" : ""}</p>
+        <p className="font-medium">{comment.author_name || t("Utilisateur")} · {fmtDateTimeLabel(comment.created_at)} {comment.visibility === "internal" ? t("· Interne") : ""}</p>
         <p className="mt-1 whitespace-pre-wrap">{comment.body}</p>
       </div>)}
-      <Textarea rows={2} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ajouter un commentaire…" />
-      {isAdmin && <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> Commentaire interne</label>}
-      <Button type="button" size="sm" onClick={() => void submit()} disabled={!draft.trim()}>Ajouter</Button>
+      <Textarea rows={2} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={t("Ajouter un commentaire…")} />
+      {isAdmin && <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} /> {t("Commentaire interne")}</label>}
+      <Button type="button" size="sm" onClick={() => void submit()} disabled={!draft.trim()}>{t("Ajouter")}</Button>
     </div>}
   </div>;
 }
 
 const CellInput = ({ column, value, disabled, onChange }: { column: any; value: any; disabled: boolean; onChange: (value: any) => void }) => {
+  const { t } = useSupplierTranslation();
   if (column.type === "boolean") {
     return (
       <label className="flex h-9 min-w-[110px] items-center gap-2 text-sm">
@@ -2788,9 +2805,7 @@ const CellInput = ({ column, value, disabled, onChange }: { column: any; value: 
           disabled={disabled}
           onChange={(event) => onChange(event.target.checked)}
           className="h-4 w-4 rounded border-border"
-        />
-        Oui
-      </label>
+        /> {t("Oui")} </label>
     );
   }
   if (column.type === "select") {
@@ -2798,7 +2813,7 @@ const CellInput = ({ column, value, disabled, onChange }: { column: any; value: 
     return (
       <Select value={String(value ?? column.options[0] ?? "")} disabled={disabled} onValueChange={onChange}>
         <SelectTrigger className="h-9 min-w-[140px]"><SelectValue /></SelectTrigger>
-        <SelectContent>{options.map((option: string) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent>
+        <SelectContent>{options.map((option: string) => <SelectItem key={option} value={option}>{column.options.includes(option) ? t(option) : option}</SelectItem>)}</SelectContent>
       </Select>
     );
   }
@@ -2836,6 +2851,7 @@ function OperationProgramme({
   onUpdateComment: (dayNumber: number, commentId: string, body: string) => void;
   onDeleteComment: (dayNumber: number, commentId: string) => void;
 }) {
+  const { t } = useSupplierTranslation();
   return (
     <div className="space-y-4">
       <FlightBlock trip={trip} />
@@ -2861,6 +2877,7 @@ function OperationProgramme({
 }
 
 function FlightBlock({ trip }: { trip: any }) {
+  const { t, formatDate: fmtDate } = useSupplierTranslation();
   const outboundText = firstText(trip.outbound_flight_text, trip.metadata?.outbound_flight_text);
   const returnText = firstText(trip.return_flight_text, trip.metadata?.return_flight_text);
   const airline = firstText(trip.airline, trip.metadata?.airline);
@@ -2877,33 +2894,33 @@ function FlightBlock({ trip }: { trip: any }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="font-display text-lg">Informations de vol</h2>
-              <p className="text-sm text-muted-foreground">Données voyage configurées pour le bureau Japon.</p>
+              <h2 className="font-display text-lg">{t("Informations de vol")}</h2>
+              <p className="text-sm text-muted-foreground">{t("Données voyage configurées pour le bureau Japon.")}</p>
             </div>
             {airline && <Badge variant="outline">{airline}</Badge>}
           </div>
 
           {!hasFlightData ? (
-            <p className="mt-4 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">Informations de vol à confirmer.</p>
+            <p className="mt-4 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">{t("Informations de vol à confirmer.")}</p>
           ) : (
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               <FlightInfoCard
-                title="Vol aller"
-                route={firstText(trip.metadata?.outbound_route, trip.visa_arrival_port ? `Maroc → ${trip.visa_arrival_port}` : "")}
+                title={t("Vol aller")}
+                route={firstText(trip.metadata?.outbound_route, trip.visa_arrival_port ? t("Maroc → {{value0}}", { value0: trip.visa_arrival_port }) : "")}
                 flightNumbers={firstText(trip.metadata?.outbound_flight_numbers, trip.visa_arrival_flight_number)}
-                departure={firstText(trip.metadata?.outbound_departure_text, trip.start_date ? `Départ: ${fmtDate(trip.start_date)}` : "")}
-                arrival={firstText(trip.metadata?.outbound_arrival_text, trip.visa_japan_arrival_date ? `Arrivée: ${fmtDate(trip.visa_japan_arrival_date)} · ${trip.visa_arrival_port || ""}` : "")}
+                departure={firstText(trip.metadata?.outbound_departure_text, trip.start_date ? t("Départ: {{value0}}", { value0: fmtDate(trip.start_date) }) : "")}
+                arrival={firstText(trip.metadata?.outbound_arrival_text, trip.visa_japan_arrival_date ? t("Arrivée: {{value0}} · {{value1}}", { value0: fmtDate(trip.visa_japan_arrival_date), value1: trip.visa_arrival_port || "" }) : "")}
                 notes={outboundText}
               />
               <FlightInfoCard
-                title="Vol retour"
-                route={firstText(trip.metadata?.return_route, "Japon → Maroc")}
+                title={t("Vol retour")}
+                route={firstText(trip.metadata?.return_route, t("Japon → Maroc"))}
                 flightNumbers={firstText(trip.metadata?.return_flight_numbers)}
-                departure={firstText(trip.metadata?.return_departure_text, trip.visa_japan_departure_date ? `Départ Japon: ${fmtDate(trip.visa_japan_departure_date)}` : "")}
-                arrival={firstText(trip.metadata?.return_arrival_text, trip.end_date ? `Retour: ${fmtDate(trip.end_date)}` : "")}
+                departure={firstText(trip.metadata?.return_departure_text, trip.visa_japan_departure_date ? t("Départ Japon: {{value0}}", { value0: fmtDate(trip.visa_japan_departure_date) }) : "")}
+                arrival={firstText(trip.metadata?.return_arrival_text, trip.end_date ? t("Retour: {{value0}}", { value0: fmtDate(trip.end_date) }) : "")}
                 notes={returnText}
               />
-              {notes && <div className="rounded-lg bg-secondary/40 p-3 text-sm lg:col-span-2"><span className="font-medium">Notes: </span>{notes}</div>}
+              {notes && <div className="rounded-lg bg-secondary/40 p-3 text-sm lg:col-span-2"><span className="font-medium">{t("Notes:")} </span>{notes}</div>}
             </div>
           )}
         </div>
@@ -2920,15 +2937,16 @@ function FlightInfoCard({ title, route, flightNumbers, departure, arrival, notes
   arrival?: string;
   notes?: string;
 }) {
+  const { t } = useSupplierTranslation();
   return (
     <div className="rounded-lg border border-border p-3 text-sm">
       <p className="font-semibold">{title}</p>
       <div className="mt-2 grid gap-1 text-muted-foreground">
-        <p><span className="text-foreground">Route:</span> {route || "À confirmer"}</p>
-        <p><span className="text-foreground">Vol(s):</span> {flightNumbers || "À confirmer"}</p>
-        <p><span className="text-foreground">Départ:</span> {departure || "À confirmer"}</p>
-        <p><span className="text-foreground">Arrivée:</span> {arrival || "À confirmer"}</p>
-        {notes && <p className="whitespace-pre-wrap"><span className="text-foreground">Détails:</span> {notes}</p>}
+        <p><span className="text-foreground">{t("Route:")}</span> {route || t("À confirmer")}</p>
+        <p><span className="text-foreground">{t("Vol(s):")}</span> {flightNumbers || t("À confirmer")}</p>
+        <p><span className="text-foreground">{t("Départ:")}</span> {departure || t("À confirmer")}</p>
+        <p><span className="text-foreground">{t("Arrivée:")}</span> {arrival || t("À confirmer")}</p>
+        {notes && <p className="whitespace-pre-wrap"><span className="text-foreground">{t("Détails:")}</span> {notes}</p>}
       </div>
     </div>
   );
@@ -2961,8 +2979,9 @@ function OperationalDayCard({
   onUpdateComment: (commentId: string, body: string) => void;
   onDeleteComment: (commentId: string) => void;
 }) {
-  const hotel = resolveHotelForDay(day, trip, hotels);
-  const scheduleRows = normalizeScheduleRows(day);
+  const { t, formatDate: fmtDate } = useSupplierTranslation();
+  const hotel = resolveHotelForDay(day, trip, hotels, t);
+  const scheduleRows = normalizeScheduleRows(!day.id && String(day.local_id || "").startsWith("generated-") ? { ...day, title: t("Programme à compléter"), activities: t("À compléter") } : day, t);
   const operationalNotes = firstText(day.operational_notes, day.metadata?.operational_notes, day.notes);
 
   return (
@@ -2971,19 +2990,19 @@ function OperationalDayCard({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">Jour {day.day_number}</Badge>
+              <Badge variant="outline">{t("Jour")} {day.day_number}</Badge>
               <DayStatusBadge status={status} />
               <span className="text-sm text-muted-foreground">{fmtDate(day.date)}</span>
             </div>
-            <h3 className="mt-2 font-display text-xl">{safeText(day.title) || "Programme à compléter"}</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{safeText(day.city || day.location || day.route) || "Ville / route à confirmer"}</p>
+            <h3 className="mt-2 font-display text-xl">{!day.id && String(day.local_id || "").startsWith("generated-") ? t("Programme à compléter") : safeText(day.title) || t("Programme à compléter")}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{safeText(day.city || day.location || day.route) || t("Ville / route à confirmer")}</p>
           </div>
           <div className="w-full lg:w-56">
-            <Label className="text-xs">Statut opérationnel</Label>
+            <Label className="text-xs">{t("Statut opérationnel")}</Label>
             <Select value={status} onValueChange={(value) => onStatusChange(value as DayOperationalStatus)} disabled={!canEdit}>
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {Object.entries(dayStatusLabel).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}
+                {Object.entries(dayStatusLabel).map(([key, label]) => <SelectItem key={key} value={key}>{key === "confirmed" ? t("Confirmé opérationnellement") : t(label)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -2993,28 +3012,28 @@ function OperationalDayCard({
       <div className="grid gap-4 p-4 xl:grid-cols-[1fr_320px]">
         <div className="min-w-0 space-y-4">
           <div className="grid gap-3 md:grid-cols-2">
-            <InfoBox label="Transport prévu" value={safeText(day.transport || day.metadata?.transport) || "Transport à confirmer"} />
-            <InfoBox label="Notes opérationnelles" value={operationalNotes || "Aucune note opérationnelle."} />
+            <InfoBox label={t("Transport prévu")} value={safeText(day.transport || day.metadata?.transport) || t("Transport à confirmer")} />
+            <InfoBox label={t("Notes opérationnelles")} value={operationalNotes || t("Aucune note opérationnelle.")} />
           </div>
 
           <div>
-            <h4 className="text-sm font-semibold">Programme horaire</h4>
+            <h4 className="text-sm font-semibold">{t("Programme horaire")}</h4>
             <div className="mt-2 overflow-x-auto rounded-lg border border-border">
               <table className="w-full min-w-[760px] text-sm">
                 <thead className="bg-secondary/50 text-left text-xs text-muted-foreground">
                   <tr>
-                    <th className="px-3 py-2">Heure</th>
-                    <th className="px-3 py-2">Activité / visite</th>
-                    <th className="px-3 py-2">Lieu</th>
-                    <th className="px-3 py-2">Transport</th>
-                    <th className="px-3 py-2">Notes</th>
+                    <th className="px-3 py-2">{t("Heure")}</th>
+                    <th className="px-3 py-2">{t("Activité / visite")}</th>
+                    <th className="px-3 py-2">{t("Lieu")}</th>
+                    <th className="px-3 py-2">{t("Transport")}</th>
+                    <th className="px-3 py-2">{t("Notes")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {scheduleRows.map((row, index) => (
                     <tr key={`${day.day_number}-${index}`}>
                       <td className="px-3 py-2 font-medium">{row.time || "—"}</td>
-                      <td className="px-3 py-2">{row.activity || "À compléter"}</td>
+                      <td className="px-3 py-2">{row.activity || t("À compléter")}</td>
                       <td className="px-3 py-2">{row.location || "—"}</td>
                       <td className="px-3 py-2">{row.transport || "—"}</td>
                       <td className="px-3 py-2 text-muted-foreground">{row.notes || "—"}</td>
@@ -3037,7 +3056,7 @@ function OperationalDayCard({
         </div>
 
         <aside className="space-y-3 rounded-lg border border-border bg-background p-4">
-          <h4 className="font-semibold">Hôtel du jour</h4>
+          <h4 className="font-semibold">{t("Hôtel du jour")}</h4>
           <div className="space-y-2 text-sm">
             <p className="font-medium">{hotel.name}</p>
             <p className="text-muted-foreground">{hotel.city}</p>
@@ -3052,22 +3071,24 @@ function OperationalDayCard({
 }
 
 function InfoBox({ label, value }: { label: string; value: string }) {
+  const { t } = useSupplierTranslation();
   return (
     <div className="rounded-lg border border-border p-3 text-sm">
-      <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+      <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t(label)}</p>
       <p className="mt-2 whitespace-pre-wrap">{value}</p>
     </div>
   );
 }
 
 function DayStatusBadge({ status }: { status: DayOperationalStatus }) {
+  const { t } = useSupplierTranslation();
   const className = {
     to_confirm: "border-slate-200 bg-slate-50 text-slate-700",
     confirmed: "border-emerald-200 bg-emerald-50 text-emerald-700",
     attention: "border-amber-200 bg-amber-50 text-amber-800",
     modified: "border-sky-200 bg-sky-50 text-sky-700",
   }[status];
-  return <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${className}`}>{dayStatusLabel[status]}</span>;
+  return <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${className}`}>{status === "confirmed" ? t("Confirmé opérationnellement") : t(dayStatusLabel[status])}</span>;
 }
 
 function DayComments({ comments, canEdit, isAdmin, currentUserId, onAdd, onUpdate, onDelete }: {
@@ -3079,6 +3100,7 @@ function DayComments({ comments, canEdit, isAdmin, currentUserId, onAdd, onUpdat
   onUpdate: (commentId: string, body: string) => void;
   onDelete: (commentId: string) => void;
 }) {
+  const { t, formatDateTime: fmtDateTimeLabel } = useSupplierTranslation();
   const [draft, setDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -3092,20 +3114,20 @@ function DayComments({ comments, canEdit, isAdmin, currentUserId, onAdd, onUpdat
     <div className="rounded-lg border border-border p-3">
       <div className="flex items-center gap-2">
         <MessageSquare className="h-4 w-4 text-muted-foreground" />
-        <h4 className="text-sm font-semibold">Commentaires collaboration</h4>
+        <h4 className="text-sm font-semibold">{t("Commentaires collaboration")}</h4>
       </div>
       <div className="mt-3 space-y-3">
-        {comments.length === 0 && <p className="text-sm text-muted-foreground">Aucun commentaire pour ce jour.</p>}
+        {comments.length === 0 && <p className="text-sm text-muted-foreground">{t("Aucun commentaire pour ce jour.")}</p>}
         {comments.map((comment) => {
           const canManage = isAdmin || comment.author_id === currentUserId;
           return (
             <div key={comment.id} className="rounded-lg bg-secondary/35 p-3 text-sm">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="font-medium">{comment.author_name || comment.author_email || "Utilisateur"}</p>
+                  <p className="font-medium">{comment.author_name || comment.author_email || t("Utilisateur")}</p>
                   <p className="text-xs text-muted-foreground">
-                    {commentSourceLabel(comment.source)} · {fmtDateTimeLabel(comment.created_at)}
-                    {comment.updated_at ? ` · modifié ${fmtDateTimeLabel(comment.updated_at)}` : ""}
+                    {t(commentSourceLabel(comment.source))} · {fmtDateTimeLabel(comment.created_at)}
+                    {comment.updated_at ? t(" · modifié {{value0}}", { value0: fmtDateTimeLabel(comment.updated_at) }) : ""}
                   </p>
                 </div>
                 {canManage && canEdit && (
@@ -3117,12 +3139,8 @@ function DayComments({ comments, canEdit, isAdmin, currentUserId, onAdd, onUpdat
                         setEditingId(comment.id);
                         setEditDraft(comment.body);
                       }}
-                    >
-                      Modifier
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => onDelete(comment.id)}>
-                      Supprimer
-                    </Button>
+                    > {t("Modifier")} </Button>
+                    <Button variant="ghost" size="sm" onClick={() => onDelete(comment.id)}> {t("Supprimer")} </Button>
                   </div>
                 )}
               </div>
@@ -3130,8 +3148,8 @@ function DayComments({ comments, canEdit, isAdmin, currentUserId, onAdd, onUpdat
                 <div className="mt-2 space-y-2">
                   <Textarea value={editDraft} onChange={(event) => setEditDraft(event.target.value)} rows={2} />
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={() => { onUpdate(comment.id, editDraft); setEditingId(null); setEditDraft(""); }}>Enregistrer</Button>
-                    <Button size="sm" variant="outline" onClick={() => { setEditingId(null); setEditDraft(""); }}>Annuler</Button>
+                    <Button size="sm" onClick={() => { onUpdate(comment.id, editDraft); setEditingId(null); setEditDraft(""); }}>{t("Enregistrer")}</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setEditingId(null); setEditDraft(""); }}>{t("Annuler")}</Button>
                   </div>
                 </div>
               ) : (
@@ -3143,8 +3161,8 @@ function DayComments({ comments, canEdit, isAdmin, currentUserId, onAdd, onUpdat
       </div>
       {canEdit && (
         <div className="mt-3 space-y-2">
-          <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={2} placeholder="Ajouter un commentaire opérationnel..." />
-          <Button size="sm" onClick={add} disabled={!draft.trim()}>Ajouter commentaire</Button>
+          <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={2} placeholder={t("Ajouter un commentaire opérationnel...")} />
+          <Button size="sm" onClick={add} disabled={!draft.trim()}>{t("Ajouter commentaire")}</Button>
         </div>
       )}
     </div>
@@ -3235,37 +3253,38 @@ function ParticipantsTable({
   assignments: any[];
   participantActivitySelections: any[];
 }) {
-  const participantRows = buildParticipantRows({ participants, bookings, bookingExtras, extrasList, rooms, hotels, assignments, participantActivitySelections });
+  const { t } = useSupplierTranslation();
+  const participantRows = buildParticipantRows({ participants, bookings, bookingExtras, extrasList, rooms, hotels, assignments, participantActivitySelections }, t);
   return (
     <Card className="overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1700px] text-sm">
           <thead className="bg-secondary/50 text-left text-xs text-muted-foreground">
             <tr>
-              <th className="sticky left-0 z-10 min-w-[190px] bg-secondary/50 px-3 py-2">Participant</th>
-              <th className="px-3 py-2">Réservation</th>
-              <th className="px-3 py-2">Source</th>
-              <th className="px-3 py-2">Chambre</th>
-              <th className="px-3 py-2">Type chambre</th>
-              <th className="px-3 py-2">Extras</th>
-              <th className="px-3 py-2">Notes spéciales</th>
-              <th className="px-3 py-2">Passeport</th>
-              <th className="px-3 py-2">Nationalité</th>
-              <th className="px-3 py-2">Naissance</th>
-              <th className="px-3 py-2">Sexe</th>
-              <th className="px-3 py-2">Expiration passeport</th>
-              <th className="px-3 py-2">Émission passeport</th>
-              <th className="px-3 py-2">CIN / ID national</th>
+              <th className="sticky left-0 z-10 min-w-[190px] bg-secondary/50 px-3 py-2">{t("Participant")}</th>
+              <th className="px-3 py-2">{t("Réservation")}</th>
+              <th className="px-3 py-2">{t("Source")}</th>
+              <th className="px-3 py-2">{t("Chambre")}</th>
+              <th className="px-3 py-2">{t("Type chambre")}</th>
+              <th className="px-3 py-2">{t("Extras")}</th>
+              <th className="px-3 py-2">{t("Notes spéciales")}</th>
+              <th className="px-3 py-2">{t("Passeport")}</th>
+              <th className="px-3 py-2">{t("Nationalité")}</th>
+              <th className="px-3 py-2">{t("Naissance")}</th>
+              <th className="px-3 py-2">{t("Sexe")}</th>
+              <th className="px-3 py-2">{t("Expiration passeport")}</th>
+              <th className="px-3 py-2">{t("Émission passeport")}</th>
+              <th className="px-3 py-2">{t("CIN / ID national")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {participantRows.length === 0 && <tr><td colSpan={14} className="p-8 text-center text-muted-foreground">Aucun participant enregistré.</td></tr>}
+            {participantRows.length === 0 && <tr><td colSpan={14} className="p-8 text-center text-muted-foreground">{t("Aucun participant enregistré.")}</td></tr>}
             {participantRows.map((row) => {
               return (
                 <tr key={row.id}>
                   <td className="sticky left-0 z-10 bg-background px-3 py-2 font-medium">{row.full_name}</td>
                   <td className="px-3 py-2 font-mono text-xs">{row.booking_reference}</td>
-                  <td className="px-3 py-2">{row.booking_source}</td>
+                  <td className="px-3 py-2">{t(row.booking_source)}</td>
                   <td className="px-3 py-2">{row.room_assignment}</td>
                   <td className="px-3 py-2">{row.room_type}</td>
                   <td className="px-3 py-2">{row.selected_extras}</td>
@@ -3306,23 +3325,24 @@ function RoomsAndExtras({
   extrasList: any[];
   participantActivitySelections: any[];
 }) {
+  const { t, formatDate: fmtDate } = useSupplierTranslation();
   const participantById = new Map(participants.map((participant) => [participant.id, participant]));
   const bookingById = new Map(bookings.map((booking) => [booking.id, booking]));
   const extrasSummary = buildExtraGroups({ participants, bookings, bookingExtras, extrasList, participantActivitySelections });
   return (
     <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
       <Card className="p-4">
-        <h2 className="font-display text-lg">Chambres par hôtel</h2>
+        <h2 className="font-display text-lg">{t("Chambres par hôtel")}</h2>
         <div className="mt-4 space-y-4">
-          {hotels.length === 0 && <p className="text-sm text-muted-foreground">Aucun hôtel configuré.</p>}
+          {hotels.length === 0 && <p className="text-sm text-muted-foreground">{t("Aucun hôtel configuré.")}</p>}
           {hotels.map((hotel) => {
             const hotelRooms = sortRoomsNaturally(rooms.filter((room) => room.trip_hotel_id === hotel.id));
             return (
               <div key={hotel.id} className="rounded-lg border border-border p-3">
-                <p className="font-semibold">{hotel.name || hotel.hotel_name || "Hôtel"} · {hotel.city || "Ville à confirmer"}</p>
+                <p className="font-semibold">{hotel.name || hotel.hotel_name || t("Hôtel")} · {hotel.city || t("Ville à confirmer")}</p>
                 <p className="text-xs text-muted-foreground">{fmtDate(hotel.check_in)} → {fmtDate(hotel.check_out)}</p>
                 <div className="mt-3 grid gap-2">
-                  {hotelRooms.length === 0 && <p className="text-sm text-muted-foreground">Aucune chambre.</p>}
+                  {hotelRooms.length === 0 && <p className="text-sm text-muted-foreground">{t("Aucune chambre.")}</p>}
                   {hotelRooms.map((room) => {
                     const roomAssignments = assignments.filter((assignment) => assignment.room_id === room.id);
                     const assignedParticipants = roomAssignments.map((assignment) => {
@@ -3332,19 +3352,17 @@ function RoomsAndExtras({
                     }).filter(({ participant }) => Boolean(participant));
                     return (
                       <div key={room.id} className="rounded-md bg-secondary/40 p-3 text-sm">
-                        <div className="font-medium">{room.room_number || room.room_name || "Chambre"} · {room.room_type || "—"}</div>
+                        <div className="font-medium">{room.room_number || room.room_name || t("Chambre")} · {room.room_type || "—"}</div>
                         {assignedParticipants.length === 0 ? (
-                          <p className="mt-1 text-muted-foreground">Non assignée</p>
+                          <p className="mt-1 text-muted-foreground">{t("Non assignée")}</p>
                         ) : (
                           <div className="mt-2 space-y-2">
                             {assignedParticipants.map(({ participant, booking }) => (
                               <div key={participant.id} className="rounded border border-border bg-background px-3 py-2">
-                                <p className="font-medium">{participantFullName(participant)} <span className="text-xs text-muted-foreground">· {booking?.reference ?? "Sans référence"}</span></p>
-                                <p className="mt-1 text-xs text-muted-foreground">
-                                  Passeport: {passportNumber(participant) || "—"} · Nationalité: {participantNationality(participant) || "—"} · Naissance: {formatDateForDisplay(participantBirthdate(participant))}
+                                <p className="font-medium">{participantFullName(participant)} <span className="text-xs text-muted-foreground">· {booking?.reference ?? t("Sans référence")}</span></p>
+                                <p className="mt-1 text-xs text-muted-foreground"> {t("Passeport:")} {passportNumber(participant) || "—"} {t("· Nationalité:")} {participantNationality(participant) || "—"} {t("· Naissance:")} {formatDateForDisplay(participantBirthdate(participant))}
                                 </p>
-                                <p className="text-xs text-muted-foreground">
-                                  Expiration: {formatDateForDisplay(participantPassportExpiry(participant))} · Type: {participant.room_type ?? booking?.room_type ?? room.room_type ?? "—"}
+                                <p className="text-xs text-muted-foreground"> {t("Expiration:")} {formatDateForDisplay(participantPassportExpiry(participant))} {t("· Type:")} {participant.room_type ?? booking?.room_type ?? room.room_type ?? "—"}
                                 </p>
                               </div>
                             ))}
@@ -3360,17 +3378,17 @@ function RoomsAndExtras({
         </div>
       </Card>
       <Card className="p-4">
-        <h2 className="font-display text-lg">Activités / extras</h2>
+        <h2 className="font-display text-lg">{t("Activités / extras")}</h2>
         <div className="mt-4 space-y-2">
-          {extrasSummary.length === 0 && <p className="text-sm text-muted-foreground">Aucun extra sélectionné.</p>}
+          {extrasSummary.length === 0 && <p className="text-sm text-muted-foreground">{t("Aucun extra sélectionné.")}</p>}
           {extrasSummary.map((extra) => (
             <div key={extra.name} className="rounded-lg border border-border px-3 py-2 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium">{extra.name}</span>
-                <Badge variant="outline">Qté {extra.quantity}</Badge>
+                <Badge variant="outline">{t("Qté")} {extra.quantity}</Badge>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">Réservations: {extra.booking_references || "—"}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Participants: {extra.participants || "—"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t("Réservations:")} {extra.booking_references || "—"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t("Participants:")} {extra.participants || "—"}</p>
             </div>
           ))}
         </div>
@@ -3897,7 +3915,7 @@ const buildOperationalExportRows = ({ trip, days, hotels, operationalState }: { 
     }));
   });
 
-const buildParticipantRows = ({ participants, bookings, bookingExtras, extrasList, rooms, hotels, assignments, participantActivitySelections }: any) => {
+const buildParticipantRows = ({ participants, bookings, bookingExtras, extrasList, rooms, hotels, assignments, participantActivitySelections }: any, t: (source: string) => string = source => source) => {
   const bookingById = new Map((bookings ?? []).map((booking: any) => [booking.id, booking]));
   return (participants ?? []).map((participant: any) => {
     const booking = bookingById.get(participant.booking_id);
@@ -3906,7 +3924,7 @@ const buildParticipantRows = ({ participants, bookings, bookingExtras, extrasLis
       full_name: participantFullName(participant),
       booking_reference: booking?.reference ?? "—",
       booking_source: bookingSourceLabel(booking),
-      room_assignment: participantRoomAssignment(participant, rooms ?? [], hotels ?? [], assignments ?? []),
+      room_assignment: participantRoomAssignment(participant, rooms ?? [], hotels ?? [], assignments ?? [], t),
       room_type: participant.room_type ?? booking?.room_type ?? "—",
       selected_extras: selectedExtrasForParticipant(participant, bookingExtras ?? [], extrasList ?? [], participantActivitySelections ?? []),
       special_notes: participant.notes ?? participant.metadata?.special_notes ?? booking?.special_requests ?? "—",
@@ -4235,11 +4253,11 @@ const serializeOperationalState = (value: OperationalState) =>
     legacy_notes: value.legacy_notes ?? null,
   });
 
-const resolveHotelForDay = (day: any, trip: any, hotels: any[]) => {
+const resolveHotelForDay = (day: any, trip: any, hotels: any[], t: (source: string) => string = source => source) => {
   const directHotel = day.hotel ?? day.metadata?.hotel;
   if (directHotel) {
     const direct = normalizeHotelValue(directHotel);
-    if (direct.name !== "Hôtel à confirmer") return direct;
+    if (direct.name !== "Hôtel à confirmer") return normalizeHotelValue(directHotel, t);
   }
 
   const dayTime = dateToTime(day.date);
@@ -4255,14 +4273,14 @@ const resolveHotelForDay = (day: any, trip: any, hotels: any[]) => {
       })
     : null;
   const fallback = matched ?? (dayTime ? nearestHotelByDate(sortedHotels, dayTime) : null);
-  if (fallback) return normalizeHotelValue(fallback);
+  if (fallback) return normalizeHotelValue(fallback, t);
 
   return normalizeHotelValue({
-    name: trip.visa_hotel_name || "Hôtel à confirmer",
+    name: trip.visa_hotel_name || t("Hôtel à confirmer"),
     city: "",
-    address: trip.visa_hotel_address || "Adresse à confirmer",
-    phone: trip.visa_hotel_phone || "Téléphone à confirmer",
-  });
+    address: trip.visa_hotel_address || t("Adresse à confirmer"),
+    phone: trip.visa_hotel_phone || t("Téléphone à confirmer"),
+  }, t);
 };
 
 const nearestHotelByDate = (hotels: any[], targetTime: number) =>
@@ -4270,26 +4288,26 @@ const nearestHotelByDate = (hotels: any[], targetTime: number) =>
     .map((hotel) => ({ hotel, distance: Math.abs((dateToTime(hotel.check_in) ?? targetTime) - targetTime) }))
     .sort((a, b) => a.distance - b.distance)[0]?.hotel ?? null;
 
-const normalizeHotelValue = (value: any) => {
+const normalizeHotelValue = (value: any, t: (source: string) => string = source => source) => {
   if (typeof value === "string") {
     return {
-      name: safeText(value) || "Hôtel à confirmer",
-      city: "Ville à confirmer",
-      address: "Adresse à confirmer",
-      phone: "Téléphone à confirmer",
-      stay: "Dates à confirmer",
+      name: safeText(value) || t("Hôtel à confirmer"),
+      city: t("Ville à confirmer"),
+      address: t("Adresse à confirmer"),
+      phone: t("Téléphone à confirmer"),
+      stay: t("Dates à confirmer"),
     };
   }
   return {
-    name: safeText(value?.name || value?.hotel_name || value?.title) || "Hôtel à confirmer",
-    city: safeText(value?.city) || "Ville à confirmer",
-    address: safeText(value?.address) || "Adresse à confirmer",
-    phone: safeText(value?.phone) || "Téléphone à confirmer",
-    stay: [value?.check_in ? fmtDate(value.check_in) : null, value?.check_out ? fmtDate(value.check_out) : null].filter(Boolean).join(" → ") || "Dates à confirmer",
+    name: safeText(value?.name || value?.hotel_name || value?.title) || t("Hôtel à confirmer"),
+    city: safeText(value?.city) || t("Ville à confirmer"),
+    address: safeText(value?.address) || t("Adresse à confirmer"),
+    phone: safeText(value?.phone) || t("Téléphone à confirmer"),
+    stay: [value?.check_in ? fmtDate(value.check_in) : null, value?.check_out ? fmtDate(value.check_out) : null].filter(Boolean).join(" → ") || t("Dates à confirmer"),
   };
 };
 
-const normalizeScheduleRows = (day: any) => {
+const normalizeScheduleRows = (day: any, t: (source: string) => string = source => source) => {
   const source = firstScheduleSource(day);
   const rows = collectScheduleItems(source).map((item) => ({
     time: safeText(item.time || item.hour || item.start_time || item.start),
@@ -4302,7 +4320,7 @@ const normalizeScheduleRows = (day: any) => {
   if (rows.length > 0) return rows;
   return [{
     time: "",
-    activity: formatActivities(day.activities || day.visits || day.description || day.title),
+    activity: formatActivities(day.activities || day.visits || day.description || day.title, t),
     location: safeText(day.city || day.location),
     transport: safeText(day.transport),
     notes: safeText(day.notes || day.metadata?.notes),
@@ -4459,17 +4477,17 @@ const participantFullName = (participant: any) =>
   || participant.metadata?.full_name
   || "Participant";
 
-const participantRoomAssignment = (participant: any, rooms: any[], hotels: any[], assignments: any[]) => {
+const participantRoomAssignment = (participant: any, rooms: any[], hotels: any[], assignments: any[], t: (source: string) => string = source => source) => {
   const assignedRooms = assignments
     .filter((assignment) => assignment.participant_id === participant.id)
     .map((assignment) => {
       const room = rooms.find((item) => item.id === assignment.room_id);
       const hotel = hotels.find((item) => item.id === room?.trip_hotel_id);
       if (!room) return "";
-      return [hotel?.name, room.room_number || room.room_name || "Chambre", room.room_type].filter(Boolean).join(" · ");
+      return [hotel?.name, room.room_number || room.room_name || t("Chambre"), room.room_type].filter(Boolean).join(" · ");
     })
     .filter(Boolean);
-  return assignedRooms.length ? assignedRooms.join(" / ") : "Non assignée";
+  return assignedRooms.length ? assignedRooms.join(" / ") : t("Non assignée");
 };
 
 const selectedExtrasForParticipant = (participant: any, bookingExtras: any[], extrasList: any[], participantActivitySelections: any[]) => {
@@ -4525,14 +4543,14 @@ const slugForFilename = (value: string) =>
 const sanitizeSheetName = (value: string) => value.replace(/[\\/?*[\]:]/g, " ").slice(0, 31) || "Feuille";
 const roundNumber = (value: unknown) => Math.round(Number(value || 0));
 
-const formatActivities = (value: any): string => {
-  if (!value) return "À compléter";
+const formatActivities = (value: any, t: (source: string) => string = source => source): string => {
+  if (!value) return t("À compléter");
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map((item) => {
     if (typeof item === "string") return item;
     return [item.time, item.title, item.description, item.city].filter(Boolean).join(" - ");
   }).filter(Boolean).join("\n");
-  if (typeof value === "object") return [value.time, value.title, value.description, value.city].filter(Boolean).join(" - ") || "À compléter";
+  if (typeof value === "object") return [value.time, value.title, value.description, value.city].filter(Boolean).join(" - ") || t("À compléter");
   return String(value);
 };
 
@@ -4641,7 +4659,8 @@ const versionRowLabel = (section: QuoteSection, row: QuoteRow) => String(
 
 const buildVersionChanges = (
   current: Record<QuoteSection, QuoteRow[]>,
-  previous: Record<QuoteSection, QuoteRow[]>
+  previous: Record<QuoteSection, QuoteRow[]>,
+  t: (source: string, values?: Record<string, unknown>) => string = (source) => source
 ) => {
   const changes: SupplierQuoteVersionChange[] = [];
   for (const section of Object.keys(tableBySection) as QuoteSection[]) {
@@ -4649,24 +4668,24 @@ const buildVersionChanges = (
     const retained = new Set<string>();
     for (const row of current[section]) {
       const old = row.source_line_id ? oldById.get(row.source_line_id) : undefined;
-      const label = versionRowLabel(section, row) || "Ligne sans libellé";
+      const label = versionRowLabel(section, row) || t("Ligne sans libellé");
       if (!old) {
-        changes.push({section,kind:"added",detail:`${sectionLabels[section]} · ${label} : ligne ajoutée`});
+        changes.push({section,kind:"added",detail:t(`${t(sectionLabels[section])} · ${label} : ligne ajoutée`)});
         continue;
       }
       if (old.id) retained.add(old.id);
       const oldTotal = subtotal(old, section);
       const nextTotal = subtotal(row, section);
-      if (oldTotal !== nextTotal) changes.push({section,kind:"changed",detail:`${sectionLabels[section]} · ${label} : ${fmtJPY(oldTotal)} → ${fmtJPY(nextTotal)} (${nextTotal >= oldTotal ? "+" : ""}${fmtJPY(nextTotal - oldTotal)})`});
-      if ((old.included_in_total !== false) !== (row.included_in_total !== false)) changes.push({section,kind:"changed",detail:`${sectionLabels[section]} · ${label} : ${row.included_in_total === false ? "désactivée" : "réactivée"}`});
+      if (oldTotal !== nextTotal) changes.push({section,kind:"changed",detail:t(`${t(sectionLabels[section])} · ${label} : ${fmtJPY(oldTotal)} → ${fmtJPY(nextTotal)} (${nextTotal >= oldTotal ? "+" : ""}${fmtJPY(nextTotal - oldTotal)})`)});
+      if ((old.included_in_total !== false) !== (row.included_in_total !== false)) changes.push({section,kind:"changed",detail:t(`${t(sectionLabels[section])} · ${label} : ${row.included_in_total === false ? t("désactivée") : t("réactivée")}`)});
       for (const key of ["hotel_name", "room_type", "quantity", "participant_count", "guides_count", "unit_price_jpy", "daily_price_jpy"]) {
         if (String(old[key] ?? "") !== String(row[key] ?? "") && !["unit_price_jpy", "daily_price_jpy"].includes(key)) {
-          changes.push({section,kind:"changed",detail:`${sectionLabels[section]} · ${label} : ${key} modifié (${old[key] ?? "—"} → ${row[key] ?? "—"})`});
+          changes.push({section,kind:"changed",detail:t(`${t(sectionLabels[section])} · ${label} : ${t((columnsForSection(section).find(column => column.key === key)?.label) || key)} modifié (${old[key] ?? "—"} → ${row[key] ?? "—"})`)});
         }
       }
     }
     for (const old of previous[section]) {
-      if (old.id && !retained.has(old.id)) changes.push({section,kind:"removed",detail:`${sectionLabels[section]} · ${versionRowLabel(section, old)} : ligne retirée`});
+      if (old.id && !retained.has(old.id)) changes.push({section,kind:"removed",detail:t(`${t(sectionLabels[section])} · ${versionRowLabel(section, old)} : ligne retirée`)});
     }
   }
   return changes;
@@ -4868,16 +4887,25 @@ const quotationSubmissionErrors = (rows: Record<QuoteSection, QuoteRow[]>) => {
   return [];
 };
 
-const TotalCard = ({ label, value }: { label: string; value: number }) => (
+const TotalCard = ({ label, value }: { label: string; value: number }) => {
+  const { t } = useSupplierTranslation();
+  return (
   <Card className="p-4">
-    <p className="text-xs text-muted-foreground">{label}</p>
+    <p className="text-xs text-muted-foreground">{t(label)}</p>
     <p className="font-display text-xl">{fmtJPY(value)}</p>
   </Card>
 );
+};
 
-const SummaryMetric = ({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) => (
+const SummaryMetric = ({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) => {
+  const { t } = useSupplierTranslation();
+  return (
   <div className="rounded-lg bg-secondary/40 p-3">
-    <p className="text-xs text-muted-foreground">{label}</p>
+    <p className="text-xs text-muted-foreground">{t(label)}</p>
     <p className={strong ? "font-display text-lg text-primary" : "font-semibold"}>{value}</p>
   </div>
 );
+};
+
+// Reuse the existing financial projection in the admin dossier summary.
+export { calculateQuoteTotals, subtotal };

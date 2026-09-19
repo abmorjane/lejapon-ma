@@ -7,6 +7,15 @@ const segmentLabels: Record<string, string> = {
   bookings: "Réservations",
   clients: "Clients",
   trips: "Voyages",
+  workspace: "Dossier voyage",
+  overview: "Vue générale",
+  reservations: "Réservations",
+  participants: "Participants",
+  finance: "Finance",
+  flights: "Vols",
+  supplier: "Fournisseur",
+  operations: "Opérations",
+  documents: "Documents",
   programmes: "Programmes",
   hotels: "Hôtels",
   visa: "Visa",
@@ -46,9 +55,15 @@ const buildCrumbs = (pathname: string) => {
   }));
 };
 
-export const PageHeader = ({ title, description, action }: { title: string; description?: string; action?: ReactNode }) => {
+export const PageHeader = ({ title, description, action, breadcrumbCurrent }: { title: string; description?: string; action?: ReactNode; breadcrumbCurrent?: string }) => {
   const location = useLocation();
   const crumbs = buildCrumbs(location.pathname).filter((crumb) => !/^[0-9a-f-]{16,}$/i.test(crumb.raw));
+
+  if (breadcrumbCurrent) {
+    const current = crumbs.find(crumb => crumb.current);
+    if (current) current.label = breadcrumbCurrent;
+    else crumbs.push({ raw: breadcrumbCurrent, label: breadcrumbCurrent, href: location.pathname, current: true });
+  }
 
   return (
     <header className="mb-6 rounded-lg border bg-card px-4 py-4 shadow-sm sm:px-5">

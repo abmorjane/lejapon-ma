@@ -11,13 +11,15 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, Upload, Star, X, Copy, Archive, ArchiveRestore } from "lucide-react";
+import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, Upload, Star, X, Copy, Archive, ArchiveRestore, FolderKanban } from "lucide-react";
 import { fmtDate, fmtMAD, slugify } from "@/lib/format";
 import { toast } from "sonner";
 import { motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
 import { addDays, daysBetween, duplicateTripHotels } from "@/admin/lib/accommodation-templates";
 import { TripArchiveView, tripsForArchiveView } from "@/lib/trip-archiving";
+import { Link } from "react-router-dom";
+import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
 
 type Trip = any;
 
@@ -704,6 +706,7 @@ export default function TripsCatalog() {
                 <Button size="sm" variant="outline" className="min-h-11" disabled={archiveView === "archived" || !canReorderTrips || idx === visibleRows.length - 1} onClick={() => moveRow(t.id, 1)}><ArrowDown className="w-4 h-4" /></Button>
                 <Button size="sm" className="min-h-11" onClick={() => openTrip(t)}><Pencil className="w-4 h-4" /></Button>
               </div>
+              <Button asChild variant="outline" size="sm" className="mt-2 min-h-11 w-full"><Link to={tripWorkspacePath(t.id)}><FolderKanban className="h-4 w-4" /> Dossier voyage</Link></Button>
               {(canCreateTrips || canDeleteTrips || canArchiveTrips) && (
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   {canCreateTrips && <Button size="sm" variant="ghost" className="min-h-11" onClick={() => duplicateTrip(t)}><Copy className="w-4 h-4" /> Copier</Button>}
@@ -774,6 +777,7 @@ export default function TripsCatalog() {
                 </td>
                 <td className="p-4"><StatusBadge value={t.status} /></td>
                 <td className="p-4 text-right whitespace-nowrap">
+                  <Button size="sm" variant="outline" asChild><Link to={tripWorkspacePath(t.id)}><FolderKanban className="h-4 w-4" /> Dossier</Link></Button>
                   <Button size="sm" variant="ghost" onClick={() => openTrip(t)}><Pencil className="w-4 h-4" /></Button>
                   {canCreateTrips && <Button size="sm" variant="ghost" onClick={() => duplicateTrip(t)}><Copy className="w-4 h-4" /></Button>}
                   {canArchiveTrips && (archiveView === "archived"

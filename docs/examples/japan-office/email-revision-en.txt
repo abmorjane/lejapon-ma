@@ -1,0 +1,19 @@
+Quotation revision requested — Japan Office preview — Tokyo / Kyoto — V3
+
+The LeJapon.ma team has requested changes to your quotation. Please review the feedback and prepare a new revision.
+
+Trip: Japan Office preview — Tokyo / Kyoto
+Quotation version: V3
+Arrival in Japan: 3 Oct 2026
+Departure from Japan: 13 Oct 2026
+Arrival airport / port: Narita NRT
+Arrival flight number: JL123
+Departure flight details: EY 871 G NRTAUH 1730 0005+1
+EY 613 G AUHCMN 0225 0740
+Expected participants: 19
+Requested changes: Please retain Hôtel Sakura / 桜. This is unchanged free text.
+
+Review requested changes
+https://example.invalid/supplier/trips/example/quote
+
+Automatic notification — LeJapon.ma

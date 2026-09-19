@@ -46,6 +46,7 @@ import {
 } from "@/lib/quote-adjustments";
 import { getBookingPricingBreakdown } from "@/lib/booking-pricing";
 import { calculateCommercialDocumentTotals, invoiceTypeLabel } from "@/lib/commercial-documents";
+import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
 
 const FINANCIAL_DOCUMENT_TYPES = new Set(["quote", "receipt", "invoice", "payment", "financial"]);
 
@@ -1396,6 +1397,7 @@ export default function BookingDetail() {
           />
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3">
+          {b.trip_id && <Button asChild variant="outline"><Link to={tripWorkspacePath(b.trip_id, "reservations")}>Voir le voyage</Link></Button>}
           <StatusBadge value={b.status} />
           <Select value={b.status} onValueChange={updateStatus}>
             <SelectTrigger className="w-full sm:w-[160px] min-h-11"><SelectValue /></SelectTrigger>

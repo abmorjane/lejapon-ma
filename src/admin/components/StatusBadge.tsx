@@ -13,6 +13,6 @@ const map: Record<string, string> = {
   received: "bg-success/15 text-success",
   refunded: "bg-destructive/15 text-destructive",
 };
-export const StatusBadge = ({ value }: { value: string }) => (
-  <span className={cn("badge-pill capitalize", map[value] ?? "bg-secondary text-foreground/70")}>{value}</span>
+export const StatusBadge = ({ value, label }: { value: string; label?: string }) => (
+  <span className={cn("badge-pill capitalize", map[value] ?? "bg-secondary text-foreground/70")}>{label ?? value}</span>
 );

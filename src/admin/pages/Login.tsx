@@ -1,3 +1,4 @@
+import { supplierErrorMessage, SupplierLanguageSelector, useSupplierTranslation } from "@/i18n/supplier/SupplierLanguageProvider";
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -10,6 +11,7 @@ import { toast } from "sonner";
 import logo from "@/assets/logo-lejapon.png";
 
 export default function AdminLogin() {
+  const { t, language } = useSupplierTranslation();
   const { user, roles, signIn, signUp, loading } = useAuth();
   const nav = useNavigate();
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -39,7 +41,7 @@ export default function AdminLogin() {
 
       if (recaptchaEnabled) {
         if (recaptchaError && !isLocalDev && !recaptchaBypass) {
-          throw new Error("Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA.");
+          throw new Error(t("Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA."));
         }
 
         let token = "";
@@ -49,7 +51,7 @@ export default function AdminLogin() {
           if (isLocalDev || recaptchaBypass) {
             console.warn("[admin-login] reCAPTCHA indisponible en développement, connexion non bloquée.", err);
           } else {
-            throw new Error("Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA.");
+            throw new Error(t("Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA."));
           }
         }
 
@@ -59,7 +61,7 @@ export default function AdminLogin() {
             if (isLocalDev || recaptchaBypass) {
               console.warn("[admin-login] reCAPTCHA refusé en développement, connexion non bloquée.", check);
             } else {
-              throw new Error("Vérification anti-spam refusée. Vérifiez la configuration reCAPTCHA.");
+              throw new Error(t("Vérification anti-spam refusée. Vérifiez la configuration reCAPTCHA."));
             }
           }
         }
@@ -68,14 +70,14 @@ export default function AdminLogin() {
       if (mode === "login") {
         const { error } = await signIn(email, password);
         if (error) throw error;
-        toast.success("Connecté");
+        toast.success(t("Connecté"));
       } else {
-        const { error } = await signUp(email, password, fullName);
+        const { error } = await signUp(email, password, fullName, language === "fr" ? {} : { supplier_language: language });
         if (error) throw error;
-        toast.success("Compte créé. Un admin doit vous attribuer un rôle.");
+        toast.success(t("Compte créé. Un admin doit vous attribuer un rôle."));
       }
     } catch (e: any) {
-      toast.error(e.message ?? "Erreur");
+      toast.error(supplierErrorMessage(t, e.message ?? t("Erreur")));
     } finally { setBusy(false); }
   };
 
@@ -85,50 +87,47 @@ export default function AdminLogin() {
         <Link to="/" className="flex items-center justify-center mb-8">
           <img src={logo} alt="lejapon.ma" className="h-10 w-auto" />
         </Link>
-        <h1 className="font-display text-2xl text-center mb-2">Espace administration</h1>
+        {language !== "fr" && <div className="mb-4 flex justify-end"><SupplierLanguageSelector /></div>}
+        <h1 className="font-display text-2xl text-center mb-2">{language === "fr" ? t("Espace administration") : t("Japan Office sign-in")}</h1>
         <p className="text-sm text-muted-foreground text-center mb-8">
-          {mode === "login" ? "Connectez-vous pour accéder au back-office" : "Créez un compte (un admin validera l'accès)"}
+          {mode === "login" ? t("Connectez-vous pour accéder au back-office") : t("Créez un compte (un admin validera l'accès)")}
         </p>
         <form onSubmit={submit} className="space-y-4">
           {mode === "signup" && (
             <div>
-              <Label htmlFor="name">Nom complet</Label>
+              <Label htmlFor="name">{t("Nom complet")}</Label>
               <Input id="name" required value={fullName} onChange={(e) => setFullName(e.target.value)} />
             </div>
           )}
           <div>
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">{t("Email")}</Label>
             <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
-            <Label htmlFor="password">Mot de passe</Label>
+            <Label htmlFor="password">{t("Mot de passe")}</Label>
             <Input id="password" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
           <Button type="submit" className="w-full" disabled={busy}>
-            {busy ? "…" : mode === "login" ? "Se connecter" : "Créer le compte"}
+            {busy ? "…" : mode === "login" ? t("Se connecter") : t("Créer le compte")}
           </Button>
         </form>
         {mode === "login" && (
           <p className="mt-3 text-center text-sm">
-            <Link to="/admin/mot-de-passe-oublie" className="font-medium text-accent underline underline-offset-4">
-              Mot de passe oublié ?
-            </Link>
+            <Link to="/admin/mot-de-passe-oublie" className="font-medium text-accent underline underline-offset-4"> {t("Mot de passe oublié ?")} </Link>
           </p>
         )}
         {recaptchaEnabled && (
-          <p className="text-[11px] text-muted-foreground text-center mt-4 leading-relaxed">
-            Protégé par reCAPTCHA — la{" "}
-            <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline">politique</a>
-            {" "}et les{" "}
-            <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline">conditions</a>
-            {" "}de Google s'appliquent.
-          </p>
+          <p className="text-[11px] text-muted-foreground text-center mt-4 leading-relaxed"> {t("Protégé par reCAPTCHA — la")}{" "}
+            <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline">{t("politique")}</a>
+            {" "}{t("et les")}{" "}
+            <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline">{t("conditions")}</a>
+            {" "}{t("de Google s'appliquent.")} </p>
         )}
         <p className="text-center text-sm mt-6">
           {mode === "login" ? (
-            <>Pas encore de compte ? <button onClick={() => setMode("signup")} className="text-accent font-medium">Créer</button></>
+            <>{t("Pas encore de compte ?")} <button onClick={() => setMode("signup")} className="text-accent font-medium">{t("Créer")}</button></>
           ) : (
-            <>Déjà inscrit ? <button onClick={() => setMode("login")} className="text-accent font-medium">Se connecter</button></>
+            <>{t("Déjà inscrit ?")} <button onClick={() => setMode("login")} className="text-accent font-medium">{t("Se connecter")}</button></>
           )}
         </p>
       </div>

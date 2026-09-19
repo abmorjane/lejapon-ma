@@ -1,3 +1,4 @@
+import { supplierErrorMessage, useSupplierTranslation } from "@/i18n/supplier/SupplierLanguageProvider";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Archive, ArrowRight, BedDouble, Bell, Check, ClipboardList, Plane, Ticket, Users } from "lucide-react";
@@ -34,6 +35,7 @@ type TripCard = {
 type SupplierNotification = {
   id: string;
   title: string;
+  type?: string;
   message?: string | null;
   link?: string | null;
   read_at?: string | null;
@@ -48,6 +50,13 @@ const quoteStatusLabel: Record<string, string> = {
   revision_requested: "Révision demandée",
 };
 
+const notificationLabels: Record<string, string> = {
+  trip_assigned: "Trip assigned", quote_revision_requested: "Quotation revision notification",
+  quote_approved: "Quotation approved notification", quote_comment: "Quotation comment notification",
+  quote_rejected: "Quotation rejected notification", quote_reviewed: "Quotation under review notification", validation_japan_office_confirmed: "Confirmed operations notification",
+  validation_ready_to_travel: "Ready to travel notification",
+};
+
 const quoteBadgeClass = (status: string) => {
   if (status === "approved") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (status === "submitted") return "border-blue-200 bg-blue-50 text-blue-700";
@@ -57,6 +66,7 @@ const quoteBadgeClass = (status: string) => {
 };
 
 export default function SupplierTrips() {
+  const { t, formatDate: fmtDate } = useSupplierTranslation();
   const { user, isAdmin } = useAuth();
   const [trips, setTrips] = useState<TripCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,7 +105,7 @@ export default function SupplierTrips() {
       if (!isAdmin) {
         const [{ data: dashboardRows, error: dashboardError }, notificationResult] = await Promise.all([
           db.rpc("get_supplier_trip_dashboard"),
-          db.from("supplier_portal_notifications").select("id,title,message,link,read_at,created_at").order("created_at", { ascending: false }).limit(8),
+          db.from("supplier_portal_notifications").select("id,type,title,message,link,read_at,created_at").order("created_at", { ascending: false }).limit(8),
         ]);
         if (dashboardError) {
           console.error("Supplier dashboard query failed", dashboardError);
@@ -223,28 +233,26 @@ export default function SupplierTrips() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Japan Office - vue fournisseur"
-        description="Vos voyages assignés, devis Japon, rooming, participants, documents et messages opérationnels."
+        title={t("Japan Office - vue fournisseur")}
+        description={t("Vos voyages assignés, devis Japon, rooming, participants, documents et messages opérationnels.")}
       />
 
       {quoteTableMissing && (
-        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          Les tables du quote engine fournisseur ne sont pas encore disponibles. La lecture opérationnelle fonctionne, mais l'enregistrement des devis nécessite la migration SQL V1.
-        </Card>
+        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"> {t("Les tables du quote engine fournisseur ne sont pas encore disponibles. La lecture opérationnelle fonctionne, mais l'enregistrement des devis nécessite la migration SQL V1.")} </Card>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard icon={Plane} label="Voyages assignés" value={summary.trips} />
-        <StatCard icon={Archive} label="Voyages archivés" value={archivedTrips.length} />
-        <StatCard icon={Users} label="Participants" value={summary.participants} />
-        <StatCard icon={BedDouble} label="Hôtels actifs" value={summary.rooms} />
-        <StatCard icon={Ticket} label="Extras actifs" value={summary.extras} />
+        <StatCard icon={Plane} label={t("Voyages assignés")} value={summary.trips} />
+        <StatCard icon={Archive} label={t("Voyages archivés")} value={archivedTrips.length} />
+        <StatCard icon={Users} label={t("Participants")} value={summary.participants} />
+        <StatCard icon={BedDouble} label={t("Hôtels actifs")} value={summary.rooms} />
+        <StatCard icon={Ticket} label={t("Extras actifs")} value={summary.extras} />
       </div>
 
       <Tabs value={archiveView} onValueChange={(value) => setArchiveView(value as TripArchiveView)}>
         <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl sm:w-[420px]">
-          <TabsTrigger value="active" className="rounded-lg">Voyages assignés ({activeTrips.length})</TabsTrigger>
-          <TabsTrigger value="archived" className="rounded-lg">Voyages archivés ({archivedTrips.length})</TabsTrigger>
+          <TabsTrigger value="active" className="rounded-lg">{t("Voyages assignés (")}{activeTrips.length})</TabsTrigger>
+          <TabsTrigger value="archived" className="rounded-lg">{t("Voyages archivés (")}{archivedTrips.length})</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -252,19 +260,19 @@ export default function SupplierTrips() {
         <Card className="overflow-hidden">
           <div className="flex items-center gap-2 border-b border-border px-4 py-3">
             <Bell className="h-4 w-4 text-primary" />
-            <h2 className="font-display text-lg">Notifications</h2>
-            <Badge variant="outline">{notifications.filter((item) => !item.read_at).length} non lue(s)</Badge>
+            <h2 className="font-display text-lg">{t("Notifications")}</h2>
+            <Badge variant="outline">{notifications.filter((item) => !item.read_at).length} {t("non lue(s)")}</Badge>
           </div>
           <div className="divide-y divide-border">
             {notifications.map((notification) => (
               <div key={notification.id} className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between ${notification.read_at ? "opacity-70" : "bg-primary/5"}`}>
                 <div>
-                  <p className="font-medium">{notification.title}</p>
-                  {notification.message && <p className="text-sm text-muted-foreground">{notification.message}</p>}
+                  <p className="font-medium">{notification.type && notificationLabels[notification.type] ? t(notificationLabels[notification.type]) : notification.title}</p>
+                  {notification.message && <p className="text-sm text-muted-foreground">{notification.type === "trip_assigned" ? t(notification.message) : notification.message}</p>}
                 </div>
                 <div className="flex gap-2">
-                  {notification.link && <Button asChild size="sm" variant="outline"><Link to={notification.link}>Ouvrir</Link></Button>}
-                  {!notification.read_at && <Button size="sm" variant="ghost" onClick={() => void markNotificationRead(notification)}><Check className="h-4 w-4" /> Lu</Button>}
+                  {notification.link && <Button asChild size="sm" variant="outline"><Link to={notification.link}>{t("Ouvrir")}</Link></Button>}
+                  {!notification.read_at && <Button size="sm" variant="ghost" onClick={() => void markNotificationRead(notification)}><Check className="h-4 w-4" /> {t("Lu")}</Button>}
                 </div>
               </div>
             ))}
@@ -273,57 +281,54 @@ export default function SupplierTrips() {
       )}
 
       {loading ? (
-        <p className="text-muted-foreground">Chargement…</p>
+        <p className="text-muted-foreground">{t("Chargement…")}</p>
       ) : loadError ? (
         <Card className="p-10 text-center">
           <Plane className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="font-medium">{loadError}</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Contactez l'équipe LeJapon.ma si le problème persiste.
-          </p>
-          {loadErrorDetail && <p className="mt-3 break-all font-mono text-xs text-destructive">{loadErrorDetail}</p>}
+          <p className="font-medium">{supplierErrorMessage(t, loadError)}</p>
+          <p className="mt-1 text-sm text-muted-foreground"> {t("Contactez l'équipe LeJapon.ma si le problème persiste.")} </p>
+          {loadErrorDetail && <p className="mt-3 break-all font-mono text-xs text-destructive">{supplierErrorMessage(t, loadErrorDetail)}</p>}
         </Card>
       ) : visibleTrips.length === 0 ? (
         <Card className="p-10 text-center">
           <Plane className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
           <p className="font-medium">
             {archiveView === "archived"
-              ? "Aucun voyage archivé."
-              : hasSupplierMembership ? "Aucun voyage ne vous est actuellement assigné." : "Votre compte fournisseur n'est pas encore relié à un fournisseur."}
+              ? t("Aucun voyage archivé.")
+              : hasSupplierMembership ? t("Aucun voyage ne vous est actuellement assigné.") : t("Votre compte fournisseur n'est pas encore relié à un fournisseur.")}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
             {archiveView === "archived"
-              ? "Les voyages archivés par l’agence apparaîtront ici en lecture seule."
-              : "Dès qu'un voyage vous sera assigné, il apparaîtra ici avec ses onglets opérationnels."}
+              ? t("Les voyages archivés par l’agence apparaîtront ici en lecture seule.")
+              : t("Dès qu'un voyage vous sera assigné, il apparaîtra ici avec ses onglets opérationnels.")}
           </p>
         </Card>
       ) : (
         <div className="grid gap-3">
-          <h2 className="font-display text-xl">{archiveView === "archived" ? "Mes voyages archivés" : "Mes voyages assignés"}</h2>
+          <h2 className="font-display text-xl">{archiveView === "archived" ? t("Mes voyages archivés") : t("Mes voyages assignés")}</h2>
           {visibleTrips.map((trip) => (
             <Card key={trip.id} className="p-4 transition-colors hover:border-primary/50">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-display text-lg">{trip.title}</h3>
-                    <StatusBadge value={trip.status} />
+                    <StatusBadge value={trip.status} label={t(trip.status || "")} />
                     <Badge variant="outline" className={quoteBadgeClass(trip.quote_status)}>
-                      {quoteStatusLabel[trip.quote_status] ?? trip.quote_status}
+                      {t(quoteStatusLabel[trip.quote_status] ?? trip.quote_status)}
                     </Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {trip.season ? `${trip.season} - ` : ""}{fmtDate(trip.start_date)} → {fmtDate(trip.end_date)} · {trip.duration_days ?? "?"} jours
-                  </p>
+                    {trip.season ? `${trip.season} - ` : ""}{fmtDate(trip.start_date)} → {fmtDate(trip.end_date)} · {trip.duration_days ?? "?"} {t("jours")} </p>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-center text-xs text-muted-foreground sm:min-w-[280px]">
-                  <MiniMetric label="Participants" value={trip.participant_count} />
-                  <MiniMetric label="Chambres" value={trip.room_count} />
-                  <MiniMetric label="Extras" value={trip.extras_count} />
+                  <MiniMetric label={t("Participants")} value={trip.participant_count} />
+                  <MiniMetric label={t("Chambres")} value={trip.room_count} />
+                  <MiniMetric label={t("Extras")} value={trip.extras_count} />
                 </div>
                 <Button asChild>
                   <Link to={`/supplier/trips/${trip.id}/quote`}>
                     <ClipboardList className="h-4 w-4" />
-                    {trip.archived_at ? "Consulter le devis" : "Préparer le devis"}
+                    {trip.archived_at ? t("Consulter le devis") : t("Préparer le devis")}
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                 </Button>
@@ -350,21 +355,27 @@ const isMissingTableError = (error: any) =>
 
 const formatSupabaseError = (error: any) => [error?.code, error?.message, error?.details, error?.hint].filter(Boolean).join(" · ") || "Erreur Supabase inconnue";
 
-const StatCard = ({ icon: Icon, label, value }: { icon: any; label: string; value: number }) => (
+const StatCard = ({ icon: Icon, label, value }: { icon: any; label: string; value: number }) => {
+  const { t } = useSupplierTranslation();
+  return (
   <Card className="p-4">
     <div className="flex items-center gap-3">
       <span className="rounded-lg bg-primary/10 p-2 text-primary"><Icon className="h-4 w-4" /></span>
       <div>
-        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-xs text-muted-foreground">{t(label)}</p>
         <p className="font-display text-xl">{value}</p>
       </div>
     </div>
   </Card>
 );
+};
 
-const MiniMetric = ({ label, value }: { label: string; value: number }) => (
+const MiniMetric = ({ label, value }: { label: string; value: number }) => {
+  const { t } = useSupplierTranslation();
+  return (
   <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2">
     <p className="font-semibold text-foreground">{value}</p>
-    <p>{label}</p>
+    <p>{t(label)}</p>
   </div>
 );
+};

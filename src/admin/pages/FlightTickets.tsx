@@ -22,6 +22,7 @@ import {
   participantFullName,
   type FlightTicketStatus,
 } from "@/admin/lib/flight-tickets";
+import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
 
 type TripGroup = {
   trip: any;
@@ -38,7 +39,7 @@ const activeBookingStatuses = new Set(["lead", "confirmed", "paid", "completed"]
 const isMissingSchema = (error: any) =>
   /schema cache|Could not find the table|relation .* does not exist/i.test(error?.message ?? "");
 
-export default function FlightTickets() {
+export default function FlightTickets({ initialTripId, embedded = false }: { initialTripId?: string; embedded?: boolean } = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [bookings, setBookings] = useState<any[]>([]);
@@ -47,17 +48,19 @@ export default function FlightTickets() {
   const [travelers, setTravelers] = useState<any[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | FlightTicketStatus>("all");
-  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(initialTripId ?? null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const { data: bookingRows, error: bookingError } = await (supabase as any)
+      let bookingQuery = (supabase as any)
         .from("bookings")
         .select("id,reference,status,contact_name,trip_id,created_at,trips(id,title,start_date,end_date)")
         .order("created_at", { ascending: false })
         .limit(500);
+      if (initialTripId) bookingQuery = bookingQuery.eq("trip_id", initialTripId);
+      const { data: bookingRows, error: bookingError } = await bookingQuery;
       if (bookingError) throw bookingError;
 
       const activeBookings = (bookingRows ?? []).filter((booking: any) =>
@@ -117,7 +120,9 @@ export default function FlightTickets() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [initialTripId]);
+
+  useEffect(() => { if (initialTripId) setSelectedTripId(initialTripId); }, [initialTripId]);
 
   const bookingById = useMemo(() => new Map(bookings.map((booking) => [booking.id, booking])), [bookings]);
   const flightById = useMemo(() => new Map(flights.map((flight) => [flight.id, flight])), [flights]);
@@ -212,7 +217,7 @@ export default function FlightTickets() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      {!embedded && <PageHeader
         title="Billets d’avion"
         description="Suivi opérationnel des billets par voyage, réservation et participant."
         action={
@@ -220,15 +225,15 @@ export default function FlightTickets() {
             <RefreshCw className="h-4 w-4" /> Actualiser
           </Button>
         }
-      />
+      />}
 
-      <div className="grid gap-3 md:grid-cols-3">
+      {!embedded && <div className="grid gap-3 md:grid-cols-3">
         <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Participants actifs</p><p className="text-2xl font-semibold">{totalParticipants}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Billets réservés</p><p className="text-2xl font-semibold text-emerald-700">{totalReserved}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Billets incomplets</p><p className="text-2xl font-semibold text-orange-700">{totalIncomplete}</p></CardContent></Card>
-      </div>
+      </div>}
 
-      <Card>
+      {!embedded && <Card>
         <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -247,13 +252,13 @@ export default function FlightTickets() {
             </SelectContent>
           </Select>
         </CardContent>
-      </Card>
+      </Card>}
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</div>}
       {loading ? <div className="rounded-lg border p-6 text-sm text-muted-foreground">Chargement des billets...</div> : null}
 
-      <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <div className="space-y-3">
+      <div className={embedded ? "grid gap-4" : "grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]"}>
+        {!embedded && <div className="space-y-3">
           {visibleGroups.length === 0 && !loading ? (
             <Card><CardContent className="p-5 text-sm text-muted-foreground">Aucun voyage avec participants actifs.</CardContent></Card>
           ) : null}
@@ -285,14 +290,15 @@ export default function FlightTickets() {
               </button>
             );
           })}
-        </div>
+        </div>}
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-row items-start justify-between gap-3">
             <CardTitle className="flex items-center gap-2 text-lg">
               <Plane className="h-5 w-5 text-orange-600" />
               {selectedGroup?.trip?.title ?? "Participants"}
             </CardTitle>
+            {!embedded && selectedGroup?.trip?.id && <Button asChild variant="outline" size="sm"><Link to={tripWorkspacePath(selectedGroup.trip.id, "flights")}>Dossier voyage</Link></Button>}
           </CardHeader>
           <CardContent>
             {participantRows.length === 0 ? (

@@ -1,0 +1,15 @@
+Quotation revision requested — Japan Office preview — Tokyo / Kyoto — V3
+
+The LeJapon.ma team has requested changes to your quotation. Please review the feedback and prepare a new revision.
+
+Trip: Japan Office preview — Tokyo / Kyoto
+Quotation version: V3
+Arrival in Japan: To be confirmed
+Departure from Japan: To be confirmed
+Expected participants: 19
+Requested changes: Please retain Hôtel Sakura / 桜. This is unchanged free text.
+
+Review requested changes
+https://example.invalid/supplier/trips/example/quote
+
+Automatic notification — LeJapon.ma

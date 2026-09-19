@@ -1,0 +1,17 @@
+New trip assigned — Quotation requested — Japan Office preview — Tokyo / Kyoto
+
+A new trip has been assigned to your Japan Office. Please prepare a supplier quotation in your portal.
+
+Trip: Japan Office preview — Tokyo / Kyoto
+Arrival in Japan: 3 Oct 2026
+Departure from Japan: 13 Oct 2026
+Arrival airport / port: Narita NRT
+Arrival flight number: JL123
+Departure flight details: EY 871 G NRTAUH 1730 0005+1
+EY 613 G AUHCMN 0225 0740
+Expected participants: 19
+
+Prepare quotation
+https://example.invalid/supplier/trips/example/quote
+
+Automatic notification — LeJapon.ma

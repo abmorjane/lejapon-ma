@@ -1,0 +1,2886 @@
+{
+  "Chargement…": {
+    "en": "Loading…",
+    "ja": "読み込み中…"
+  },
+  "Accès refusé": {
+    "en": "Access denied",
+    "ja": "アクセスできません"
+  },
+  "Cette zone est réservée aux fournisseurs partenaires au Japon.": {
+    "en": "This portal is reserved for our supplier partners in Japan.",
+    "ja": "このポータルは日本の提携サプライヤー専用です。"
+  },
+  "Se déconnecter": {
+    "en": "Sign out",
+    "ja": "ログアウト"
+  },
+  "/ Japan office": {
+    "en": "/ Japan Office",
+    "ja": "/ Japan Office"
+  },
+  "Vue d'ensemble": {
+    "en": "Overview",
+    "ja": "概要"
+  },
+  "Voyages assignés": {
+    "en": "Assigned trips",
+    "ja": "担当旅行"
+  },
+  "FIT assignés": {
+    "en": "Assigned FIT requests",
+    "ja": "担当FIT案件"
+  },
+  "Fournisseur Japon": {
+    "en": "Japan supplier",
+    "ja": "日本サプライヤー"
+  },
+  "Sent": {
+    "en": "Sent",
+    "ja": "送信済み"
+  },
+  "Waiting supplier": {
+    "en": "Awaiting supplier response",
+    "ja": "サプライヤー回答待ち"
+  },
+  "Supplier replied": {
+    "en": "Supplier responded",
+    "ja": "回答済み"
+  },
+  "Option / Hold": {
+    "en": "Option / Hold",
+    "ja": "仮予約・保留"
+  },
+  "Confirmed": {
+    "en": "Booking confirmed",
+    "ja": "予約確定"
+  },
+  "Unavailable": {
+    "en": "Unavailable",
+    "ja": "手配不可"
+  },
+  "Alternative proposed": {
+    "en": "Alternative proposed",
+    "ja": "代替案提出済み"
+  },
+  "Supplier response saved.": {
+    "en": "Response saved.",
+    "ja": "回答を保存しました。"
+  },
+  "Document uploaded.": {
+    "en": "Document uploaded.",
+    "ja": "書類をアップロードしました。"
+  },
+  "FIT requests": {
+    "en": "FIT requests",
+    "ja": "FIT案件"
+  },
+  "Only services assigned to your supplier account are visible. Client prices and internal margins are never shown.": {
+    "en": "Only services assigned to your supplier account are visible. Client prices and internal margins are never shown.",
+    "ja": "担当サービスのみ表示されます。お客様への販売価格や社内利益率は表示されません。"
+  },
+  "No FIT supplier request assigned.": {
+    "en": "No FIT requests assigned.",
+    "ja": "担当FIT案件はありません。"
+  },
+  "· Version": {
+    "en": "· Version",
+    "ja": "・バージョン"
+  },
+  "Response status": {
+    "en": "Response status",
+    "ja": "回答状況"
+  },
+  "Quoted cost": {
+    "en": "Quoted cost",
+    "ja": "見積金額"
+  },
+  "Confirmed cost": {
+    "en": "Confirmed cost",
+    "ja": "確定金額"
+  },
+  "Confirmation number": {
+    "en": "Confirmation number",
+    "ja": "予約確認番号"
+  },
+  "Hold release deadline": {
+    "en": "Hold release deadline",
+    "ja": "仮予約解除期限"
+  },
+  "Response": {
+    "en": "Response",
+    "ja": "回答"
+  },
+  "Supplier notes": {
+    "en": "Supplier notes",
+    "ja": "サプライヤー備考"
+  },
+  "Alternative name": {
+    "en": "Alternative name",
+    "ja": "代替案名"
+  },
+  "Alternative cost": {
+    "en": "Alternative cost",
+    "ja": "代替案の金額"
+  },
+  "Description": {
+    "en": "Description",
+    "ja": "内容"
+  },
+  "Operational impact": {
+    "en": "Operational impact",
+    "ja": "運営への影響"
+  },
+  "Save response": {
+    "en": "Save response",
+    "ja": "回答を保存"
+  },
+  "Uploading…": {
+    "en": "Uploading…",
+    "ja": "アップロード中…"
+  },
+  "Upload document": {
+    "en": "Upload document",
+    "ja": "書類をアップロード"
+  },
+  "document(s) uploaded": {
+    "en": "document(s) uploaded",
+    "ja": "件の書類をアップロード済み"
+  },
+  "Handling fournisseur": {
+    "en": "Supplier handling",
+    "ja": "サプライヤー手配手数料"
+  },
+  "Pourcentage fournisseur (%)": {
+    "en": "Supplier handling percentage (%)",
+    "ja": "手配手数料率（%）"
+  },
+  "Pourcentage handling fournisseur": {
+    "en": "Supplier handling percentage",
+    "ja": "サプライヤー手配手数料率"
+  },
+  "Le handling s’applique aux catégories suivantes :": {
+    "en": "Handling applies to:",
+    "ja": "手数料の適用対象："
+  },
+  "Devis entier": {
+    "en": "Entire quotation",
+    "ja": "見積り全体"
+  },
+  "Seules les lignes incluses des catégories sélectionnées entrent dans la base de calcul.": {
+    "en": "Only included lines in the selected categories enter the handling base.",
+    "ja": "選択したカテゴリーのうち、合計に含める明細のみが手数料の計算対象となります。"
+  },
+  "Hébergement": {
+    "en": "Accommodation",
+    "ja": "宿泊"
+  },
+  "Transport": {
+    "en": "Transport",
+    "ja": "交通"
+  },
+  "Activités": {
+    "en": "Activities",
+    "ja": "観光・アクティビティ"
+  },
+  "Guides": {
+    "en": "Guides",
+    "ja": "ガイド"
+  },
+  "Autres": {
+    "en": "Other costs",
+    "ja": "その他費用"
+  },
+  "Reconnue": {
+    "en": "Recognized",
+    "ja": "認識済み"
+  },
+  "À vérifier": {
+    "en": "Review required",
+    "ja": "要確認"
+  },
+  "Ignorée": {
+    "en": "Ignored",
+    "ja": "対象外"
+  },
+  "non détecté": {
+    "en": "Not detected",
+    "ja": "未検出"
+  },
+  "Import Excel": {
+    "en": "Excel import",
+    "ja": "Excelインポート"
+  },
+  "Prévisualisation de la première feuille uniquement. Les autres feuilles ne sont jamais analysées.": {
+    "en": "Preview of the first sheet only. Other sheets are never processed.",
+    "ja": "最初のシートのみをプレビューします。他のシートは処理しません。"
+  },
+  "Première feuille détectée": {
+    "en": "First sheet detected",
+    "ja": "検出された最初のシート"
+  },
+  "Lignes reconnues": {
+    "en": "Recognized rows",
+    "ja": "認識済みの行"
+  },
+  "Lignes à vérifier": {
+    "en": "Rows to review",
+    "ja": "確認が必要な行"
+  },
+  "Lignes ignorées": {
+    "en": "Ignored rows",
+    "ja": "対象外の行"
+  },
+  "autre(s) feuille(s) ignorée(s)": {
+    "en": "other sheet(s) ignored",
+    "ja": "枚の他のシートは対象外"
+  },
+  "Sous-total services avant handling (source)": {
+    "en": "Services subtotal before handling (source)",
+    "ja": "手数料加算前のサービス小計（原本）"
+  },
+  "Handling fournisseur :": {
+    "en": "Supplier handling:",
+    "ja": "手配手数料："
+  },
+  "Total fournisseur final (source)": {
+    "en": "Final supplier total (source)",
+    "ja": "サプライヤー合計（原本）"
+  },
+  "Total fournisseur projeté": {
+    "en": "Projected supplier total",
+    "ja": "サプライヤー合計（計算値）"
+  },
+  "Périmètre suggéré par le montant source :": {
+    "en": "Scope suggested by the source amount:",
+    "ja": "原本の金額から推定した適用範囲："
+  },
+  ". Vérifiez les conditions retenues ci-dessous.": {
+    "en": ". Please review the terms below.",
+    "ja": "。以下の条件をご確認ください。"
+  },
+  "Périmètre suggéré par le montant source : à confirmer.": {
+    "en": "Scope suggested by the source amount: confirmation required.",
+    "ja": "原本の金額から推定した適用範囲：ご確認が必要です。"
+  },
+  "Handling scope: confirmation required": {
+    "en": "Handling scope: confirmation required",
+    "ja": "手数料の適用範囲：確認が必要です"
+  },
+  "Périmètre confirmé par le fournisseur.": {
+    "en": "Scope confirmed by the supplier.",
+    "ja": "サプライヤーが適用範囲を確認済みです。"
+  },
+  "Je confirme le pourcentage et les catégories du handling.": {
+    "en": "I confirm the handling percentage and categories.",
+    "ja": "手数料率および適用カテゴリーを確認しました。"
+  },
+  "Écart du handling calculé avec le montant source :": {
+    "en": "Calculated handling difference from source:",
+    "ja": "手数料の計算値と原本との差額："
+  },
+  ". Le montant source ne sera pas modifié.": {
+    "en": ". The source amount will be preserved.",
+    "ja": "。原本の金額は変更せず保持します。"
+  },
+  "J’accepte explicitement le handling recalculé et son écart avec la source.": {
+    "en": "I explicitly accept the recalculated handling and its difference from the source.",
+    "ja": "手数料の再計算値と原本との差額を確認し、承諾します。"
+  },
+  "Le handling est calculé au niveau du devis sur les catégories confirmées. Le montant source reste conservé dans l’audit.": {
+    "en": "Handling is calculated at quotation level for the confirmed categories. The source amount is retained in the audit history.",
+    "ja": "確認済みカテゴリーを対象に、見積り単位で手数料を計算します。原本の金額は監査履歴に保持します。"
+  },
+  "Réconciliation à vérifier avant confirmation": {
+    "en": "Review reconciliation before confirming",
+    "ja": "確定前に金額の照合をご確認ください"
+  },
+  "Services recalculés": {
+    "en": "Recalculated services",
+    "ja": "サービス再計算額"
+  },
+  "+ handling": {
+    "en": "+ handling",
+    "ja": "＋手配手数料"
+  },
+  "= total fournisseur importé": {
+    "en": "= imported supplier total",
+    "ja": "＝インポート後のサプライヤー合計"
+  },
+  ". Écart avec le total fournisseur Excel :": {
+    "en": ". Difference from Excel supplier total:",
+    "ja": "。Excelのサプライヤー合計との差額："
+  },
+  "Sécurité versioning : le devis courant reste intact. L’import créera V{{value0}} en brouillon.": {
+    "en": "The current quotation is preserved. Import will create draft V{{value0}}.",
+    "ja": "現在の見積りは保持されます。インポートすると下書きV{{value0}}を作成します。"
+  },
+  "Le brouillon courant ne contient aucune ligne enregistrée : l’import sera ajouté directement à cette version.": {
+    "en": "The current draft has no saved lines: import will add lines to this version.",
+    "ja": "現在の下書きには保存済み明細がないため、このバージョンに明細を追加します。"
+  },
+  "ligne(s) nécessitent une décision": {
+    "en": "row(s) require a decision",
+    "ja": "行について処理方法を選択してください"
+  },
+  "L’import reste bloqué tant que chaque sous-total Excel non renseigné n’a pas été traité explicitement.": {
+    "en": "Import remains blocked until every missing Excel subtotal has an explicit decision.",
+    "ja": "Excelの小計が未入力の各行について処理方法を選択するまで、インポートできません。"
+  },
+  "erreur(s) Excel neutralisée(s)": {
+    "en": "Excel error(s) safely ignored",
+    "ja": "件のExcelエラーを除外済み"
+  },
+  "Catégorie": {
+    "en": "Category",
+    "ja": "カテゴリー"
+  },
+  "Dates": {
+    "en": "Dates",
+    "ja": "日付"
+  },
+  "Quantité": {
+    "en": "Quantity",
+    "ja": "数量"
+  },
+  "Prix": {
+    "en": "Price",
+    "ja": "価格"
+  },
+  "Sous-total Excel": {
+    "en": "Excel subtotal",
+    "ja": "Excel小計"
+  },
+  "Calcul Travel OS": {
+    "en": "System calculation",
+    "ja": "システム計算額"
+  },
+  "Impact retenu": {
+    "en": "Accepted amount",
+    "ja": "採用金額"
+  },
+  "Décision": {
+    "en": "Decision",
+    "ja": "処理方法"
+  },
+  "État": {
+    "en": "State",
+    "ja": "状態"
+  },
+  "Handling du devis": {
+    "en": "Quotation handling",
+    "ja": "見積りの手配手数料"
+  },
+  "Ligne Excel": {
+    "en": "Excel row",
+    "ja": "Excel行"
+  },
+  "Non renseigné": {
+    "en": "Not provided",
+    "ja": "未入力"
+  },
+  "Choisir…": {
+    "en": "Select…",
+    "ja": "選択…"
+  },
+  "Inclure le recalcul": {
+    "en": "Include recalculated amount",
+    "ja": "再計算額を採用"
+  },
+  "Importer non chiffré": {
+    "en": "Import without a charge",
+    "ja": "金額なしでインポート"
+  },
+  "Ignorer la ligne": {
+    "en": "Ignore row",
+    "ja": "行を対象外にする"
+  },
+  "Les lignes sans sous-total Excel exigent une décision. « Inclure le recalcul » retient le montant Travel OS, « Importer non chiffré » conserve la prestation avec un impact nul, et « Ignorer » ne crée aucune ligne.": {
+    "en": "Rows without an Excel subtotal require a decision. “Include recalculated amount” uses the system amount, “Import without a charge” keeps the service at zero cost, and “Ignore row” creates no line.",
+    "ja": "Excelの小計がない行は処理方法を選択してください。「再計算額を採用」はシステム計算額を使用し、「金額なしでインポート」はサービスを金額ゼロで保持します。「行を対象外にする」は明細を作成しません。"
+  },
+  "Annuler": {
+    "en": "Cancel",
+    "ja": "キャンセル"
+  },
+  "Import en cours…": {
+    "en": "Importing…",
+    "ja": "インポート中…"
+  },
+  "Confirmer l’import": {
+    "en": "Confirm import",
+    "ja": "インポートを確定"
+  },
+  "Évolutions depuis V": {
+    "en": "Changes since V",
+    "ja": "Vからの変更："
+  },
+  "Comparaison en cours…": {
+    "en": "Comparing…",
+    "ja": "比較中…"
+  },
+  "Comparaison indisponible": {
+    "en": "Comparison unavailable",
+    "ja": "比較できません"
+  },
+  "{{value0}} ajout(s) · {{value1}} retrait(s) · {{value2}} modification(s)": {
+    "en": "{{value0}} added · {{value1}} removed · {{value2}} changed",
+    "ja": "追加{{value0}}件・削除{{value1}}件・変更{{value2}}件"
+  },
+  "Aucune différence enregistrée.": {
+    "en": "No changes recorded.",
+    "ja": "変更はありません。"
+  },
+  "Hôtels": {
+    "en": "Hotels",
+    "ja": "ホテル"
+  },
+  "Visites / tickets / activités": {
+    "en": "Visits / tickets / activities",
+    "ja": "観光・チケット・アクティビティ"
+  },
+  "Autres coûts": {
+    "en": "Other costs",
+    "ja": "その他費用"
+  },
+  "Brouillon": {
+    "en": "Draft",
+    "ja": "下書き"
+  },
+  "Soumis": {
+    "en": "Submitted",
+    "ja": "提出済み"
+  },
+  "Revu": {
+    "en": "Under review",
+    "ja": "審査中"
+  },
+  "Approuvé": {
+    "en": "Approved",
+    "ja": "承認済み"
+  },
+  "Révision demandée": {
+    "en": "Revision requested",
+    "ja": "修正依頼"
+  },
+  "Rejeté": {
+    "en": "Rejected",
+    "ja": "却下"
+  },
+  "Superseded": {
+    "en": "Superseded",
+    "ja": "旧バージョン"
+  },
+  "À faire": {
+    "en": "To book",
+    "ja": "手配待ち"
+  },
+  "En attente": {
+    "en": "Booking pending",
+    "ja": "予約回答待ち"
+  },
+  "Confirmé": {
+    "en": "Booking confirmed",
+    "ja": "予約確定"
+  },
+  "Problème": {
+    "en": "Issue",
+    "ja": "要対応"
+  },
+  "À confirmer": {
+    "en": "To be confirmed",
+    "ja": "未確定"
+  },
+  "Attention requise": {
+    "en": "Attention required",
+    "ja": "要確認"
+  },
+  "Modifié": {
+    "en": "Modified",
+    "ja": "変更あり"
+  },
+  "Général": {
+    "en": "General",
+    "ja": "一般"
+  },
+  "Hôtel": {
+    "en": "Hotel",
+    "ja": "ホテル"
+  },
+  "Urgent": {
+    "en": "Urgent",
+    "ja": "至急"
+  },
+  "Hotel vouchers": {
+    "en": "Hotel vouchers",
+    "ja": "ホテルバウチャー"
+  },
+  "Transport vouchers": {
+    "en": "Transport vouchers",
+    "ja": "交通バウチャー"
+  },
+  "Guide confirmations": {
+    "en": "Guide confirmations",
+    "ja": "ガイド手配確認書"
+  },
+  "Flight tickets": {
+    "en": "Flight tickets",
+    "ja": "航空券"
+  },
+  "Rooming lists": {
+    "en": "Rooming lists",
+    "ja": "ルーミングリスト"
+  },
+  "Emergency contacts": {
+    "en": "Emergency contacts",
+    "ja": "緊急連絡先"
+  },
+  "Contracts": {
+    "en": "Contracts",
+    "ja": "契約書"
+  },
+  "Other": {
+    "en": "Other",
+    "ja": "その他"
+  },
+  "Préparation à commencer": {
+    "en": "Preparation not started",
+    "ja": "準備未開始"
+  },
+  "Préparation en cours": {
+    "en": "Preparation in progress",
+    "ja": "準備中"
+  },
+  "Dossier à contrôler par Japan Office": {
+    "en": "Ready for Japan Office operational review",
+    "ja": "Japan Office運営確認待ち"
+  },
+  "Dossier contrôlé par Japan Office": {
+    "en": "Operations checked by Japan Office",
+    "ja": "Japan Office運営確認済み"
+  },
+  "Dossier prêt au voyage": {
+    "en": "Ready to travel",
+    "ja": "出発準備完了"
+  },
+  "Japan office": {
+    "en": "Japan Office",
+    "ja": "Japan Office"
+  },
+  "Impossible de vérifier votre rattachement fournisseur.": {
+    "en": "Unable to verify your supplier membership.",
+    "ja": "サプライヤー所属を確認できません。"
+  },
+  "Votre compte fournisseur n'est pas encore relié à un fournisseur.": {
+    "en": "Your account is not linked to a supplier yet.",
+    "ja": "このアカウントはまだサプライヤーに紐づいていません。"
+  },
+  "Ce voyage ne vous est pas assigné.": {
+    "en": "This trip is not assigned to you.",
+    "ja": "この旅行は担当案件ではありません。"
+  },
+  "Fournisseurs: {{value0}}": {
+    "en": "Suppliers: {{value0}}",
+    "ja": "サプライヤー：{{value0}}"
+  },
+  "Aucun fournisseur assigné": {
+    "en": "No supplier assigned",
+    "ja": "担当サプライヤーなし"
+  },
+  "Impossible de charger le dossier fournisseur. {{value0}}": {
+    "en": "Unable to load the supplier trip details. {{value0}}",
+    "ja": "担当旅行の詳細を読み込めません。{{value0}}"
+  },
+  "Comparaison indisponible : les lignes de la version courante n’ont pas pu être chargées.": {
+    "en": "Comparison unavailable: current quotation lines could not be loaded.",
+    "ja": "比較できません。現在の見積明細を読み込めませんでした。"
+  },
+  "Pourcentage fournisseur : {{value0}} % → {{value1}} %": {
+    "en": "Supplier handling percentage: {{value0}} % → {{value1}} %",
+    "ja": "手配手数料率：{{value0}} % → {{value1}} %"
+  },
+  "Montant du handling : {{value0}} → {{value1}}": {
+    "en": "Handling amount: {{value0}} → {{value1}}",
+    "ja": "手配手数料額：{{value0}} → {{value1}}"
+  },
+  "Périmètre : {{value0}} → {{value1}}": {
+    "en": "Handling scope: {{value0}} → {{value1}}",
+    "ja": "手数料の適用範囲：{{value0}} → {{value1}}"
+  },
+  "Accusé de lecture : {{value0}}": {
+    "en": "Read receipt: {{value0}}",
+    "ja": "既読処理：{{value0}}"
+  },
+  "Message non sauvegardé.": {
+    "en": "Message was not saved.",
+    "ja": "メッセージを保存できませんでした。"
+  },
+  "Message envoyé.": {
+    "en": "Message sent.",
+    "ja": "メッセージを送信しました。"
+  },
+  "Document ajouté.": {
+    "en": "Document added.",
+    "ja": "書類を追加しました。"
+  },
+  "Document non modifié : accès refusé ou voyage devenu non modifiable.": {
+    "en": "Document not updated: access denied or trip no longer editable.",
+    "ja": "書類を更新できません。権限がないか、旅行が編集不可になっています。"
+  },
+  "Nouvelle version sauvegardée ; ancien fichier conservé : {{value0}}": {
+    "en": "New version saved; previous file retained: {{value0}}",
+    "ja": "新しい版を保存しました。以前のファイルは保持されています：{{value0}}"
+  },
+  "Version remplacée.": {
+    "en": "Version replaced.",
+    "ja": "書類の版を更新しました。"
+  },
+  "Document non supprimé : accès refusé ou voyage devenu non modifiable.": {
+    "en": "Document not removed: access denied or trip no longer editable.",
+    "ja": "書類を削除できません。権限がないか、旅行が編集不可になっています。"
+  },
+  "Document retiré de la liste ; fichier conservé : {{value0}}": {
+    "en": "Document removed from the list; file retained: {{value0}}",
+    "ja": "一覧から書類を削除しました。ファイルは保持されています：{{value0}}"
+  },
+  "Document supprimé.": {
+    "en": "Document removed.",
+    "ja": "書類を削除しました。"
+  },
+  "Rattachement fournisseur introuvable.": {
+    "en": "Supplier membership not found.",
+    "ja": "サプライヤー所属が見つかりません。"
+  },
+  "Version du devis introuvable.": {
+    "en": "Quotation version not found.",
+    "ja": "見積りバージョンが見つかりません。"
+  },
+  "Certaines lignes du devis n’ont pas pu être chargées. Consultez les erreurs affichées.": {
+    "en": "Some quotation lines could not be loaded. Please review the displayed errors.",
+    "ja": "一部の見積明細を読み込めませんでした。表示されたエラーをご確認ください。"
+  },
+  "Chargement du devis impossible : {{value0}}": {
+    "en": "Unable to load quotation: {{value0}}",
+    "ja": "見積りを読み込めません：{{value0}}"
+  },
+  "Fournisseur assigné. L’email reste en échec dans la file de notifications.": {
+    "en": "Supplier assigned. Email delivery failed and remains in the notification queue.",
+    "ja": "担当サプライヤーを設定しました。メール送信に失敗したため、通知キューに記録されています。"
+  },
+  "Conditions de handling fournisseur indisponibles.": {
+    "en": "Supplier handling terms unavailable.",
+    "ja": "手配手数料の条件を取得できません。"
+  },
+  "Enregistrement bloqué : rechargez toutes les lignes du devis avant de sauvegarder.": {
+    "en": "Save blocked: reload all quotation lines before saving.",
+    "ja": "保存できません。見積明細をすべて再読み込みしてください。"
+  },
+  "Choisissez le fournisseur avant d'enregistrer ou de soumettre le devis.": {
+    "en": "Select a supplier before saving or submitting the quotation.",
+    "ja": "見積りの保存・提出前にサプライヤーを選択してください。"
+  },
+  "Migration SQL quote engine requise: {{value0}}": {
+    "en": "Quotation database migration required: {{value0}}",
+    "ja": "見積りデータベースの更新が必要です：{{value0}}"
+  },
+  "Migration SQL quote engine requise avant l'enregistrement.": {
+    "en": "Quotation database migration required before saving.",
+    "ja": "保存するには見積りデータベースの更新が必要です。"
+  },
+  "Demande de devis non sauvegardée.": {
+    "en": "Quotation request was not saved.",
+    "ja": "見積依頼を保存できませんでした。"
+  },
+  "Devis soumis. La notification email admin a échoué et reste traçable dans les logs email.": {
+    "en": "Quotation submitted. Admin email delivery failed and is recorded in the email logs.",
+    "ja": "見積りを提出しました。管理者へのメール送信に失敗したため、メールログに記録されています。"
+  },
+  "Devis soumis à l'équipe LeJapon.ma.": {
+    "en": "Quotation submitted to LeJapon.ma.",
+    "ja": "見積りをLeJapon.maへ提出しました。"
+  },
+  "Devis enregistré.": {
+    "en": "Quotation saved.",
+    "ja": "見積りを保存しました。"
+  },
+  "Enregistrez le devis avant de modifier le workflow.": {
+    "en": "Save the quotation before changing its workflow status.",
+    "ja": "進捗状況を変更する前に見積りを保存してください。"
+  },
+  "Statut workflow: {{value0}}": {
+    "en": "Workflow status: {{value0}}",
+    "ja": "進捗状況：{{value0}}"
+  },
+  "Préparation opérationnelle enregistrée.": {
+    "en": "Operational preparation saved.",
+    "ja": "運営準備を保存しました。"
+  },
+  "Version V{{value0}} créée à partir de la version sélectionnée.": {
+    "en": "Version V{{value0}} created from the selected version.",
+    "ja": "選択したバージョンからV{{value0}}を作成しました。"
+  },
+  "Statut enregistré. L’email fournisseur a échoué et reste traçable.": {
+    "en": "Status saved. Supplier email delivery failed and is recorded.",
+    "ja": "状況を保存しました。サプライヤーへのメール送信失敗は記録されています。"
+  },
+  "Devis approuvé.": {
+    "en": "Quotation approved.",
+    "ja": "見積りを承認しました。"
+  },
+  "Correction demandée.": {
+    "en": "Revision requested.",
+    "ja": "修正を依頼しました。"
+  },
+  "Statut de revue enregistré.": {
+    "en": "Review status saved.",
+    "ja": "審査状況を保存しました。"
+  },
+  "Ligne incluse dans le total.": {
+    "en": "Line included in the total.",
+    "ja": "明細を合計に含めました。"
+  },
+  "Ligne exclue du total sans modifier son prix.": {
+    "en": "Line excluded from the total without changing its price.",
+    "ja": "価格を変更せず、明細を合計から除外しました。"
+  },
+  "Enregistrez la ligne avant d’ajouter un commentaire.": {
+    "en": "Save the line before adding a comment.",
+    "ja": "コメントを追加する前に明細を保存してください。"
+  },
+  "Commentaire enregistré. L’email associé a échoué et reste traçable.": {
+    "en": "Comment saved. Email delivery failed and is recorded.",
+    "ja": "コメントを保存しました。メール送信失敗は記録されています。"
+  },
+  "Statut de réservation enregistré.": {
+    "en": "Booking status saved.",
+    "ja": "予約状況を保存しました。"
+  },
+  "Statut d’exécution enregistré.": {
+    "en": "Execution status saved.",
+    "ja": "手配の進捗を保存しました。"
+  },
+  "Suivi opérationnel confirmé.": {
+    "en": "Operational follow-up confirmed.",
+    "ja": "運営の確認を完了しました。"
+  },
+  "Suivi opérationnel à compléter.": {
+    "en": "Operational follow-up remains incomplete.",
+    "ja": "運営の確認事項が残っています。"
+  },
+  "Sélectionnez un fichier Excel .xlsx.": {
+    "en": "Select an Excel .xlsx file.",
+    "ja": "Excel（.xlsx）ファイルを選択してください。"
+  },
+  "Le fichier Excel dépasse la limite de 25 Mo.": {
+    "en": "The Excel file exceeds the 25 MB limit.",
+    "ja": "Excelファイルが上限の25 MBを超えています。"
+  },
+  "Aucune ligne de devis reconnue dans la première feuille.": {
+    "en": "No quotation lines recognized in the first sheet.",
+    "ja": "最初のシートに見積明細を認識できませんでした。"
+  },
+  "Choisissez une décision pour chaque ligne sans sous-total Excel.": {
+    "en": "Choose a decision for every row without an Excel subtotal.",
+    "ja": "Excel小計のない各行について処理方法を選択してください。"
+  },
+  "Le brouillon courant n’a pas pu être sécurisé avant l’import.": {
+    "en": "The current draft could not be secured before import.",
+    "ja": "インポート前に現在の下書きを保存できませんでした。"
+  },
+  "L’import a réussi mais la nouvelle version du devis n’a pas été identifiée.": {
+    "en": "Import succeeded but the new quotation version could not be identified.",
+    "ja": "インポートは成功しましたが、新しい見積りバージョンを特定できませんでした。"
+  },
+  "Import terminé dans V{{value0}} (brouillon). La version précédente reste intacte.": {
+    "en": "Import completed in draft V{{value0}}. The previous version is preserved.",
+    "ja": "下書きV{{value0}}へのインポートが完了しました。以前のバージョンは保持されています。"
+  },
+  "Import terminé : {{value0}} lignes ajoutées au brouillon.": {
+    "en": "Import completed: {{value0}} lines added to the draft.",
+    "ja": "インポートが完了しました。下書きに{{value0}}件の明細を追加しました。"
+  },
+  "Devis": {
+    "en": "Quotation",
+    "ja": "見積り"
+  },
+  "Totaux": {
+    "en": "Totals",
+    "ja": "合計"
+  },
+  "Vue opérationnelle": {
+    "en": "Operational view",
+    "ja": "運営情報"
+  },
+  "Participants": {
+    "en": "Participants",
+    "ja": "参加者"
+  },
+  "Chambres": {
+    "en": "Rooms",
+    "ja": "客室"
+  },
+  "Extras": {
+    "en": "Extras",
+    "ja": "追加サービス"
+  },
+  "Summary": {
+    "en": "Summary",
+    "ja": "概要"
+  },
+  "Flights": {
+    "en": "Flights",
+    "ja": "フライト"
+  },
+  "Hotels": {
+    "en": "Hotels",
+    "ja": "ホテル"
+  },
+  "Rooming List": {
+    "en": "Rooming list",
+    "ja": "ルーミングリスト"
+  },
+  "Activities": {
+    "en": "Activities",
+    "ja": "観光・アクティビティ"
+  },
+  "Emergency Contacts": {
+    "en": "Emergency contacts",
+    "ja": "緊急連絡先"
+  },
+  "Financial Quote": {
+    "en": "Financial quotation",
+    "ja": "見積金額"
+  },
+  "Operational Programme": {
+    "en": "Operational programme",
+    "ja": "運営行程表"
+  },
+  "Comments": {
+    "en": "Comments",
+    "ja": "コメント"
+  },
+  "Accès fournisseur restreint": {
+    "en": "Supplier access restricted",
+    "ja": "サプライヤーのアクセス制限"
+  },
+  "Retour à mes voyages": {
+    "en": "Back to my trips",
+    "ja": "担当旅行に戻る"
+  },
+  "Voyages fournisseur": {
+    "en": "Supplier trips",
+    "ja": "担当旅行"
+  },
+  "Devis Japon - {{value0}}": {
+    "en": "Japan quotation — {{value0}}",
+    "ja": "日本手配の見積り — {{value0}}"
+  },
+  "{{value0}} · {{value1}} → {{value2}} · {{value3}} jours": {
+    "en": "{{value0}} · {{value1}} → {{value2}} · {{value3}} days",
+    "ja": "{{value0}}・{{value1}} → {{value2}}・{{value3}}日間"
+  },
+  "Enregistrer": {
+    "en": "Save",
+    "ja": "保存"
+  },
+  "Soumettre": {
+    "en": "Submit quotation",
+    "ja": "見積りを提出"
+  },
+  "Créer une nouvelle version": {
+    "en": "Create new version",
+    "ja": "新しいバージョンを作成"
+  },
+  "Ce voyage est archivé. Les devis, versions, commentaires, documents et données opérationnelles restent consultables en lecture seule.": {
+    "en": "This trip is archived. Quotations, versions, comments, documents and operational data remain available in read-only mode.",
+    "ja": "この旅行はアーカイブされています。見積り、各バージョン、コメント、書類、運営情報は閲覧のみ可能です。"
+  },
+  "Versions du devis fournisseur": {
+    "en": "Supplier quotation versions",
+    "ja": "サプライヤー見積りの各バージョン"
+  },
+  "Les versions validées restent consultables et ne sont jamais écrasées.": {
+    "en": "Approved versions remain available and are never overwritten.",
+    "ja": "承認済みバージョンは保持され、上書きされません。"
+  },
+  "Le devis n’a pas pu être chargé.": {
+    "en": "Quotation could not be loaded.",
+    "ja": "見積りを読み込めませんでした。"
+  },
+  "Réessayer le chargement des lignes": {
+    "en": "Retry loading lines",
+    "ja": "明細を再読み込み"
+  },
+  "Une table du devis fournisseur est introuvable. Vérifiez le schéma et l’erreur ci-dessous avant d’appliquer un correctif SQL.": {
+    "en": "A supplier quotation table could not be found. Check the schema and error below before applying an SQL fix.",
+    "ja": "見積りテーブルが見つかりません。SQL修正を適用する前に、スキーマと以下のエラーをご確認ください。"
+  },
+  "Fournisseur assigné au devis": {
+    "en": "Supplier assigned to this quotation",
+    "ja": "担当サプライヤー"
+  },
+  "Choisir le fournisseur": {
+    "en": "Select supplier",
+    "ja": "サプライヤーを選択"
+  },
+  "Changer ce fournisseur met immédiatement à jour l’assignation, crée V1 si nécessaire et envoie la demande de devis.": {
+    "en": "Changing the supplier immediately updates the assignment, creates V1 if needed and sends the quotation request.",
+    "ja": "担当変更は即時反映されます。必要に応じてV1を作成し、見積依頼を送信します。"
+  },
+  "Les conditions de handling fournisseur ne sont pas encore disponibles. L’enregistrement fournisseur et l’import sont suspendus ; contactez LeJapon.ma.": {
+    "en": "Supplier handling terms are unavailable. Saving and importing are suspended; please contact LeJapon.ma.",
+    "ja": "手配手数料の条件を取得できないため、保存・インポートを停止しています。LeJapon.maへお問い合わせください。"
+  },
+  "Devis commercial :": {
+    "en": "Commercial quotation:",
+    "ja": "商取引の見積り："
+  },
+  "LeJapon.ma approuve le devis ou demande une révision. Passeports, rooming, documents et réservations sont suivis dans la vue opérationnelle après approbation et ne bloquent pas la soumission.": {
+    "en": "LeJapon.ma approves the quotation or requests a revision. Passports, rooming, documents and bookings are operational follow-up after approval and never block quotation submission.",
+    "ja": "見積りの承認・修正依頼はLeJapon.maが行います。パスポート、客室割り当て、書類、予約は承認後の運営確認事項であり、見積りの提出を妨げません。"
+  },
+  "Retour LeJapon.ma :": {
+    "en": "LeJapon.ma feedback:",
+    "ja": "LeJapon.maからのフィードバック："
+  },
+  "Statut": {
+    "en": "Status",
+    "ja": "状況"
+  },
+  "Commission office (%)": {
+    "en": "Internal office commission (%)",
+    "ja": "社内コミッション（%）"
+  },
+  "JPY → MAD": {
+    "en": "JPY → MAD",
+    "ja": "JPY → MAD"
+  },
+  "Sous-total services JPY": {
+    "en": "Services subtotal JPY",
+    "ja": "サービス小計（JPY）"
+  },
+  "Indisponible": {
+    "en": "Unavailable",
+    "ja": "取得不可"
+  },
+  "Handling historique JPY": {
+    "en": "Historical handling JPY",
+    "ja": "旧バージョンの手配手数料（JPY）"
+  },
+  "Handling fournisseur JPY": {
+    "en": "Supplier handling JPY",
+    "ja": "手配手数料（JPY）"
+  },
+  "Total fournisseur JPY": {
+    "en": "Supplier total JPY",
+    "ja": "サプライヤー合計（JPY）"
+  },
+  "Commission JPY": {
+    "en": "Commission JPY",
+    "ja": "コミッション（JPY）"
+  },
+  "Total avec commission interne JPY": {
+    "en": "Total including internal commission JPY",
+    "ja": "社内コミッション込み合計（JPY）"
+  },
+  "Total final MAD": {
+    "en": "Final total MAD",
+    "ja": "最終合計（MAD）"
+  },
+  "Coût / personne": {
+    "en": "Cost per person",
+    "ja": "1人あたりの費用"
+  },
+  "Exports Excel": {
+    "en": "Excel exports",
+    "ja": "Excelエクスポート"
+  },
+  "Données opérationnelles bureau Japon, sans paiements ni marge commerciale.": {
+    "en": "Japan Office operational data, excluding payments and commercial margins.",
+    "ja": "支払情報および営業利益を含まないJapan Officeの運営情報です。"
+  },
+  "Lecture…": {
+    "en": "Reading…",
+    "ja": "読み取り中…"
+  },
+  "Importer Excel": {
+    "en": "Import Excel",
+    "ja": "Excelをインポート"
+  },
+  "Export devis Excel": {
+    "en": "Export quotation to Excel",
+    "ja": "見積りをExcel出力"
+  },
+  "Export vue opérationnelle Excel": {
+    "en": "Export operational view to Excel",
+    "ja": "運営情報をExcel出力"
+  },
+  "Export participants Excel": {
+    "en": "Export participants to Excel",
+    "ja": "参加者をExcel出力"
+  },
+  "Export chambres & extras Excel": {
+    "en": "Export rooms & extras to Excel",
+    "ja": "客室・追加サービスをExcel出力"
+  },
+  "Export dossier global Excel": {
+    "en": "Export full trip file to Excel",
+    "ja": "旅行資料一式をExcel出力"
+  },
+  "Exporter dossier opérationnel": {
+    "en": "Export operational file",
+    "ja": "運営資料を出力"
+  },
+  "Bilan financier": {
+    "en": "Financial summary",
+    "ja": "金額概要"
+  },
+  "Messages": {
+    "en": "Messages",
+    "ja": "メッセージ"
+  },
+  "Documents": {
+    "en": "Documents",
+    "ja": "書類"
+  },
+  "Chambres & extras": {
+    "en": "Rooms & extras",
+    "ja": "客室・追加サービス"
+  },
+  "Handling historique conservé :": {
+    "en": "Historical handling preserved:",
+    "ja": "旧バージョンの手配手数料を保持："
+  },
+  " · {{value0}} % (source Excel)": {
+    "en": " · {{value0}} % (Excel source)",
+    "ja": "・{{value0}} %（Excel原本）"
+  },
+  ". Le périmètre historique n’est pas présumé. Une nouvelle révision permet de confirmer les catégories.": {
+    "en": ". The historical scope is not assumed. A new revision allows categories to be confirmed.",
+    "ja": "。旧バージョンの適用範囲は推測しません。新しい改訂版でカテゴリーを確認できます。"
+  },
+  "Base incluse des catégories sélectionnées :": {
+    "en": "Included base for selected categories:",
+    "ja": "選択したカテゴリーの対象小計："
+  },
+  ". Le handling est calculé par le serveur à l’enregistrement.": {
+    "en": ". Handling is calculated by the server when saving.",
+    "ja": "。保存時にサーバーで手数料を計算します。"
+  },
+  "Cette version conserve une ancienne ligne de handling Excel. Sur un brouillon, renseigner un handling supérieur à zéro l’exclut du total, sans supprimer la ligne ni modifier les versions historiques.": {
+    "en": "This version keeps an old Excel handling line. On a draft, setting handling above zero excludes that line from the total, without removing it or changing historical versions.",
+    "ja": "このバージョンには従来のExcel手数料明細が残っています。下書きで手数料率を0より大きく設定すると、その明細を合計から除外します。明細の削除や過去バージョンの変更は行いません。"
+  },
+  "Les conditions financières du fournisseur sont consultables. Demandez une révision pour modifier le pourcentage, le périmètre ou les prix.": {
+    "en": "Supplier financial terms are available for review. Request a revision to change the percentage, scope or prices.",
+    "ja": "サプライヤーの金額条件を確認できます。料率、適用範囲、価格の変更には修正を依頼してください。"
+  },
+  "Commentaire de revue partagé avec le fournisseur": {
+    "en": "Review comment shared with supplier",
+    "ja": "サプライヤーと共有する審査コメント"
+  },
+  "Motif de correction ou note de validation…": {
+    "en": "Reason for revision or approval note…",
+    "ja": "修正理由・承認時の備考…"
+  },
+  "Passer en revue": {
+    "en": "Mark as under review",
+    "ja": "審査中にする"
+  },
+  "Demander une correction": {
+    "en": "Request revision",
+    "ja": "修正を依頼"
+  },
+  "Approuver le devis commercial": {
+    "en": "Approve commercial quotation",
+    "ja": "見積りを承認"
+  },
+  "Notes internes admin / Japan office": {
+    "en": "Internal admin / Japan Office notes",
+    "ja": "管理者・Japan Office向け社内メモ"
+  },
+  "Bilan indisponible tant que toutes les lignes du devis ne sont pas chargées.": {
+    "en": "Financial summary unavailable until all quotation lines are loaded.",
+    "ja": "見積明細がすべて読み込まれるまで、金額概要は表示できません。"
+  },
+  "Suivi opérationnel consultable. Les réservations commencent après l’approbation commerciale par LeJapon.ma.": {
+    "en": "Operational follow-up is available for review. Bookings begin after LeJapon.ma approves the quotation.",
+    "ja": "運営確認事項を閲覧できます。LeJapon.maの見積承認後に手配を開始します。"
+  },
+  "Exécution des réservations (après approbation)": {
+    "en": "Booking execution (after approval)",
+    "ja": "予約手配（見積承認後）"
+  },
+  "Enregistrer les opérations": {
+    "en": "Save operations",
+    "ja": "運営情報を保存"
+  },
+  "Supplier costs": {
+    "en": "Supplier costs",
+    "ja": "サプライヤー費用"
+  },
+  "Coûts consolidés depuis les lignes du devis fournisseur.": {
+    "en": "Costs consolidated from supplier quotation lines.",
+    "ja": "サプライヤー見積明細から集計した費用です。"
+  },
+  "Hotels total": {
+    "en": "Hotels total",
+    "ja": "ホテル合計"
+  },
+  "Transport total": {
+    "en": "Transport total",
+    "ja": "交通合計"
+  },
+  "Activities total": {
+    "en": "Activities total",
+    "ja": "観光合計"
+  },
+  "Guides total": {
+    "en": "Guides total",
+    "ja": "ガイド合計"
+  },
+  "Other costs total": {
+    "en": "Other costs total",
+    "ja": "その他費用合計"
+  },
+  "Total fournisseur avec handling": {
+    "en": "Supplier total including handling",
+    "ja": "手配手数料込みサプライヤー合計"
+  },
+  "Revenue": {
+    "en": "Revenue",
+    "ja": "売上"
+  },
+  "Chiffre d'affaires calculé depuis les réservations rattachées au voyage.": {
+    "en": "Revenue calculated from bookings linked to this trip.",
+    "ja": "この旅行に紐づく予約から算出した売上です。"
+  },
+  "Total passengers": {
+    "en": "Total passengers",
+    "ja": "参加者総数"
+  },
+  "Revenue MAD": {
+    "en": "Revenue MAD",
+    "ja": "売上（MAD）"
+  },
+  "Revenue JPY": {
+    "en": "Revenue JPY",
+    "ja": "売上（JPY）"
+  },
+  "Revenue per passenger": {
+    "en": "Revenue per passenger",
+    "ja": "1人あたりの売上"
+  },
+  "Profitability": {
+    "en": "Profitability",
+    "ja": "収益性"
+  },
+  "Lecture marge brute et profit net après commission bureau Japon.": {
+    "en": "Gross margin and net profit after Japan Office commission.",
+    "ja": "Japan Officeコミッション控除後の粗利益および純利益です。"
+  },
+  "Gross margin MAD": {
+    "en": "Gross margin MAD",
+    "ja": "粗利益（MAD）"
+  },
+  "Gross margin JPY": {
+    "en": "Gross margin JPY",
+    "ja": "粗利益（JPY）"
+  },
+  "Margin %": {
+    "en": "Margin %",
+    "ja": "利益率（%）"
+  },
+  "Cost per passenger": {
+    "en": "Cost per passenger",
+    "ja": "1人あたりの費用"
+  },
+  "Net profit": {
+    "en": "Net profit",
+    "ja": "純利益"
+  },
+  "Supplier status": {
+    "en": "Booking progress",
+    "ja": "予約の進捗"
+  },
+  "Progression par poste selon les lignes marquées confirmées.": {
+    "en": "Progress by category based on confirmed booking lines.",
+    "ja": "予約確定済み明細に基づくカテゴリー別の進捗です。"
+  },
+  "Réservations hôtels": {
+    "en": "Hotel bookings",
+    "ja": "ホテル予約"
+  },
+  "Réservations transport": {
+    "en": "Transport bookings",
+    "ja": "交通予約"
+  },
+  "Réservations activités": {
+    "en": "Activity bookings",
+    "ja": "観光予約"
+  },
+  "Réservations guides": {
+    "en": "Guide bookings",
+    "ja": "ガイド手配"
+  },
+  "Complet": {
+    "en": "Complete",
+    "ja": "完了"
+  },
+  "Manquant": {
+    "en": "Missing",
+    "ja": "未登録"
+  },
+  "ligne(s) confirmée(s)": {
+    "en": "booking line(s) confirmed",
+    "ja": "件の予約明細が確定"
+  },
+  "Suivi opérationnel du voyage": {
+    "en": "Trip operational follow-up",
+    "ja": "旅行の運営確認事項"
+  },
+  "Le devis financier et la préparation opérationnelle sont suivis séparément. Passeports, rooming et documents ne bloquent jamais la soumission du devis.": {
+    "en": "Quotation and operational preparation are tracked separately. Passports, rooming and documents never block quotation submission.",
+    "ja": "見積りと運営準備は別々に管理します。パスポート、客室割り当て、書類の未完了は見積提出を妨げません。"
+  },
+  "Préparation opérationnelle": {
+    "en": "Operational preparation",
+    "ja": "運営準備"
+  },
+  "item(s) complets": {
+    "en": "item(s) complete",
+    "ja": "項目が完了"
+  },
+  "Suivi opérations": {
+    "en": "Operational follow-up",
+    "ja": "運営確認事項"
+  },
+  "Réservations à confirmer": {
+    "en": "Bookings to confirm",
+    "ja": "予約の確認待ち"
+  },
+  "Confirmer le suivi": {
+    "en": "Confirm follow-up",
+    "ja": "確認事項を完了"
+  },
+  "Confirmer les réservations": {
+    "en": "Confirm bookings",
+    "ja": "予約を確定"
+  },
+  "Suivi à compléter": {
+    "en": "Follow-up incomplete",
+    "ja": "確認事項未完了"
+  },
+  "Réservations à refaire": {
+    "en": "Reset booking confirmations",
+    "ja": "予約確定を取り消す"
+  },
+  "Suivi opérationnel restant": {
+    "en": "Remaining operational follow-up",
+    "ja": "未完了の運営確認事項"
+  },
+  "Prochaine étape bloquée:": {
+    "en": "Next step blocked:",
+    "ja": "次の段階に進めません："
+  },
+  "Messages voyage": {
+    "en": "Trip messages",
+    "ja": "旅行メッセージ"
+  },
+  "Communication Maroc / Bureau Japon.": {
+    "en": "Communication between Morocco and Japan Office.",
+    "ja": "モロッコ側とJapan Officeの連絡です。"
+  },
+  "Migration SQL du centre de messages requise avant utilisation.": {
+    "en": "The messages database migration is required before use.",
+    "ja": "メッセージ機能のデータベース更新が必要です。"
+  },
+  "Le centre de messages n’a pas pu être chargé :": {
+    "en": "Messages could not be loaded:",
+    "ja": "メッセージを読み込めませんでした："
+  },
+  "Réessayer les messages": {
+    "en": "Retry messages",
+    "ja": "メッセージを再読み込み"
+  },
+  "Type de message": {
+    "en": "Message type",
+    "ja": "メッセージの種類"
+  },
+  "Message": {
+    "en": "Message",
+    "ja": "メッセージ"
+  },
+  "Écrire un message pour l’équipe Maroc ou le bureau Japon...": {
+    "en": "Write a message to the Morocco team or Japan Office…",
+    "ja": "モロッコ側またはJapan Officeへのメッセージを入力…"
+  },
+  "Pièces jointes": {
+    "en": "Attachments",
+    "ja": "添付ファイル"
+  },
+  "Retirer les fichiers": {
+    "en": "Remove files",
+    "ja": "添付を取り消す"
+  },
+  "Envoi...": {
+    "en": "Sending…",
+    "ja": "送信中…"
+  },
+  "Envoyer le message": {
+    "en": "Send message",
+    "ja": "メッセージを送信"
+  },
+  "Rechercher dans les messages, auteurs, pièces jointes...": {
+    "en": "Search messages, authors, attachments…",
+    "ja": "メッセージ・送信者・添付ファイルを検索…"
+  },
+  "Tous les types": {
+    "en": "All types",
+    "ja": "すべての種類"
+  },
+  "message(s) affiché(s) sur": {
+    "en": "message(s) shown out of",
+    "ja": "件表示／全"
+  },
+  "Aucun message pour ce filtre.": {
+    "en": "No messages match this filter.",
+    "ja": "この条件に一致するメッセージはありません。"
+  },
+  "Moi": {
+    "en": "Me",
+    "ja": "自分"
+  },
+  "Ajouter un document": {
+    "en": "Add document",
+    "ja": "書類を追加"
+  },
+  "Documents opérationnels du voyage stockés dans Supabase Storage.": {
+    "en": "Operational trip documents stored in private storage.",
+    "ja": "非公開ストレージに保存される旅行運営書類です。"
+  },
+  "Migration SQL du centre documents requise avant utilisation.": {
+    "en": "The documents database migration is required before use.",
+    "ja": "書類機能のデータベース更新が必要です。"
+  },
+  "Les documents n’ont pas pu être chargés :": {
+    "en": "Documents could not be loaded:",
+    "ja": "書類を読み込めませんでした："
+  },
+  "Réessayer les documents": {
+    "en": "Retry documents",
+    "ja": "書類を再読み込み"
+  },
+  "Titre": {
+    "en": "Title",
+    "ja": "タイトル"
+  },
+  "Ex: Voucher hôtel Tokyo": {
+    "en": "E.g. Tokyo hotel voucher",
+    "ja": "例：東京のホテルバウチャー"
+  },
+  "Fichier": {
+    "en": "File",
+    "ja": "ファイル"
+  },
+  "Upload...": {
+    "en": "Uploading…",
+    "ja": "アップロード中…"
+  },
+  "Uploader": {
+    "en": "Upload",
+    "ja": "アップロード"
+  },
+  "Rechercher par titre, fichier, auteur...": {
+    "en": "Search by title, file, author…",
+    "ja": "タイトル・ファイル名・登録者を検索…"
+  },
+  "Toutes catégories": {
+    "en": "All categories",
+    "ja": "すべてのカテゴリー"
+  },
+  "document(s) affiché(s) sur": {
+    "en": "document(s) shown out of",
+    "ja": "件表示／全"
+  },
+  "Aucun document opérationnel pour ce filtre.": {
+    "en": "No operational documents match this filter.",
+    "ja": "この条件に一致する運営書類はありません。"
+  },
+  "Document": {
+    "en": "Document",
+    "ja": "書類"
+  },
+  "Version": {
+    "en": "Version",
+    "ja": "バージョン"
+  },
+  "Uploadé par": {
+    "en": "Uploaded by",
+    "ja": "登録者"
+  },
+  "Date": {
+    "en": "Date",
+    "ja": "日付"
+  },
+  "Taille": {
+    "en": "Size",
+    "ja": "サイズ"
+  },
+  "Actions": {
+    "en": "Actions",
+    "ja": "操作"
+  },
+  "Prévisualiser": {
+    "en": "Preview",
+    "ja": "プレビュー"
+  },
+  "Télécharger": {
+    "en": "Download",
+    "ja": "ダウンロード"
+  },
+  "Remplacer": {
+    "en": "Replace",
+    "ja": "差し替え"
+  },
+  "Supprimer le document": {
+    "en": "Remove document",
+    "ja": "書類を削除"
+  },
+  "Chargement des lignes…": {
+    "en": "Loading lines…",
+    "ja": "明細を読み込み中…"
+  },
+  "Les lignes n’ont pas pu être chargées. Le nombre de lignes et le total sont indisponibles.": {
+    "en": "Lines could not be loaded. Row counts and totals are unavailable.",
+    "ja": "明細を読み込めませんでした。件数および合計は表示できません。"
+  },
+  "ligne(s) · Total": {
+    "en": "line(s) · Total",
+    "ja": "件の明細・合計"
+  },
+  "Ajouter une ligne": {
+    "en": "Add line",
+    "ja": "明細を追加"
+  },
+  "Ordre": {
+    "en": "Order",
+    "ja": "順序"
+  },
+  "Sous-total": {
+    "en": "Subtotal",
+    "ja": "小計"
+  },
+  "Réservation": {
+    "en": "Booking",
+    "ja": "予約"
+  },
+  "Assigné": {
+    "en": "Assigned to",
+    "ja": "担当"
+  },
+  "Commentaire": {
+    "en": "Comment",
+    "ja": "コメント"
+  },
+  "Calcul": {
+    "en": "Total inclusion",
+    "ja": "集計対象"
+  },
+  "Revue": {
+    "en": "Review",
+    "ja": "審査"
+  },
+  "Échanges": {
+    "en": "Discussion",
+    "ja": "やり取り"
+  },
+  "Aucune ligne.": {
+    "en": "No lines.",
+    "ja": "明細はありません。"
+  },
+  "Monter la ligne": {
+    "en": "Move line up",
+    "ja": "明細を上へ移動"
+  },
+  "Descendre la ligne": {
+    "en": "Move line down",
+    "ja": "明細を下へ移動"
+  },
+  "Exclue": {
+    "en": "Excluded",
+    "ja": "対象外"
+  },
+  "Incluse": {
+    "en": "Included",
+    "ja": "対象"
+  },
+  "À revoir": {
+    "en": "To review",
+    "ja": "審査待ち"
+  },
+  "Approuvée": {
+    "en": "Approved",
+    "ja": "承認済み"
+  },
+  "Rejetée": {
+    "en": "Rejected",
+    "ja": "却下"
+  },
+  "Total activités requises": {
+    "en": "Required activities total",
+    "ja": "必須アクティビティ合計"
+  },
+  "Total activités optionnelles": {
+    "en": "Optional activities total",
+    "ja": "オプション合計"
+  },
+  "Total toutes activités": {
+    "en": "All activities total",
+    "ja": "アクティビティ総合計"
+  },
+  "commentaire(s)": {
+    "en": "comment(s)",
+    "ja": "件のコメント"
+  },
+  "· Interne": {
+    "en": "· Internal",
+    "ja": "・社内のみ"
+  },
+  "Ajouter un commentaire…": {
+    "en": "Add a comment…",
+    "ja": "コメントを入力…"
+  },
+  "Commentaire interne": {
+    "en": "Internal comment",
+    "ja": "社内コメント"
+  },
+  "Ajouter": {
+    "en": "Add",
+    "ja": "追加"
+  },
+  "Oui": {
+    "en": "Yes",
+    "ja": "はい"
+  },
+  "Informations de vol": {
+    "en": "Flight information",
+    "ja": "フライト情報"
+  },
+  "Données voyage configurées pour le bureau Japon.": {
+    "en": "Flight details configured for Japan Office.",
+    "ja": "Japan Office向けに登録されたフライト情報です。"
+  },
+  "Informations de vol à confirmer.": {
+    "en": "Flight information to be confirmed.",
+    "ja": "フライト情報は未確定です。"
+  },
+  "Vol aller": {
+    "en": "Outbound flight",
+    "ja": "往路フライト"
+  },
+  "Maroc → {{value0}}": {
+    "en": "Morocco → {{value0}}",
+    "ja": "モロッコ → {{value0}}"
+  },
+  "Départ: {{value0}}": {
+    "en": "Departure: {{value0}}",
+    "ja": "出発：{{value0}}"
+  },
+  "Arrivée: {{value0}} · {{value1}}": {
+    "en": "Arrival in Japan: {{value0}} · {{value1}}",
+    "ja": "日本到着：{{value0}}・{{value1}}"
+  },
+  "Vol retour": {
+    "en": "Return flight",
+    "ja": "復路フライト"
+  },
+  "Japon → Maroc": {
+    "en": "Japan → Morocco",
+    "ja": "日本 → モロッコ"
+  },
+  "Départ Japon: {{value0}}": {
+    "en": "Departure from Japan: {{value0}}",
+    "ja": "日本出発：{{value0}}"
+  },
+  "Retour: {{value0}}": {
+    "en": "Return: {{value0}}",
+    "ja": "帰着：{{value0}}"
+  },
+  "Notes:": {
+    "en": "Notes:",
+    "ja": "備考："
+  },
+  "Route:": {
+    "en": "Route:",
+    "ja": "経路："
+  },
+  "Vol(s):": {
+    "en": "Flight(s):",
+    "ja": "便名："
+  },
+  "Départ:": {
+    "en": "Departure:",
+    "ja": "出発："
+  },
+  "Arrivée:": {
+    "en": "Arrival:",
+    "ja": "到着："
+  },
+  "Détails:": {
+    "en": "Details:",
+    "ja": "詳細："
+  },
+  "Jour": {
+    "en": "Day",
+    "ja": "日程"
+  },
+  "Statut opérationnel": {
+    "en": "Operational status",
+    "ja": "運営状況"
+  },
+  "Transport prévu": {
+    "en": "Planned transport",
+    "ja": "交通の予定"
+  },
+  "Notes opérationnelles": {
+    "en": "Operational notes",
+    "ja": "運営備考"
+  },
+  "Programme horaire": {
+    "en": "Daily schedule",
+    "ja": "時間別行程"
+  },
+  "Heure": {
+    "en": "Time",
+    "ja": "時間"
+  },
+  "Activité / visite": {
+    "en": "Activity / visit",
+    "ja": "アクティビティ・観光"
+  },
+  "Lieu": {
+    "en": "Location",
+    "ja": "場所"
+  },
+  "Notes": {
+    "en": "Notes",
+    "ja": "備考"
+  },
+  "Hôtel du jour": {
+    "en": "Today's hotel",
+    "ja": "当日のホテル"
+  },
+  "Commentaires collaboration": {
+    "en": "Collaboration comments",
+    "ja": "共有コメント"
+  },
+  "Aucun commentaire pour ce jour.": {
+    "en": "No comments for this day.",
+    "ja": "この日のコメントはありません。"
+  },
+  " · modifié {{value0}}": {
+    "en": " · edited {{value0}}",
+    "ja": "・更新{{value0}}"
+  },
+  "Modifier": {
+    "en": "Edit",
+    "ja": "編集"
+  },
+  "Supprimer": {
+    "en": "Remove",
+    "ja": "削除"
+  },
+  "Ajouter un commentaire opérationnel...": {
+    "en": "Add an operational comment…",
+    "ja": "運営コメントを入力…"
+  },
+  "Ajouter commentaire": {
+    "en": "Add comment",
+    "ja": "コメントを追加"
+  },
+  "Bureau Japon": {
+    "en": "Japan Office",
+    "ja": "Japan Office"
+  },
+  "Maroc": {
+    "en": "Morocco",
+    "ja": "モロッコ"
+  },
+  "Admin": {
+    "en": "Admin",
+    "ja": "管理者"
+  },
+  "Équipe": {
+    "en": "Team",
+    "ja": "チーム"
+  },
+  "{{value0}} o": {
+    "en": "{{value0}} B",
+    "ja": "{{value0}} B"
+  },
+  "{{value0}} Ko": {
+    "en": "{{value0}} KB",
+    "ja": "{{value0}} KB"
+  },
+  "{{value0}} Mo": {
+    "en": "{{value0}} MB",
+    "ja": "{{value0}} MB"
+  },
+  "Participant": {
+    "en": "Participant",
+    "ja": "参加者"
+  },
+  "Source": {
+    "en": "Source",
+    "ja": "申込経路"
+  },
+  "Chambre": {
+    "en": "Room",
+    "ja": "客室"
+  },
+  "Type chambre": {
+    "en": "Room type",
+    "ja": "客室タイプ"
+  },
+  "Notes spéciales": {
+    "en": "Special notes",
+    "ja": "特記事項"
+  },
+  "Passeport": {
+    "en": "Passport",
+    "ja": "パスポート"
+  },
+  "Nationalité": {
+    "en": "Nationality",
+    "ja": "国籍"
+  },
+  "Naissance": {
+    "en": "Date of birth",
+    "ja": "生年月日"
+  },
+  "Sexe": {
+    "en": "Sex",
+    "ja": "性別"
+  },
+  "Expiration passeport": {
+    "en": "Passport expiry",
+    "ja": "パスポート有効期限"
+  },
+  "Émission passeport": {
+    "en": "Passport issue date",
+    "ja": "パスポート発行日"
+  },
+  "CIN / ID national": {
+    "en": "National ID",
+    "ja": "国民識別番号"
+  },
+  "Aucun participant enregistré.": {
+    "en": "No participants registered.",
+    "ja": "登録済み参加者はいません。"
+  },
+  "Chambres par hôtel": {
+    "en": "Rooms by hotel",
+    "ja": "ホテル別の客室"
+  },
+  "Aucun hôtel configuré.": {
+    "en": "No hotels configured.",
+    "ja": "ホテルは未登録です。"
+  },
+  "Aucune chambre.": {
+    "en": "No rooms.",
+    "ja": "客室はありません。"
+  },
+  "Non assignée": {
+    "en": "Unassigned",
+    "ja": "未割り当て"
+  },
+  "Passeport:": {
+    "en": "Passport:",
+    "ja": "パスポート："
+  },
+  "· Nationalité:": {
+    "en": "· Nationality:",
+    "ja": "・国籍："
+  },
+  "· Naissance:": {
+    "en": "· Date of birth:",
+    "ja": "・生年月日："
+  },
+  "Expiration:": {
+    "en": "Expiry:",
+    "ja": "有効期限："
+  },
+  "· Type:": {
+    "en": "· Type:",
+    "ja": "・タイプ："
+  },
+  "Activités / extras": {
+    "en": "Activities / extras",
+    "ja": "アクティビティ・追加サービス"
+  },
+  "Aucun extra sélectionné.": {
+    "en": "No extras selected.",
+    "ja": "追加サービスは選択されていません。"
+  },
+  "Qté": {
+    "en": "Qty",
+    "ja": "数量"
+  },
+  "Réservations:": {
+    "en": "Bookings:",
+    "ja": "予約："
+  },
+  "Participants:": {
+    "en": "Participants:",
+    "ja": "参加者："
+  },
+  "Ville": {
+    "en": "City",
+    "ja": "都市"
+  },
+  "Check-in": {
+    "en": "Check-in",
+    "ja": "チェックイン"
+  },
+  "Check-out": {
+    "en": "Check-out",
+    "ja": "チェックアウト"
+  },
+  "Nuits": {
+    "en": "Nights",
+    "ja": "泊数"
+  },
+  "Type": {
+    "en": "Type",
+    "ja": "タイプ"
+  },
+  "Personnes": {
+    "en": "People",
+    "ja": "人数"
+  },
+  "Prix/pers./nuit JPY": {
+    "en": "Price/person/night JPY",
+    "ja": "1人1泊料金（JPY）"
+  },
+  "Ville / route": {
+    "en": "City / route",
+    "ja": "都市・経路"
+  },
+  "Prix unitaire JPY": {
+    "en": "Unit price JPY",
+    "ja": "単価（JPY）"
+  },
+  "Activité": {
+    "en": "Activity",
+    "ja": "アクティビティ"
+  },
+  "Optionnel": {
+    "en": "Optional",
+    "ja": "オプション"
+  },
+  "Prix jour JPY": {
+    "en": "Daily price JPY",
+    "ja": "日額（JPY）"
+  },
+  "Libellé": {
+    "en": "Label",
+    "ja": "項目名"
+  },
+  "Aucune donnée": {
+    "en": "No data",
+    "ja": "データなし"
+  },
+  "Sous-total services": {
+    "en": "Services subtotal",
+    "ja": "サービス小計"
+  },
+  "Handling fournisseur (%)": {
+    "en": "Supplier handling (%)",
+    "ja": "手配手数料率（%）"
+  },
+  "Périmètre handling": {
+    "en": "Handling scope",
+    "ja": "手数料の適用範囲"
+  },
+  "Base handling": {
+    "en": "Handling base",
+    "ja": "手数料の計算対象額"
+  },
+  "Total fournisseur": {
+    "en": "Supplier total",
+    "ja": "サプライヤー合計"
+  },
+  "Commission office": {
+    "en": "Internal office commission",
+    "ja": "社内コミッション"
+  },
+  "Total final JPY": {
+    "en": "Final total JPY",
+    "ja": "最終合計（JPY）"
+  },
+  "Coût par personne JPY": {
+    "en": "Cost per person JPY",
+    "ja": "1人あたりの費用（JPY）"
+  },
+  "Coût par personne MAD": {
+    "en": "Cost per person MAD",
+    "ja": "1人あたりの費用（MAD）"
+  },
+  "Jour {{value0}}": {
+    "en": "Day {{value0}}",
+    "ja": "{{value0}}日目"
+  },
+  "Commentaire jour": {
+    "en": "Day comment",
+    "ja": "日程コメント"
+  },
+  "Voyage": {
+    "en": "Trip",
+    "ja": "旅行"
+  },
+  "Saison": {
+    "en": "Season",
+    "ja": "シーズン"
+  },
+  "Départ": {
+    "en": "Departure",
+    "ja": "出発"
+  },
+  "Retour": {
+    "en": "Return",
+    "ja": "帰着"
+  },
+  "Durée": {
+    "en": "Duration",
+    "ja": "日数"
+  },
+  "{{value0}} jours": {
+    "en": "{{value0}} days",
+    "ja": "{{value0}}日間"
+  },
+  "Fournisseur": {
+    "en": "Supplier",
+    "ja": "サプライヤー"
+  },
+  "Total passagers": {
+    "en": "Total participants",
+    "ja": "参加者総数"
+  },
+  "Réservations": {
+    "en": "Bookings",
+    "ja": "予約"
+  },
+  "Planning": {
+    "en": "Schedule",
+    "ja": "行程"
+  },
+  "Activités devis": {
+    "en": "Quotation activities",
+    "ja": "見積りのアクティビティ"
+  },
+  "Transports": {
+    "en": "Transport",
+    "ja": "交通"
+  },
+  "Coûts": {
+    "en": "Costs",
+    "ja": "費用"
+  },
+  "Export": {
+    "en": "Export",
+    "ja": "エクスポート"
+  },
+  "Généré le": {
+    "en": "Generated on",
+    "ja": "作成日時"
+  },
+  "Aller": {
+    "en": "Outbound",
+    "ja": "往路"
+  },
+  "Participants assignés": {
+    "en": "Assigned participants",
+    "ja": "割り当て済み参加者"
+  },
+  "Optionnelle": {
+    "en": "Optional",
+    "ja": "オプション"
+  },
+  "Incluse / requise": {
+    "en": "Included / required",
+    "ja": "対象・必須"
+  },
+  "Participants prévus": {
+    "en": "Expected participants",
+    "ja": "予定参加人数"
+  },
+  "Participants inscrits": {
+    "en": "Registered participants",
+    "ja": "登録済み参加人数"
+  },
+  "Sous-total JPY": {
+    "en": "Subtotal JPY",
+    "ja": "小計（JPY）"
+  },
+  "Assigné à": {
+    "en": "Assigned to",
+    "ja": "担当"
+  },
+  "Extra sélectionné": {
+    "en": "Selected extra",
+    "ja": "選択済み追加サービス"
+  },
+  "Guide / type": {
+    "en": "Guide / type",
+    "ja": "ガイド・種類"
+  },
+  "Nombre de guides": {
+    "en": "Number of guides",
+    "ja": "ガイド数"
+  },
+  "Organisateur Maroc": {
+    "en": "Morocco organiser",
+    "ja": "モロッコ側主催者"
+  },
+  "Contact principal Maroc": {
+    "en": "Main Morocco contact",
+    "ja": "モロッコ側代表連絡先"
+  },
+  "Contact urgence participant": {
+    "en": "Participant emergency contact",
+    "ja": "参加者の緊急連絡先"
+  },
+  "Participant: {{value0}}": {
+    "en": "Participant: {{value0}}",
+    "ja": "参加者：{{value0}}"
+  },
+  "Attention opérationnelle": {
+    "en": "Operational attention",
+    "ja": "運営上の注意事項"
+  },
+  "Jours à surveiller": {
+    "en": "Days requiring attention",
+    "ja": "注意が必要な日程"
+  },
+  "Accompagnateur": {
+    "en": "Tour leader",
+    "ja": "添乗員"
+  },
+  "Guide principal": {
+    "en": "Lead guide",
+    "ja": "主任ガイド"
+  },
+  "Non": {
+    "en": "No",
+    "ja": "いいえ"
+  },
+  "Ville à confirmer": {
+    "en": "City to be confirmed",
+    "ja": "都市未確定"
+  },
+  "Adresse à confirmer": {
+    "en": "Address to be confirmed",
+    "ja": "住所未確定"
+  },
+  "Téléphone à confirmer": {
+    "en": "Phone to be confirmed",
+    "ja": "電話番号未確定"
+  },
+  "Dates à confirmer": {
+    "en": "Dates to be confirmed",
+    "ja": "日付未確定"
+  },
+  "Programme à compléter": {
+    "en": "Programme to be completed",
+    "ja": "行程未入力"
+  },
+  "À compléter": {
+    "en": "To be completed",
+    "ja": "未完了"
+  },
+  "Agence partenaire": {
+    "en": "Partner agency",
+    "ja": "提携旅行会社"
+  },
+  "Site LeJapon.ma": {
+    "en": "LeJapon.ma website",
+    "ja": "LeJapon.maウェブサイト"
+  },
+  "Nature Excel : handling fournisseur": {
+    "en": "Excel item: supplier handling",
+    "ja": "Excel項目：手配手数料"
+  },
+  "{{value0}} · {{value1}} : ligne ajoutée": {
+    "en": "{{value0}} · {{value1}}: line added",
+    "ja": "{{value0}}・{{value1}}：明細追加"
+  },
+  "{{value0}} · {{value1}} : {{value2}} → {{value3}} ({{value4}}{{value5}})": {
+    "en": "{{value0}} · {{value1}}: {{value2}} → {{value3}} ({{value4}}{{value5}})",
+    "ja": "{{value0}}・{{value1}}：{{value2}} → {{value3}}（{{value4}}{{value5}}）"
+  },
+  "{{value0}} · {{value1}} : {{value2}}": {
+    "en": "{{value0}} · {{value1}}: {{value2}}",
+    "ja": "{{value0}}・{{value1}}：{{value2}}"
+  },
+  "désactivée": {
+    "en": "deactivated",
+    "ja": "対象から除外"
+  },
+  "réactivée": {
+    "en": "reactivated",
+    "ja": "対象に復帰"
+  },
+  "{{value0}} · {{value1}} : {{value2}} modifié ({{value3}} → {{value4}})": {
+    "en": "{{value0}} · {{value1}}: {{value2}} changed ({{value3}} → {{value4}})",
+    "ja": "{{value0}}・{{value1}}：{{value2}}を変更（{{value3}} → {{value4}}）"
+  },
+  "{{value0}} · {{value1}} : ligne retirée": {
+    "en": "{{value0}} · {{value1}}: line removed",
+    "ja": "{{value0}}・{{value1}}：明細削除"
+  },
+  "Validé manuellement": {
+    "en": "Manually confirmed",
+    "ja": "手動で確認済み"
+  },
+  "Remis à faire manuellement": {
+    "en": "Manually reset to pending",
+    "ja": "手動で未確認に戻しました"
+  },
+  "{{value0}}/{{value1}} réservations confirmées": {
+    "en": "{{value0}}/{{value1}} bookings confirmed",
+    "ja": "予約確定{{value0}}/{{value1}}件"
+  },
+  "No hotel rows": {
+    "en": "No hotel lines",
+    "ja": "ホテル明細なし"
+  },
+  "No transport rows": {
+    "en": "No transport lines",
+    "ja": "交通明細なし"
+  },
+  "No activity rows": {
+    "en": "No activity lines",
+    "ja": "アクティビティ明細なし"
+  },
+  "No guide rows": {
+    "en": "No guide lines",
+    "ja": "ガイド明細なし"
+  },
+  "{{value0}} passport(s) incomplete": {
+    "en": "{{value0}} passport(s) incomplete",
+    "ja": "パスポート情報未完了{{value0}}件"
+  },
+  "{{value0}} passport(s) complete": {
+    "en": "{{value0}} passport(s) complete",
+    "ja": "パスポート情報完了{{value0}}件"
+  },
+  "All participants assigned to rooms": {
+    "en": "All participants assigned to rooms",
+    "ja": "参加者全員の客室割り当て完了"
+  },
+  "Room assignments incomplete": {
+    "en": "Room assignments incomplete",
+    "ja": "客室割り当て未完了"
+  },
+  "Missing: {{value0}}": {
+    "en": "Missing: {{value0}}",
+    "ja": "未登録：{{value0}}"
+  },
+  "Mandatory files uploaded": {
+    "en": "Required files uploaded",
+    "ja": "必要書類アップロード済み"
+  },
+  "Réservations hôtels : confirmations à compléter.": {
+    "en": "Hotel bookings: confirmations incomplete.",
+    "ja": "ホテル予約：確認未完了。"
+  },
+  "Réservations transport : confirmations à compléter.": {
+    "en": "Transport bookings: confirmations incomplete.",
+    "ja": "交通予約：確認未完了。"
+  },
+  "Réservations activités : confirmations à compléter.": {
+    "en": "Activity bookings: confirmations incomplete.",
+    "ja": "観光予約：確認未完了。"
+  },
+  "Réservations guides : confirmations à compléter.": {
+    "en": "Guide bookings: confirmations incomplete.",
+    "ja": "ガイド手配：確認未完了。"
+  },
+  "Participants : passeports à compléter (numéro, nationalité, naissance, sexe, expiration).": {
+    "en": "Participants: complete passport number, nationality, date of birth, sex and expiry.",
+    "ja": "参加者：パスポート番号、国籍、生年月日、性別、有効期限を登録してください。"
+  },
+  "Rooming": {
+    "en": "Rooming",
+    "ja": "客室割り当て"
+  },
+  "Rooming : affectations des participants aux chambres à compléter.": {
+    "en": "Rooming: participant room assignments incomplete.",
+    "ja": "客室割り当て：参加者の割り当てが未完了です。"
+  },
+  "Documents : pièces opérationnelles requises à compléter.": {
+    "en": "Documents: required operational files missing.",
+    "ja": "書類：必要な運営書類が未登録です。"
+  },
+  "Ready To Travel requires Japan Office Confirmed first.": {
+    "en": "Japan Office must confirm operations before marking ready to travel.",
+    "ja": "出発準備完了にする前に、Japan Officeの運営確認が必要です。"
+  },
+  "Le devis doit contenir au moins une ligne active.": {
+    "en": "The quotation must contain at least one included line.",
+    "ja": "見積りには合計対象の明細が1件以上必要です。"
+  },
+  "Renseignez au moins un montant fournisseur avant de soumettre le devis.": {
+    "en": "Enter at least one supplier amount before submitting the quotation.",
+    "ja": "見積提出前に、サプライヤー金額を1件以上入力してください。"
+  },
+  "Les montants actifs du devis doivent être valides.": {
+    "en": "Included quotation amounts must be valid.",
+    "ja": "合計対象の見積金額は有効な値を入力してください。"
+  },
+  "Impossible de charger votre rattachement fournisseur.": {
+    "en": "Unable to load your supplier membership.",
+    "ja": "サプライヤー所属を読み込めません。"
+  },
+  "Impossible de charger vos voyages assignés.": {
+    "en": "Unable to load your assigned trips.",
+    "ja": "担当旅行を読み込めません。"
+  },
+  "Japan Office - vue fournisseur": {
+    "en": "Japan Office — Supplier portal",
+    "ja": "Japan Office — サプライヤーポータル"
+  },
+  "Vos voyages assignés, devis Japon, rooming, participants, documents et messages opérationnels.": {
+    "en": "Your assigned trips, Japan quotations, rooming, participants, documents and operational messages.",
+    "ja": "担当旅行、日本手配の見積り、客室割り当て、参加者、書類、運営メッセージを確認できます。"
+  },
+  "Les tables du quote engine fournisseur ne sont pas encore disponibles. La lecture opérationnelle fonctionne, mais l'enregistrement des devis nécessite la migration SQL V1.": {
+    "en": "Supplier quotation tables are not available yet. Operational data is readable, but saving quotations requires the V1 SQL migration.",
+    "ja": "見積りテーブルが未導入です。運営情報は閲覧できますが、見積保存にはV1のデータベース更新が必要です。"
+  },
+  "Voyages archivés": {
+    "en": "Archived trips",
+    "ja": "アーカイブ旅行"
+  },
+  "Hôtels actifs": {
+    "en": "Active hotels",
+    "ja": "登録ホテル"
+  },
+  "Extras actifs": {
+    "en": "Active extras",
+    "ja": "登録追加サービス"
+  },
+  "Voyages assignés (": {
+    "en": "Assigned trips (",
+    "ja": "担当旅行（"
+  },
+  "Voyages archivés (": {
+    "en": "Archived trips (",
+    "ja": "アーカイブ旅行（"
+  },
+  "Notifications": {
+    "en": "Notifications",
+    "ja": "通知"
+  },
+  "non lue(s)": {
+    "en": "unread",
+    "ja": "件未読"
+  },
+  "Ouvrir": {
+    "en": "Open",
+    "ja": "開く"
+  },
+  "Lu": {
+    "en": "Read",
+    "ja": "既読にする"
+  },
+  "Contactez l'équipe LeJapon.ma si le problème persiste.": {
+    "en": "Contact LeJapon.ma if the problem persists.",
+    "ja": "問題が解決しない場合はLeJapon.maへお問い合わせください。"
+  },
+  "Aucun voyage archivé.": {
+    "en": "No archived trips.",
+    "ja": "アーカイブ旅行はありません。"
+  },
+  "Aucun voyage ne vous est actuellement assigné.": {
+    "en": "No trips currently assigned to you.",
+    "ja": "現在の担当旅行はありません。"
+  },
+  "Les voyages archivés par l’agence apparaîtront ici en lecture seule.": {
+    "en": "Trips archived by the agency appear here in read-only mode.",
+    "ja": "旅行会社がアーカイブした旅行は、閲覧専用でここに表示されます。"
+  },
+  "Dès qu'un voyage vous sera assigné, il apparaîtra ici avec ses onglets opérationnels.": {
+    "en": "Assigned trips will appear here with their operational tabs.",
+    "ja": "担当旅行が割り当てられると、運営タブとともにここに表示されます。"
+  },
+  "Mes voyages archivés": {
+    "en": "My archived trips",
+    "ja": "担当アーカイブ旅行"
+  },
+  "Mes voyages assignés": {
+    "en": "My assigned trips",
+    "ja": "担当旅行一覧"
+  },
+  "jours": {
+    "en": "days",
+    "ja": "日間"
+  },
+  "Consulter le devis": {
+    "en": "View quotation",
+    "ja": "見積りを確認"
+  },
+  "Préparer le devis": {
+    "en": "Prepare quotation",
+    "ja": "見積りを作成"
+  },
+  "Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA.": {
+    "en": "reCAPTCHA configuration unavailable. Please contact LeJapon.ma.",
+    "ja": "reCAPTCHAの設定を取得できません。LeJapon.maへお問い合わせください。"
+  },
+  "Vérification anti-spam refusée. Vérifiez la configuration reCAPTCHA.": {
+    "en": "Anti-spam verification failed. Please contact LeJapon.ma.",
+    "ja": "認証チェックに失敗しました。LeJapon.maへお問い合わせください。"
+  },
+  "Connecté": {
+    "en": "Signed in",
+    "ja": "ログインしました"
+  },
+  "Compte créé. Un admin doit vous attribuer un rôle.": {
+    "en": "Account created. An administrator must assign your role.",
+    "ja": "アカウントを作成しました。管理者によるロール設定が必要です。"
+  },
+  "Espace administration": {
+    "en": "Administration portal",
+    "ja": "管理者ポータル"
+  },
+  "Connectez-vous pour accéder au back-office": {
+    "en": "Sign in to access the portal",
+    "ja": "ポータルにログインしてください"
+  },
+  "Créez un compte (un admin validera l'accès)": {
+    "en": "Create an account (access is approved by an administrator)",
+    "ja": "アカウントを作成してください（管理者によるアクセス承認が必要です）"
+  },
+  "Nom complet": {
+    "en": "Full name",
+    "ja": "氏名"
+  },
+  "Email": {
+    "en": "Email",
+    "ja": "メールアドレス"
+  },
+  "Mot de passe": {
+    "en": "Password",
+    "ja": "パスワード"
+  },
+  "Se connecter": {
+    "en": "Sign in",
+    "ja": "ログイン"
+  },
+  "Créer le compte": {
+    "en": "Create account",
+    "ja": "アカウントを作成"
+  },
+  "Mot de passe oublié ?": {
+    "en": "Forgot password?",
+    "ja": "パスワードをお忘れですか？"
+  },
+  "Protégé par reCAPTCHA — la": {
+    "en": "Protected by reCAPTCHA — Google's",
+    "ja": "このサイトはreCAPTCHAで保護されており、Googleの"
+  },
+  "politique": {
+    "en": "privacy policy",
+    "ja": "プライバシーポリシー"
+  },
+  "et les": {
+    "en": "and",
+    "ja": "および"
+  },
+  "conditions": {
+    "en": "terms of service",
+    "ja": "利用規約"
+  },
+  "de Google s'appliquent.": {
+    "en": "apply.",
+    "ja": "が適用されます。"
+  },
+  "Pas encore de compte ?": {
+    "en": "Don't have an account?",
+    "ja": "アカウントをお持ちでない方"
+  },
+  "Créer": {
+    "en": "Create one",
+    "ja": "新規登録"
+  },
+  "Déjà inscrit ?": {
+    "en": "Already registered?",
+    "ja": "登録済みの方"
+  },
+  "Écart de sous-total : Excel {{value0}} JPY, Travel OS {{value1}} JPY.": {
+    "en": "Subtotal difference: Excel {{value0}} JPY, system {{value1}} JPY.",
+    "ja": "小計の差額：Excel {{value0}} JPY、システム {{value1}} JPY。"
+  },
+  "Ligne sans description": {
+    "en": "Row without a description",
+    "ja": "説明のない行"
+  },
+  "Ligne ignorée : aucune prestation identifiable.": {
+    "en": "Row ignored: no identifiable service.",
+    "ja": "サービスを特定できないため、この行を除外しました。"
+  },
+  "Erreur Excel {{value0}} ignorée.": {
+    "en": "Excel error {{value0}} ignored.",
+    "ja": "Excelエラー{{value0}}を除外しました。"
+  },
+  "Handling fournisseur au niveau du devis ; son périmètre doit être confirmé. Aucun autre coût ne sera créé.": {
+    "en": "Supplier handling is a quotation-level term; confirm its scope. No other-cost line will be created.",
+    "ja": "手配手数料は見積り単位の条件です。適用範囲をご確認ください。その他費用の明細は作成しません。"
+  },
+  "Montant du handling fournisseur non reconnu.": {
+    "en": "Supplier handling amount not recognized.",
+    "ja": "手配手数料額を認識できません。"
+  },
+  "Base de calcul du handling fournisseur non reconnue.": {
+    "en": "Supplier handling base not recognized.",
+    "ja": "手数料の計算対象額を認識できません。"
+  },
+  "Pourcentage effectif du handling fournisseur non détecté.": {
+    "en": "Effective supplier handling percentage not detected.",
+    "ja": "実際の手配手数料率を検出できません。"
+  },
+  "Type de chambre non reconnu automatiquement.": {
+    "en": "Room type not automatically recognized.",
+    "ja": "客室タイプを自動認識できません。"
+  },
+  "Dates d’hébergement incomplètes ou non reconnues.": {
+    "en": "Accommodation dates incomplete or unrecognized.",
+    "ja": "宿泊日程が未入力または認識できません。"
+  },
+  "Prix, pax ou nuits manquant : la ligne sera importée avec zéro pour la valeur absente.": {
+    "en": "Missing price, participants or nights: the missing value will be imported as zero.",
+    "ja": "価格、人数または泊数が未入力です。未入力の値はゼロでインポートします。"
+  },
+  "Prix, nombre ou nombre de fois incomplet.": {
+    "en": "Price, quantity or frequency incomplete.",
+    "ja": "価格、数量または回数が未入力です。"
+  },
+  "Prix ou nombre de fois incomplet.": {
+    "en": "Price or frequency incomplete.",
+    "ja": "価格または回数が未入力です。"
+  },
+  "Date Excel non reconnue : {{value0}}.": {
+    "en": "Excel date not recognized: {{value0}}.",
+    "ja": "Excelの日付を認識できません：{{value0}}。"
+  },
+  "Prix, participants ou nombre de fois incomplet.": {
+    "en": "Price, participants or frequency incomplete.",
+    "ja": "価格、参加人数または回数が未入力です。"
+  },
+  "Meal": {
+    "en": "Meal",
+    "ja": "食事"
+  },
+  "Sous-total Excel absent : une décision explicite est requise pour l’impact de {{value0}} JPY calculé par Travel OS.": {
+    "en": "Missing Excel subtotal: choose how to handle the system-calculated {{value0}} JPY.",
+    "ja": "Excel小計が未入力です。システム計算額{{value0}} JPYの処理方法を選択してください。"
+  },
+  "Le classeur Excel ne contient aucune feuille.": {
+    "en": "The Excel workbook has no sheets.",
+    "ja": "Excelブックにシートがありません。"
+  },
+  "La première feuille du classeur est illisible.": {
+    "en": "The first workbook sheet is unreadable.",
+    "ja": "最初のシートを読み取れません。"
+  },
+  "Prix par pax Excel": {
+    "en": "Excel price per person",
+    "ja": "Excelの1人あたり料金"
+  },
+  "Ligne de total Excel": {
+    "en": "Excel total row",
+    "ja": "Excel合計行"
+  },
+  "Total Excel conservé uniquement pour contrôle et non importé comme prestation.": {
+    "en": "Excel total retained for review only, not imported as a service.",
+    "ja": "Excelの合計は確認用に保持し、サービス明細としてはインポートしません。"
+  },
+  "Erreur Excel {{value0}} ignorée en {{value1}}.": {
+    "en": "Excel error {{value0}} ignored at {{value1}}.",
+    "ja": "{{value1}}のExcelエラー{{value0}}を除外しました。"
+  },
+  "Écart de réconciliation source : services + handling diffèrent du total final Excel de {{value0}} JPY.": {
+    "en": "Source reconciliation difference: services + handling differ from the final Excel total by {{value0}} JPY.",
+    "ja": "原本の照合差額：サービス＋手数料とExcel最終合計に{{value0}} JPYの差額があります。"
+  },
+  "Écart de recalcul Travel OS : le total des données sources importables diffère du total final Excel de {{value0}} JPY.": {
+    "en": "System recalculation difference: importable source data differs from the final Excel total by {{value0}} JPY.",
+    "ja": "再計算差額：インポート対象データとExcel最終合計に{{value0}} JPYの差額があります。"
+  },
+  "La ligne Excel {{value0}} ne nécessite pas de décision.": {
+    "en": "Excel row {{value0}} does not require a decision.",
+    "ja": "Excel行{{value0}}は処理方法の選択が不要です。"
+  },
+  "Plusieurs lignes de handling détectées : vérifiez le fichier source avant l’import.": {
+    "en": "Multiple handling lines detected: review the source file before importing.",
+    "ja": "手数料の行を複数検出しました。インポート前に原本をご確認ください。"
+  },
+  "Pourcentage du handling : confirmation requise.": {
+    "en": "Handling percentage: confirmation required.",
+    "ja": "手数料率：確認が必要です。"
+  },
+  "Handling scope: confirmation required — confirmez les catégories applicables.": {
+    "en": "Handling scope: confirmation required — confirm the applicable categories.",
+    "ja": "手数料の適用範囲：適用カテゴリーをご確認ください。"
+  },
+  "Le handling recalculé diffère de la source : acceptez explicitement cet écart avant l’import.": {
+    "en": "Recalculated handling differs from the source: explicitly accept the difference before importing.",
+    "ja": "手数料の再計算額と原本に差額があります。インポート前に差額を確認・承諾してください。"
+  },
+  "Chaque ligne sans sous-total Excel doit recevoir une décision explicite avant l’import.": {
+    "en": "Every row without an Excel subtotal must have an explicit decision before importing.",
+    "ja": "インポート前にExcel小計のない全行について処理方法を選択してください。"
+  },
+  "Import bloqué : une ou plusieurs lignes sans sous-total Excel n’ont pas de décision explicite.": {
+    "en": "Import blocked: one or more rows without an Excel subtotal require a decision.",
+    "ja": "インポートできません。Excel小計のない行について処理方法を選択してください。"
+  },
+  "Activités / tickets": {
+    "en": "Activities / tickets",
+    "ja": "観光・チケット"
+  },
+  "À réserver": {
+    "en": "To book",
+    "ja": "手配待ち"
+  },
+  "Réservations en cours": {
+    "en": "Booking in progress",
+    "ja": "手配中"
+  },
+  "Réservations confirmées": {
+    "en": "Confirmed",
+    "ja": "手配確定"
+  },
+  "Le handling fournisseur doit être un pourcentage valide entre 0 et 100 %.": {
+    "en": "Supplier handling must be a valid percentage between 0 and 100%.",
+    "ja": "手配手数料率は0～100%の有効な値を入力してください。"
+  },
+  "Le périmètre du handling contient une catégorie invalide ou dupliquée.": {
+    "en": "Handling scope contains an invalid or duplicate category.",
+    "ja": "手数料の適用範囲に無効または重複したカテゴリーがあります。"
+  },
+  "Sélectionnez au moins une catégorie pour le handling fournisseur.": {
+    "en": "Select at least one category for supplier handling.",
+    "ja": "手配手数料の対象カテゴリーを1つ以上選択してください。"
+  },
+  "Sous-total fournisseur invalide.": {
+    "en": "Invalid supplier subtotal.",
+    "ja": "サプライヤー小計が無効です。"
+  },
+  "Language": {
+    "en": "Language",
+    "ja": "言語"
+  },
+  "Language changed here, but the email language could not be saved. Please retry.": {
+    "en": "Language changed here, but the email language could not be saved. Please retry.",
+    "ja": "表示言語を変更しましたが、メールの言語設定を保存できませんでした。再度お試しください。"
+  },
+  "Japan Office sign-in": {
+    "en": "Japan Office sign-in",
+    "ja": "Japan Officeログイン"
+  },
+  "Backend request failed": {
+    "en": "The request failed. See the technical details below.",
+    "ja": "処理に失敗しました。以下の技術的な詳細をご確認ください。"
+  },
+  "Permission denied": {
+    "en": "Permission denied. Please check your access or contact LeJapon.ma.",
+    "ja": "操作権限がありません。アクセス権を確認するか、LeJapon.maへお問い合わせください。"
+  },
+  "Authentication required": {
+    "en": "Your session has expired. Please sign in again.",
+    "ja": "セッションの有効期限が切れました。再度ログインしてください。"
+  },
+  "Network request failed": {
+    "en": "Connection failed. Please check your connection and retry.",
+    "ja": "接続に失敗しました。通信環境を確認し、再度お試しください。"
+  },
+  "Aucun": {
+    "en": "None",
+    "ja": "なし"
+  },
+  "Erreur": {
+    "en": "Error",
+    "ja": "エラー"
+  },
+  "Erreur Supabase inconnue": {
+    "en": "Unknown backend error",
+    "ja": "不明なバックエンドエラー"
+  },
+  "Réponse de lignes invalide : aucune liste reçue.": {
+    "en": "Invalid rows response: no list received.",
+    "ja": "明細の応答が無効です。一覧を取得できませんでした。"
+  },
+  "Trip assigned": {
+    "en": "New trip assigned — Quotation requested",
+    "ja": "新規旅行の見積依頼"
+  },
+  "Quotation revision notification": {
+    "en": "Quotation revision requested",
+    "ja": "見積り修正のお願い"
+  },
+  "Quotation approved notification": {
+    "en": "Quotation approved",
+    "ja": "見積り承認のお知らせ"
+  },
+  "Quotation comment notification": {
+    "en": "New quotation comment",
+    "ja": "見積りへの新しいコメント"
+  },
+  "francophone": {
+    "en": "French-speaking",
+    "ja": "フランス語ガイド"
+  },
+  "anglophone": {
+    "en": "English-speaking",
+    "ja": "英語ガイド"
+  },
+  "japanese": {
+    "en": "Japanese-speaking",
+    "ja": "日本語ガイド"
+  },
+  "assistant": {
+    "en": "Assistant",
+    "ja": "アシスタント"
+  },
+  "bus": {
+    "en": "Bus",
+    "ja": "バス"
+  },
+  "metro": {
+    "en": "Metro",
+    "ja": "地下鉄"
+  },
+  "taxi": {
+    "en": "Taxi",
+    "ja": "タクシー"
+  },
+  "train": {
+    "en": "Train",
+    "ja": "鉄道"
+  },
+  "shinkansen": {
+    "en": "Shinkansen",
+    "ja": "新幹線"
+  },
+  "boat": {
+    "en": "Boat",
+    "ja": "船"
+  },
+  "other": {
+    "en": "Other",
+    "ja": "その他"
+  },
+  "double/twin": {
+    "en": "Double / twin",
+    "ja": "ダブル・ツイン"
+  },
+  "single": {
+    "en": "Single",
+    "ja": "シングル"
+  },
+  "triple": {
+    "en": "Triple",
+    "ja": "トリプル"
+  },
+  "TL": {
+    "en": "Tour leader",
+    "ja": "添乗員"
+  },
+  "open": {
+    "en": "Open",
+    "ja": "受付中"
+  },
+  "closed": {
+    "en": "Closed",
+    "ja": "受付終了"
+  },
+  "completed": {
+    "en": "Completed",
+    "ja": "催行終了"
+  },
+  "cancelled": {
+    "en": "Cancelled",
+    "ja": "中止"
+  },
+  "draft": {
+    "en": "Draft",
+    "ja": "下書き"
+  },
+  "confirmed": {
+    "en": "Confirmed",
+    "ja": "確定"
+  },
+  "Envoi du message impossible.": {
+    "en": "Unable to send message.",
+    "ja": "メッセージを送信できません。"
+  },
+  "Upload du document impossible.": {
+    "en": "Unable to upload document.",
+    "ja": "書類をアップロードできません。"
+  },
+  "Chargement de la version impossible.": {
+    "en": "Unable to load version.",
+    "ja": "バージョンを読み込めません。"
+  },
+  "Enregistrement impossible.": {
+    "en": "Unable to save.",
+    "ja": "保存できません。"
+  },
+  "Mise à jour du workflow impossible.": {
+    "en": "Unable to update workflow.",
+    "ja": "進捗を更新できません。"
+  },
+  "Création de la nouvelle version impossible.": {
+    "en": "Unable to create new version.",
+    "ja": "新しいバージョンを作成できません。"
+  },
+  "Revue du devis impossible.": {
+    "en": "Unable to review quotation.",
+    "ja": "見積りを審査できません。"
+  },
+  "Mise à jour de la validation impossible.": {
+    "en": "Unable to update operational confirmation.",
+    "ja": "運営確認を更新できません。"
+  },
+  "Lecture du fichier Excel impossible.": {
+    "en": "Unable to read Excel file.",
+    "ja": "Excelファイルを読み取れません。"
+  },
+  "Import Excel impossible. Aucune ligne n’a été écrite.": {
+    "en": "Excel import failed. No lines were written.",
+    "ja": "Excelインポートに失敗しました。明細は追加されていません。"
+  },
+  "Sans référence": {
+    "en": "No reference",
+    "ja": "参照番号なし"
+  },
+  "Hôtel à confirmer": {
+    "en": "Hotel to be confirmed",
+    "ja": "ホテル未確定"
+  },
+  "Invalid login credentials": {
+    "en": "Invalid email or password.",
+    "ja": "メールアドレスまたはパスワードが正しくありません。"
+  },
+  "Email not confirmed": {
+    "en": "Please confirm your email address.",
+    "ja": "メールアドレスの確認を完了してください。"
+  },
+  "Voyage introuvable.": {
+    "en": "Trip not found.",
+    "ja": "旅行が見つかりません。"
+  },
+  "Pièce jointe": {
+    "en": "Attachment",
+    "ja": "添付ファイル"
+  },
+  "Ville / route à confirmer": {
+    "en": "City / route to be confirmed",
+    "ja": "都市・経路未確定"
+  },
+  "Transport à confirmer": {
+    "en": "Transport to be confirmed",
+    "ja": "交通未確定"
+  },
+  "Aucune note opérationnelle.": {
+    "en": "No operational notes.",
+    "ja": "運営備考はありません。"
+  },
+  "Contact urgence": {
+    "en": "Emergency contact",
+    "ja": "緊急連絡先"
+  },
+  "Erreur inconnue": {
+    "en": "Unknown error",
+    "ja": "不明なエラー"
+  },
+  "Ligne sans libellé": {
+    "en": "Unnamed line",
+    "ja": "項目名なし"
+  },
+  "Utilisateur": {
+    "en": "User",
+    "ja": "ユーザー"
+  },
+  "La version du devis a été approuvée.": {
+    "en": "This quotation version has been approved.",
+    "ja": "この見積りバージョンは承認済みです。"
+  },
+  "Une correction du devis est demandée.": {
+    "en": "A quotation revision has been requested.",
+    "ja": "見積りの修正をお願いしております。"
+  },
+  "New trip assigned": {
+    "en": "New trip assigned",
+    "ja": "新しい担当旅行"
+  },
+  "Quotation rejected notification": {
+    "en": "Quotation rejected",
+    "ja": "見積り却下のお知らせ"
+  },
+  "Confirmed operations notification": {
+    "en": "Operations checked by Japan Office",
+    "ja": "Japan Office運営確認済み"
+  },
+  "Ready to travel notification": {
+    "en": "Ready to travel",
+    "ja": "出発準備完了"
+  },
+  "Quotation under review notification": {
+    "en": "Quotation under review",
+    "ja": "見積り審査中"
+  },
+  "{{value0}} est maintenant disponible dans votre portail.": {
+    "en": "{{value0}} is now available in your portal.",
+    "ja": "担当旅行「{{value0}}」をポータルで確認できます。"
+  },
+  "date à confirmer": {
+    "en": "Date to be confirmed",
+    "ja": "日付未確定"
+  },
+  "Confirmé opérationnellement": {
+    "en": "Operationally confirmed",
+    "ja": "手配確定"
+  },
+  "Devis approuvé par LeJapon.ma": {
+    "en": "Quotation approved by LeJapon.ma",
+    "ja": "LeJapon.maによる見積り承認済み"
+  },
+  "Vous pouvez maintenant procéder aux réservations et à la préparation opérationnelle.": {
+    "en": "You may now proceed with bookings and operational preparation.",
+    "ja": "各サービスの手配および運営準備を進めていただけます。"
+  },
+  "Ouvrir le suivi opérationnel": {
+    "en": "Open operational follow-up",
+    "ja": "手配・運営状況を確認する"
+  },
+  "Approuvez ou excluez les lignes à revoir ou rejetées avant l’approbation commerciale.": {
+    "en": "Approve or exclude included lines awaiting review or rejected before approving the quotation.",
+    "ja": "見積りを承認する前に、未確認または却下された対象項目を承認するか、合計から除外してください。"
+  },
+  "Commission interne office JPY": {
+    "en": "Internal office commission JPY",
+    "ja": "社内オフィス手数料 JPY"
+  },
+  "Coût total interne JPY": {
+    "en": "Internal total cost JPY",
+    "ja": "社内総原価 JPY"
+  },
+  "Coût total interne MAD": {
+    "en": "Internal total cost MAD",
+    "ja": "社内総原価 MAD"
+  }
+}

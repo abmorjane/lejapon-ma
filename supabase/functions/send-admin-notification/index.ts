@@ -1,3 +1,4 @@
+import { renderSupplierWorkflowEmail, supplierEmailRecipients, type SupplierEmailEvent } from "../_shared/supplier-workflow-email.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import nodemailer from "npm:nodemailer@6";
 import webpush from "npm:web-push@3.6.7";
@@ -1557,19 +1558,6 @@ async function requestUser(admin: any, req: Request) {
   return data.user;
 }
 
-async function supplierRecipients(admin: any, supplier: any) {
-  const recipients = new Set<string>();
-  const contact = normalizeEmail(supplier?.contact_email);
-  if (contact) recipients.add(contact);
-  const { data: members } = await admin.from("supplier_members").select("user_id").eq("supplier_id", supplier.id);
-  for (const member of members ?? []) {
-    const { data } = await admin.auth.admin.getUserById(member.user_id);
-    const email = normalizeEmail(data?.user?.email);
-    if (email) recipients.add(email);
-  }
-  return [...recipients];
-}
-
 async function supplierWorkflowEmails(admin: any, body: any, req: Request): Promise<EmailPayload[]> {
   const eventType = String(body.event_type || body.type) as EventType;
   const actor = await requestUser(admin, req);
@@ -1583,12 +1571,12 @@ async function supplierWorkflowEmails(admin: any, body: any, req: Request): Prom
   let resolvedTripId = tripId;
   let supplierId = String(body.supplier_id || body.payload?.supplier_id || "");
   if (quoteId) {
-    const { data, error } = await admin.from("supplier_trip_quotes").select("id,trip_id,supplier_id,status,version_number,grand_total_jpy").eq("id", quoteId).maybeSingle();
+    const { data, error } = await admin.from("supplier_trip_quotes").select("id,trip_id,supplier_id,status,version_number,grand_total_jpy,admin_feedback").eq("id", quoteId).maybeSingle();
     if (error || !data) throw new Error(error?.message || "Supplier quote not found");
     quote = data; resolvedTripId = data.trip_id; supplierId = data.supplier_id;
   }
   const [{ data: trip }, { data: supplier }] = await Promise.all([
-    admin.from("trips").select("id,title,start_date,end_date,duration_days,total_slots").eq("id", resolvedTripId).maybeSingle(),
+    admin.from("trips").select("id,title,visa_japan_arrival_date,visa_japan_departure_date,visa_arrival_port,visa_arrival_flight_number,return_flight_text,total_slots").eq("id", resolvedTripId).maybeSingle(),
     admin.from("suppliers").select("id,name,contact_name,contact_email").eq("id", supplierId).maybeSingle(),
   ]);
   if (!trip || !supplier) throw new Error("Supplier workflow context not found");
@@ -1600,18 +1588,17 @@ async function supplierWorkflowEmails(admin: any, body: any, req: Request): Prom
   if (["supplier_trip_assigned", "supplier_quote_revision_requested", "supplier_quote_approved"].includes(eventType) && !staff) {
     throw new Error("not_staff");
   }
+  let sharedComment: string | null = null;
   if (eventType === "supplier_quote_comment" && commentId) {
     const { data: comment } = await admin.from("supplier_quote_comments").select("id,created_by,visibility,body").eq("id", commentId).eq("quote_id", quoteId).maybeSingle();
     if (!comment || (!staff && comment.created_by !== actor.id)) throw new Error("comment access denied");
     if (staff && comment.visibility === "internal") return [];
+    sharedComment = comment.body;
   }
 
   const version = `V${Number(quote?.version_number || 1)}`;
-  const duration = trip.start_date && trip.end_date
-    ? Math.max(1, Math.round((new Date(trip.end_date).getTime() - new Date(trip.start_date).getTime()) / 86400000) + 1)
-    : Number(trip.duration_days || 0);
   const supplierUrl = `${adminBaseUrl()}/supplier/trips/${trip.id}/quote`;
-  const adminUrl = `${adminBaseUrl()}/supplier/trips/${trip.id}/quote`;
+  const adminUrl = `${adminBaseUrl()}/admin/supplier-costs/${trip.id}${quote?.id ? `/${quote.id}` : ""}`;
   const portalNotificationType: Partial<Record<EventType, string>> = {
     supplier_trip_assigned: "trip_assigned",
     supplier_quote_revision_requested: "quote_revision_requested",
@@ -1633,20 +1620,15 @@ async function supplierWorkflowEmails(admin: any, body: any, req: Request): Prom
   const metadataBase = { supplier_id: supplier.id, supplier_name: supplier.name, trip_id: trip.id, trip_title: trip.title, supplier_quote_id: quote?.id, version_number: quote?.version_number, supplier_notification_id: notification?.id };
 
   if (["supplier_trip_assigned", "supplier_quote_revision_requested", "supplier_quote_approved"].includes(eventType) || (eventType === "supplier_quote_comment" && staff)) {
-    const recipients = await supplierRecipients(admin, supplier);
+    const recipients = await supplierEmailRecipients(admin, supplier);
     if (!recipients.length) throw new Error("Supplier email is missing");
-    const copy: Record<string, [string, string]> = {
-      supplier_trip_assigned: [`Nouveau voyage assigné – Demande de devis – ${trip.title}`, "Un nouveau voyage vous est assigné. Merci de préparer le devis fournisseur dans votre portail."],
-      supplier_quote_revision_requested: [`Correction demandée – ${trip.title} – ${version}`, "L’équipe LeJapon.ma demande une correction de votre devis fournisseur."],
-      supplier_quote_approved: [`Devis approuvé – ${trip.title} – ${version}`, "Votre devis fournisseur a été approuvé. La version validée reste consultable dans votre portail."],
-      supplier_quote_comment: [`Nouveau commentaire – ${trip.title} – ${version}`, "Un nouveau commentaire partagé a été ajouté à une ligne de votre devis."],
-    };
-    const [subject, message] = copy[eventType];
-    return recipients.map((recipient) => ({
-      eventType, recipient, subject,
-      html: emailShell(subject, message, [["Voyage", trip.title], ["Arrivée", fmtDateOnly(trip.start_date)], ["Départ", fmtDateOnly(trip.end_date)], ["Durée", duration ? `${duration} jours` : missing], ["Participants prévisionnels", trip.total_slots]], { label: "Préparer le devis", href: supplierUrl }),
-      text: `${subject}\n\n${message}\nVoyage: ${trip.title}\nArrivée: ${fmtDateOnly(trip.start_date)}\nDépart: ${fmtDateOnly(trip.end_date)}\nDurée: ${duration || missing} jours\n${supplierUrl}`,
-      metadata: { ...metadataBase, workflow_event: eventType, audience: "supplier" },
+    return recipients.map(({ email: recipient, language }) => ({
+      eventType, recipient,
+      ...renderSupplierWorkflowEmail({ event: eventType as SupplierEmailEvent, language, trip,
+        version: quote ? Number(quote.version_number || 1) : undefined, url: supplierUrl,
+        feedback: quote?.admin_feedback, comment: sharedComment }),
+      metadata: { ...metadataBase, workflow_event: eventType, audience: "supplier", language,
+        japan_date_source: "visa_japan_arrival_date/visa_japan_departure_date" },
     }));
   }
 

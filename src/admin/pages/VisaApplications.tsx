@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { QuickActions } from "@/admin/components/QuickActions";
 import { motion, useReducedMotion } from "framer-motion";
+import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Brouillon",
@@ -45,7 +46,7 @@ export default function VisaApplications() {
 
   const reload = () => {
     supabase.from("visa_applications")
-      .select("id, reference, status, surname, given_names, passport_no, residential_email, submitted_at, created_at, booking_id, booking_participant_id")
+      .select("id, reference, status, surname, given_names, passport_no, residential_email, submitted_at, created_at, booking_id, booking_participant_id, bookings(trip_id)")
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (error) toast.error(error.message);
@@ -190,6 +191,7 @@ export default function VisaApplications() {
                 <Link to={`/admin/visa/${it.id}`} className="col-span-2 inline-flex h-11 items-center justify-center rounded-xl bg-accent px-4 text-sm font-semibold text-accent-foreground">
                   Ouvrir la demande
                 </Link>
+                {it.bookings?.trip_id && <Link to={tripWorkspacePath(it.bookings.trip_id, "visa")} className="col-span-2 inline-flex h-11 items-center justify-center rounded-xl border px-4 text-sm font-semibold">Dossier voyage</Link>}
               </div>
             </details>
 
@@ -218,6 +220,7 @@ export default function VisaApplications() {
                 </div>
               </Link>
               <div className="flex items-center gap-2 shrink-0 ml-3">
+                {it.bookings?.trip_id && <Button asChild variant="outline" size="sm"><Link to={tripWorkspacePath(it.bookings.trip_id, "visa")}>Dossier voyage</Link></Button>}
               {isAdmin && (
                 <Button
                   variant="ghost"

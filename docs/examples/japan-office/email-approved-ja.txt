@@ -1,0 +1,18 @@
+見積り承認のお知らせ — Japan Office preview — Tokyo / Kyoto — V3
+
+LeJapon.maがお見積りを承認しました。各サービスの手配および運営準備を進めていただけます。
+
+旅行名: Japan Office preview — Tokyo / Kyoto
+見積りバージョン: V3
+日本到着日: 2026年10月3日
+日本出発日: 2026年10月13日
+到着空港・港: Narita NRT
+到着便名: JL123
+日本出発便の詳細: EY 871 G NRTAUH 1730 0005+1
+EY 613 G AUHCMN 0225 0740
+予定参加人数: 19
+
+承認済み見積を確認する
+https://example.invalid/supplier/trips/example/quote
+
+LeJapon.maからの自動通知

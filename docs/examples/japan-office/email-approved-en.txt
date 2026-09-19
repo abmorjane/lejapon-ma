@@ -1,0 +1,18 @@
+Quotation approved — Japan Office preview — Tokyo / Kyoto — V3
+
+LeJapon.ma has approved your quotation. You may now proceed with bookings and operational preparation.
+
+Trip: Japan Office preview — Tokyo / Kyoto
+Quotation version: V3
+Arrival in Japan: 3 Oct 2026
+Departure from Japan: 13 Oct 2026
+Arrival airport / port: Narita NRT
+Arrival flight number: JL123
+Departure flight details: EY 871 G NRTAUH 1730 0005+1
+EY 613 G AUHCMN 0225 0740
+Expected participants: 19
+
+View approved quotation
+https://example.invalid/supplier/trips/example/quote
+
+Automatic notification — LeJapon.ma

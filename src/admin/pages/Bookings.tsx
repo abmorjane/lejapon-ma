@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { motion, useReducedMotion } from "framer-motion";
 import { ChevronDown, FileText, Pencil, Plus, Receipt, Save, Search, Trash2 } from "lucide-react";
@@ -47,6 +47,7 @@ import {
   type QuoteAdjustmentDraft,
 } from "@/lib/quote-adjustments";
 import { downloadBytes, generateQuotePdf, generateReceiptPdf } from "@/lib/booking-pdfs";
+import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
@@ -152,6 +153,7 @@ type NormalBookingRow = {
   paid_amount_mad: number | null;
   created_at: string;
   source?: string | null;
+  trip_id?: string | null;
   trips?: { title?: string | null } | null;
   clients?: { loyalty_tier?: string | null; is_returning?: boolean | null; trips_completed?: number | null } | null;
 };
@@ -313,6 +315,8 @@ const getBookingSearchText = (booking: NormalBookingRow) =>
   ].filter(Boolean).join(" ").toLowerCase();
 
 export default function Bookings() {
+  const [searchParams] = useSearchParams();
+  const scopedTripId = searchParams.get("tripId") || "";
   const [rows, setRows] = useState<NormalBookingRow[]>([]);
   const [bookingsLoading, setBookingsLoading] = useState(true);
   const [bookingsError, setBookingsError] = useState<string | null>(null);
@@ -368,11 +372,13 @@ export default function Bookings() {
   const load = async () => {
     setBookingsLoading(true);
     setBookingsError(null);
-    const { data, error } = await supabase
+    let query = supabase
       .from("bookings")
-      .select("id, reference, contact_name, contact_email, contact_phone, status, num_adults, num_children, total_amount_mad, paid_amount_mad, created_at, source, trips(title), clients(loyalty_tier, is_returning, trips_completed)")
+      .select("id, reference, contact_name, contact_email, contact_phone, status, num_adults, num_children, total_amount_mad, paid_amount_mad, created_at, source, trip_id, trips(title), clients(loyalty_tier, is_returning, trips_completed)")
       .order("created_at", { ascending: false })
       .limit(160);
+    if (scopedTripId) query = query.eq("trip_id", scopedTripId);
+    const { data, error } = await query;
     if (error) {
       console.warn("[admin-reservations] bookings load failed", error);
       setRows([]);
@@ -401,7 +407,7 @@ export default function Bookings() {
       return;
     }
 
-    const requests = (data ?? []) as AgencyBookingRequest[];
+    const requests = ((data ?? []) as AgencyBookingRequest[]).filter(request => !scopedTripId || request.metadata?.trip_id === scopedTripId);
     const organizationIds = Array.from(new Set(requests.map((request) => request.organization_id).filter(Boolean)));
     const organizationById = new Map<string, OrganizationSummary>();
     if (organizationIds.length) {
@@ -825,8 +831,8 @@ export default function Bookings() {
     if (saved) toast.success("Paiement supprimé.");
   };
 
-  useEffect(() => { load(); }, []);
-  useEffect(() => { loadAgencyRequests(); }, []);
+  useEffect(() => { load(); }, [scopedTripId]);
+  useEffect(() => { loadAgencyRequests(); }, [scopedTripId]);
   useEffect(() => { loadAgencyRequestOptions(); }, []);
 
   useEffect(() => {
@@ -1050,12 +1056,11 @@ export default function Bookings() {
     >
       <PageHeader
         title="Réservations"
-        description="Vue unifiée des réservations LeJapon.ma et des demandes agences."
-        action={canCreate ? (
-          <Button className="min-h-11 w-full rounded-xl sm:w-auto" onClick={() => setCreateOpen(true)}>
-            <Plus className="w-4 h-4" /> Nouvelle réservation
-          </Button>
-        ) : undefined}
+        description={scopedTripId ? "Réservations filtrées pour le dossier voyage sélectionné." : "Vue unifiée des réservations LeJapon.ma et des demandes agences."}
+        action={(canCreate || scopedTripId) ? <div className="flex flex-wrap gap-2">
+          {scopedTripId && <Button asChild variant="outline"><Link to={tripWorkspacePath(scopedTripId, "reservations")}>Retour au dossier voyage</Link></Button>}
+          {canCreate && <Button className="min-h-11 w-full rounded-xl sm:w-auto" onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4" /> Nouvelle réservation</Button>}
+        </div> : undefined}
       />
 
       <Card className="rounded-2xl shadow-sm">
