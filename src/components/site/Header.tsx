@@ -44,31 +44,30 @@ export const Header = () => {
     <>
       {/* Promo bar */}
       {promo.enabled && (
-        <div className="flex min-h-9 items-center justify-center bg-gradient-vermillion px-4 py-2 text-center text-xs font-medium text-accent-foreground md:text-sm">
-          <Sparkles className="w-3.5 h-3.5 inline mr-2" />
-          {promo.text}
-          {promo.cta_label && promo.cta_url && (
-            <>
-              {" — "}
+        <div className="flex min-h-8 items-center justify-center bg-gradient-vermillion px-2 py-1.5 text-center text-[11px] font-medium leading-tight text-accent-foreground sm:min-h-9 sm:px-4 sm:py-2 sm:text-xs md:text-sm">
+          <div className="flex max-w-full items-center justify-center gap-1.5 sm:gap-2">
+            <Sparkles className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />
+            <span>{promo.text}</span>
+            {promo.cta_label && promo.cta_url && (
               <Link
                 to={promo.cta_url}
-                className="underline underline-offset-2 font-semibold"
+                className="inline-flex min-h-7 shrink-0 items-center whitespace-nowrap font-semibold underline underline-offset-2 sm:min-h-8"
                 onClick={() => trackEvent("reservation_cta_clicked", { placement: "promo_bar" })}
               >
                 {promo.cta_label}
               </Link>
-            </>
-          )}
+            )}
+          </div>
         </div>
       )}
       <header className={cn(
-        "sticky top-0 inset-x-0 z-50 h-[72px] md:h-[76px] transition-[background-color,box-shadow,border-color,backdrop-filter] duration-300",
+        "sticky inset-x-0 top-0 z-50 h-16 transition-[background-color,box-shadow,border-color,backdrop-filter] duration-300 md:h-[76px]",
         scrolled ? "bg-background/85 backdrop-blur-xl border-b border-border shadow-soft" : "bg-background"
       )}>
-        <div className="container-app flex h-full items-center justify-between gap-6">
+        <div className="container-app flex h-full items-center justify-between gap-3 md:gap-6">
           <Link to="/" className="flex items-center group" aria-label="lejapon.ma">
-            <span className="inline-flex h-11 w-[118px] items-center md:w-[132px]">
-              <img src={logo} alt="LeJapon.ma" className="h-10 w-full object-contain md:h-11" width={220} height={88} />
+            <span className="inline-flex h-10 w-[106px] items-center sm:w-[114px] md:h-11 md:w-[132px]">
+              <img src={logo} alt="LeJapon.ma" className="h-9 w-full object-contain md:h-11" width={220} height={88} />
             </span>
           </Link>
 
@@ -99,15 +98,20 @@ export const Header = () => {
             >
               {t("nav.booking")}
             </Link>
-            <button className="tap-target -mr-2 p-2 lg:hidden" onClick={() => setOpen(!open)} aria-label="menu">
-              {open ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            <button
+              className="tap-target -mr-2 inline-flex h-11 w-11 items-center justify-center rounded-full p-2 transition-colors hover:bg-secondary lg:hidden"
+              onClick={() => setOpen(!open)}
+              aria-label={open ? "Fermer le menu" : "Ouvrir le menu"}
+              aria-expanded={open}
+            >
+              {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
           </div>
         </div>
 
         {open && (
-          <div className="lg:hidden bg-background border-t border-border">
-            <div className="container-app py-6 flex flex-col gap-2">
+          <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-border bg-background lg:hidden">
+            <div className="container-app flex flex-col gap-2 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:py-6">
               {links.map((l) => (
                 <Link key={l.to} to={l.to} className="text-base py-3 border-b border-border/50 font-medium">{l.label}</Link>
               ))}

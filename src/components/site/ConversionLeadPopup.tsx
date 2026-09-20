@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { MessageCircle, Phone, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { supabase } from "@/integrations/supabase/client";
@@ -60,6 +61,57 @@ const pageMatches = (pages: PopupConfig["items"][number]["pages"], pathname: str
   return false;
 };
 
+type LeadFormProps = {
+  idPrefix: string;
+  name: string;
+  phone: string;
+  preferredDate: string;
+  saving: boolean;
+  ctaLabel: string;
+  onNameChange: (value: string) => void;
+  onPhoneChange: (value: string) => void;
+  onPreferredDateChange: (value: string) => void;
+  onSubmit: () => void;
+  mobile?: boolean;
+};
+
+function LeadForm({
+  idPrefix,
+  name,
+  phone,
+  preferredDate,
+  saving,
+  ctaLabel,
+  onNameChange,
+  onPhoneChange,
+  onPreferredDateChange,
+  onSubmit,
+  mobile = false,
+}: LeadFormProps) {
+  return (
+    <form
+      className={mobile ? "grid gap-3 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]" : "mt-4 grid gap-2"}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <label className="sr-only" htmlFor={`${idPrefix}-name`}>Nom</label>
+      <Input id={`${idPrefix}-name`} value={name} onChange={(event) => onNameChange(event.target.value)} placeholder="Nom (optionnel)" autoComplete="name" />
+      <label className="sr-only" htmlFor={`${idPrefix}-phone`}>Téléphone</label>
+      <Input id={`${idPrefix}-phone`} value={phone} onChange={(event) => onPhoneChange(event.target.value)} placeholder="Téléphone *" inputMode="tel" autoComplete="tel" autoFocus={mobile} />
+      <label className="sr-only" htmlFor={`${idPrefix}-date`}>Date de voyage souhaitée</label>
+      <Input id={`${idPrefix}-date`} value={preferredDate} onChange={(event) => onPreferredDateChange(event.target.value)} placeholder="Date de voyage souhaitée (optionnel)" />
+      <div className={mobile ? "sticky bottom-0 -mx-1 bg-background px-1 pb-1 pt-1" : ""}>
+        <Button type="submit" disabled={saving} className="mt-1 w-full">
+          <Phone className="h-4 w-4" />
+          {saving ? "Envoi..." : ctaLabel}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 export function ConversionLeadPopup() {
   const location = useLocation();
   const config = useSiteContent<PopupConfig>("site:conversion-popups", DEFAULT_POPUPS);
@@ -68,6 +120,7 @@ export function ConversionLeadPopup() {
   const [phone, setPhone] = useState("");
   const [preferredDate, setPreferredDate] = useState("");
   const [saving, setSaving] = useState(false);
+  const [mobileFormOpen, setMobileFormOpen] = useState(false);
 
   const activePopup = useMemo(() => {
     if (!config.enabled) return null;
@@ -78,6 +131,7 @@ export function ConversionLeadPopup() {
 
   useEffect(() => {
     setVisible(false);
+    setMobileFormOpen(false);
     if (!activePopup) return;
     const key = storageKeyFor(activePopup.id, config.frequency ?? "session");
     const store = (config.frequency ?? "session") === "day" ? window.localStorage : window.sessionStorage;
@@ -92,6 +146,7 @@ export function ConversionLeadPopup() {
       const store = (config.frequency ?? "session") === "day" ? window.localStorage : window.sessionStorage;
       store.setItem(key, "1");
     }
+    setMobileFormOpen(false);
     setVisible(false);
   };
 
@@ -144,33 +199,104 @@ export function ConversionLeadPopup() {
 
   if (!activePopup || !visible) return null;
 
+  const ctaLabel = activePopup.cta_label || "Être rappelé";
+
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[70] p-3 sm:bottom-5 sm:left-auto sm:right-5 sm:max-w-sm">
-      <div className="rounded-2xl border border-border bg-background p-4 shadow-2xl">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex gap-3">
-            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
-              <MessageCircle className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="font-display text-xl leading-tight">{activePopup.title}</h2>
-              <p className="mt-2 text-sm text-muted-foreground">{activePopup.message}</p>
-            </div>
-          </div>
-          <button type="button" onClick={close} className="rounded-full p-1 text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label="Fermer">
+    <>
+      <div className="fixed inset-x-0 bottom-0 z-[70] px-3 pb-[max(.75rem,env(safe-area-inset-bottom))] xl:hidden">
+        <div className="mx-auto flex max-w-sm items-center gap-2 rounded-2xl border border-border bg-background/95 p-2 shadow-2xl backdrop-blur-lg">
+          <button
+            type="button"
+            onClick={() => setMobileFormOpen(true)}
+            className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-xl px-2 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-haspopup="dialog"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
+              <MessageCircle className="h-4.5 w-4.5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold leading-tight">Parler à un conseiller</span>
+              <span className="block truncate text-xs text-muted-foreground">{ctaLabel}</span>
+            </span>
+          </button>
+          <button type="button" onClick={close} className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Masquer la demande de rappel">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="mt-4 grid gap-2">
-          <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nom (optionnel)" />
-          <Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Téléphone *" inputMode="tel" />
-          <Input value={preferredDate} onChange={(event) => setPreferredDate(event.target.value)} placeholder="Date de voyage souhaitée (optionnel)" />
-          <Button type="button" onClick={submit} disabled={saving} className="mt-1">
-            <Phone className="h-4 w-4" />
-            {saving ? "Envoi..." : activePopup.cta_label || "Être rappelé"}
-          </Button>
+      </div>
+
+      <Drawer open={mobileFormOpen} onOpenChange={setMobileFormOpen} shouldScaleBackground={false}>
+        <DrawerContent
+          className="z-[80] max-h-[calc(100dvh-.5rem)] overflow-hidden rounded-t-3xl"
+          overlayClassName="z-[79] bg-black/45 backdrop-blur-[1px]"
+        >
+          <div className="mx-auto flex w-full max-w-lg flex-col overflow-y-auto overscroll-contain">
+            <DrawerHeader className="relative px-4 pb-3 pt-4 text-left">
+              <div className="flex items-start gap-3 pr-10">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
+                  <MessageCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <DrawerTitle className="font-display text-xl leading-tight">{activePopup.title}</DrawerTitle>
+                  <DrawerDescription className="mt-1.5 leading-relaxed">{activePopup.message}</DrawerDescription>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileFormOpen(false)}
+                className="absolute right-3 top-3 inline-flex h-11 w-11 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Fermer le formulaire"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </DrawerHeader>
+            <LeadForm
+              idPrefix="mobile-callback"
+              name={name}
+              phone={phone}
+              preferredDate={preferredDate}
+              saving={saving}
+              ctaLabel={ctaLabel}
+              onNameChange={setName}
+              onPhoneChange={setPhone}
+              onPreferredDateChange={setPreferredDate}
+              onSubmit={submit}
+              mobile
+            />
+          </div>
+        </DrawerContent>
+      </Drawer>
+
+      <div className="fixed bottom-5 right-5 z-[70] hidden max-w-sm xl:block">
+        <div className="rounded-2xl border border-border bg-background p-4 shadow-2xl">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex gap-3">
+              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
+                <MessageCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-display text-xl leading-tight">{activePopup.title}</h2>
+                <p className="mt-2 text-sm text-muted-foreground">{activePopup.message}</p>
+              </div>
+            </div>
+            <button type="button" onClick={close} className="rounded-full p-1 text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label="Fermer">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <LeadForm
+            idPrefix="desktop-callback"
+            name={name}
+            phone={phone}
+            preferredDate={preferredDate}
+            saving={saving}
+            ctaLabel={ctaLabel}
+            onNameChange={setName}
+            onPhoneChange={setPhone}
+            onPreferredDateChange={setPreferredDate}
+            onSubmit={submit}
+          />
         </div>
       </div>
-    </div>
+    </>
   );
 }

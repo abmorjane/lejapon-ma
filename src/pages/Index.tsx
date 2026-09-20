@@ -289,7 +289,7 @@ const Index = () => {
         }}
       />
       {/* HERO */}
-      <section className="relative flex min-h-[760px] items-center overflow-hidden pb-14 sm:min-h-[820px] sm:pb-20 md:min-h-[780px] md:pb-0 lg:min-h-[88vh]">
+      <section className="relative flex min-h-[620px] items-center overflow-hidden sm:min-h-[660px] md:min-h-[720px] lg:min-h-[88vh]">
         <div className="absolute inset-0">
           <picture className="block h-full w-full">
             <source
@@ -321,14 +321,14 @@ const Index = () => {
           <div className="absolute inset-0 bg-gradient-hero" />
         </div>
 
-        <div className="relative container-app z-10 py-16 sm:py-20 md:py-24 lg:py-20">
-          <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,46rem)_minmax(250px,1fr)] lg:gap-8 xl:grid-cols-[minmax(0,50rem)_minmax(320px,1fr)]">
+        <div className="container-app relative z-10 py-9 sm:py-12 md:py-20 lg:py-20">
+          <div className="grid items-center lg:grid-cols-[minmax(0,38rem)_minmax(180px,1fr)] lg:gap-8 xl:grid-cols-[minmax(0,50rem)_minmax(280px,1fr)]">
             <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }} className="relative z-20 max-w-3xl lg:max-w-[46rem] xl:max-w-3xl">
-              <span className="badge-pill bg-white/15 backdrop-blur-md text-white border border-white/20 mb-6">
+              <span className="badge-pill mb-4 border border-white/20 bg-white/15 text-white backdrop-blur-md sm:mb-5 md:mb-6">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
                 {c.hero_badge}
               </span>
-              <h1 className="font-display text-5xl leading-[1] text-white text-balance sm:text-6xl md:text-7xl lg:text-[5.5rem]">
+              <h1 className="text-balance font-display text-[clamp(2.55rem,11.5vw,3.8rem)] leading-[0.98] tracking-[-0.025em] text-white sm:text-6xl md:text-7xl lg:text-[4rem] xl:text-[5.5rem]">
                 {(c.hero_title_l1 || "").split(",").map((part, i, arr) => (
                   <span key={i} className="block">
                     {part.trim()}{i < arr.length - 1 ? "," : ""}
@@ -336,7 +336,7 @@ const Index = () => {
                 ))}
                 <span className="block text-gradient">{c.hero_title_l2}</span>
               </h1>
-              <p className="mt-8 text-lg md:text-xl max-w-2xl text-white/90 leading-relaxed">
+              <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-white/90 sm:mt-5 sm:text-lg md:mt-7 md:text-xl">
                 {c.hero_subtitle}
               </p>
             </motion.div>
@@ -345,13 +345,13 @@ const Index = () => {
               initial={{ opacity: 0, x: 44, y: 12 }}
               animate={{ opacity: 1, x: 0, y: 0 }}
               transition={{ duration: 0.8, delay: 0.28 }}
-              className="relative z-20 flex min-h-[150px] items-center justify-center lg:min-h-[360px] lg:justify-start xl:min-h-[430px]"
+              className="relative z-20 hidden min-h-[330px] items-center justify-start lg:flex xl:min-h-[390px]"
               aria-hidden
             >
               <img
                 src={shiba}
                 alt=""
-                className="block w-[145px] max-w-[45vw] drop-shadow-2xl pointer-events-none sm:w-[165px] md:w-[190px] lg:w-[300px] lg:max-w-none xl:w-[375px]"
+                className="pointer-events-none block w-[200px] max-w-none drop-shadow-2xl xl:w-[285px]"
                 style={{ animation: "fade-up 0.8s both, slow-zoom 6s ease-in-out infinite alternate" }}
                 width={768}
                 height={768}
@@ -361,21 +361,36 @@ const Index = () => {
             </motion.div>
           </div>
 
-          <div className="relative z-30 mt-8 flex flex-wrap items-center gap-4 lg:mt-2">
-            <Link
-              to="/reserver"
-              className="btn-primary text-base"
-              onClick={() => trackEvent("reservation_cta_clicked", { placement: "home_hero_primary" })}
-            >
-              {c.hero_cta_primary} <ArrowRight className="w-5 h-5" />
-            </Link>
-            <Link to="/voyages" className="btn-ghost text-base !bg-white/10 !backdrop-blur-md !text-white !border-white/30 hover:!bg-white hover:!text-foreground">
-              {c.hero_cta_secondary}
-            </Link>
+          <div className="relative z-30 mt-6 grid grid-cols-[minmax(0,1fr)_5.25rem] items-end gap-2.5 sm:mt-7 sm:grid-cols-[minmax(0,auto)_6rem] sm:justify-start sm:gap-4 lg:mt-2 lg:block">
+            <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:gap-4">
+              <Link
+                to="/reserver"
+                className="btn-primary w-full justify-center text-sm sm:w-auto sm:text-base"
+                onClick={() => trackEvent("reservation_cta_clicked", { placement: "home_hero_primary" })}
+              >
+                {c.hero_cta_primary} <ArrowRight className="h-5 w-5" />
+              </Link>
+              <Link to="/voyages" className="btn-ghost w-full justify-center text-sm !border-white/30 !bg-white/10 !text-white !backdrop-blur-md hover:!bg-white hover:!text-foreground sm:w-auto sm:text-base">
+                {c.hero_cta_secondary}
+              </Link>
+            </div>
+            <motion.img
+              initial={{ opacity: 0, x: 16, y: 8 }}
+              animate={{ opacity: 1, x: 0, y: 0 }}
+              transition={{ duration: 0.65, delay: 0.2 }}
+              src={shiba}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none block w-[5.25rem] self-end drop-shadow-2xl sm:w-24 lg:hidden"
+              width={768}
+              height={768}
+              loading="eager"
+              decoding="async"
+            />
           </div>
 
           {/* trust badges */}
-          <div className="relative z-30 mt-8 flex flex-wrap items-center gap-6 text-white/80 text-sm lg:mt-10">
+          <div className="relative z-30 mt-5 flex flex-col items-start gap-3 text-xs text-white/80 sm:mt-7 sm:flex-row sm:flex-wrap sm:items-center sm:gap-6 sm:text-sm lg:mt-10">
             <div className="flex items-center gap-2">
               <div className="flex -space-x-2">
                 {[1,2,3,4].map(i => <div key={i} className="w-8 h-8 rounded-full bg-gradient-sunset border-2 border-white" />)}
@@ -397,7 +412,7 @@ const Index = () => {
         {/* scroll hint */}
         <a
           href="#prochains-departs"
-          className="absolute bottom-6 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 text-xs text-white/60 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-2 focus-visible:ring-offset-foreground"
+          className="absolute bottom-6 left-1/2 hidden -translate-x-1/2 flex-col items-center gap-2 text-xs text-white/60 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-2 focus-visible:ring-offset-foreground md:flex"
           aria-label="Découvrir les prochains départs"
         >
           <span>{c.hero_scroll}</span>

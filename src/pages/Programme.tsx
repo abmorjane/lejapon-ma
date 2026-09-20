@@ -486,7 +486,7 @@ function DaySection({ day, reverse, programme, showCta }: { day: ProgrammeDay; r
           )}
           <h3 className="font-display text-2xl sm:text-[1.75rem] md:text-3xl mb-3 leading-tight break-words hyphens-auto">{day.title}</h3>
           {day.description && (
-            <p className="text-muted-foreground leading-relaxed whitespace-pre-line text-[15px] sm:text-base break-words max-w-full">{day.description}</p>
+            <ExpandableDayDescription description={day.description} dayId={day.id} />
           )}
 
           {/* Icons */}
@@ -562,6 +562,51 @@ function DaySection({ day, reverse, programme, showCta }: { day: ProgrammeDay; r
         </div>
       )}
     </article>
+  );
+}
+
+function ExpandableDayDescription({ description, dayId }: { description: string; dayId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const normalized = description.trim();
+  const isLong = normalized.length > 320 || normalized.split(/\n+/).length > 4;
+  const descriptionId = `programme-day-description-${dayId}`;
+
+  return (
+    <div className="max-w-full">
+      <motion.div layout="size" transition={{ duration: 0.28, ease: "easeInOut" }} className="relative overflow-hidden">
+        <p
+          id={descriptionId}
+          className={cn(
+            "max-w-full whitespace-pre-line break-words text-[15px] leading-relaxed text-muted-foreground sm:text-base",
+            isLong && !expanded && "line-clamp-5",
+          )}
+        >
+          {description}
+        </p>
+        <AnimatePresence initial={false}>
+          {isLong && !expanded && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-background to-transparent"
+              aria-hidden="true"
+            />
+          )}
+        </AnimatePresence>
+      </motion.div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-2 inline-flex min-h-10 cursor-pointer items-center rounded-full px-1 text-sm font-semibold text-accent underline-offset-4 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          aria-expanded={expanded}
+          aria-controls={descriptionId}
+        >
+          {expanded ? "Réduire" : "Lire la suite"}
+        </button>
+      )}
+    </div>
   );
 }
 
