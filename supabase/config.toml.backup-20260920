@@ -1,0 +1,13 @@
+project_id = "nxnncbddtpjusrnhilxk"
+
+[functions.recaptcha]
+verify_jwt = false
+
+[functions.translate-content]
+verify_jwt = false
+
+[functions.blog-social-preview]
+verify_jwt = false
+
+[functions.travel-agreement]
+verify_jwt = false
