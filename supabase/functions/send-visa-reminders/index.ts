@@ -10,14 +10,32 @@ const REMINDER_AFTER_DAYS = 3;
 // Don't re-send a reminder within this many days
 const REMINDER_COOLDOWN_DAYS = 4;
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+async function isAuthorizedInternalRequest(req: Request, admin: any): Promise<boolean> {
+  const authHeader = req.headers.get("Authorization") || "";
+  const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (bearer && bearer === SERVICE_ROLE) return true;
+
+  const cronSecret = (req.headers.get("x-cron-secret") || "").trim();
+  if (!cronSecret) return false;
+
+  const { data, error } = await admin.rpc("verify_edge_cron_secret", { p_token: cronSecret });
+  return !error && data === true;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const admin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
+    const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+    if (!(await isAuthorizedInternalRequest(req, admin))) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const cutoff = new Date(Date.now() - REMINDER_AFTER_DAYS * 24 * 3600 * 1000).toISOString();
     const cooldown = new Date(Date.now() - REMINDER_COOLDOWN_DAYS * 24 * 3600 * 1000).toISOString();

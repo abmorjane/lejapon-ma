@@ -366,21 +366,44 @@ Ouvrir: ${adminUrl}`,
   };
 }
 
+async function requireStaffOrService(req: Request, admin: any, serviceRoleKey: string) {
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) throw new Error("missing_auth");
+  if (token === serviceRoleKey) return;
+
+  const { data, error } = await admin.auth.getUser(token);
+  if (error || !data.user) throw new Error("invalid_token");
+
+  const { data: isStaff, error: staffError } = await admin.rpc("is_staff", { _user_id: data.user.id });
+  if (staffError) throw new Error("staff_check_failed");
+  if (isStaff !== true) throw new Error("not_staff");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const admin = createClient(supabaseUrl, serviceRoleKey);
+
+    try {
+      await requireStaffOrService(req, admin, serviceRoleKey);
+    } catch (authError) {
+      const code = authError instanceof Error ? authError.message : "invalid_token";
+      const status = code === "not_staff" ? 403 : 401;
+      return new Response(JSON.stringify({ error: code }), {
+        status, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { application_id, status, extra } = await req.json();
     if (!application_id || !status) {
       return new Response(JSON.stringify({ error: "Missing application_id/status" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const admin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
 
     const { data: app, error: appErr } = await admin
       .from("visa_applications").select("*").eq("id", application_id).maybeSingle();

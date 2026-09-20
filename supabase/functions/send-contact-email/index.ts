@@ -28,7 +28,7 @@ function isLocalOrigin(req: Request) {
 
 async function verifyRecaptcha(token: string, req: Request) {
   if (token === BYPASS_TOKEN && isLocalOrigin(req)) return { ok: true, reason: "local_bypass" };
-  if (!RECAPTCHA_SECRET) return { ok: true };
+  if (!RECAPTCHA_SECRET) return { ok: false, reason: "secret_not_configured" };
   if (!token) return { ok: false, reason: "missing_token" };
   const body = new URLSearchParams({ secret: RECAPTCHA_SECRET, response: token }).toString();
   const res = await fetch("https://www.google.com/recaptcha/api/siteverify", {
@@ -42,31 +42,74 @@ async function verifyRecaptcha(token: string, req: Request) {
   return { ok: true };
 }
 
-function smtpConfig() {
-  const config = {
-    hostname: Deno.env.get("SMTP_HOST"),
-    port: Number(Deno.env.get("SMTP_PORT") || 465),
-    username: Deno.env.get("SMTP_USER"),
-    password: Deno.env.get("SMTP_PASS"),
-    from: Deno.env.get("SMTP_FROM"),
-  };
+function normalizeEmail(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeHostname(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .replace(/^smtp:\/\//i, "")
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .trim()
+    .toLowerCase();
+}
+
+async function smtpConfig(admin: any) {
+  const { data: settings, error } = await admin
+    .from("email_settings")
+    .select("smtp_host,smtp_port,smtp_secure,smtp_username,smtp_password,from_email,from_name,reply_to,is_active")
+    .eq("is_active", true)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`SMTP settings read failed: ${error.message}`);
+
+  const config = settings
+    ? {
+      hostname: normalizeHostname(settings.smtp_host),
+      port: Number(settings.smtp_port) || 465,
+      secure: String(settings.smtp_secure || "ssl"),
+      username: normalizeEmail(settings.smtp_username),
+      password: String(settings.smtp_password ?? ""),
+      from: normalizeEmail(settings.from_email) || "info@lejapon.ma",
+      fromName: String(settings.from_name || "LeJapon.ma / Moroccan Express Travel & Events").trim(),
+      replyTo: normalizeEmail(settings.reply_to) || undefined,
+    }
+    : {
+      hostname: normalizeHostname(Deno.env.get("SMTP_HOST")),
+      port: Number(Deno.env.get("SMTP_PORT") || 465),
+      secure: Number(Deno.env.get("SMTP_PORT") || 465) === 465 ? "ssl" : "starttls",
+      username: normalizeEmail(Deno.env.get("SMTP_USER")),
+      password: String(Deno.env.get("SMTP_PASS") ?? ""),
+      from: normalizeEmail(Deno.env.get("EMAIL_FROM") || Deno.env.get("SMTP_FROM")) || "info@lejapon.ma",
+      fromName: "LeJapon.ma / Moroccan Express Travel & Events",
+      replyTo: undefined,
+    };
+
   const missing = [
     ["SMTP_HOST", config.hostname],
     ["SMTP_USER", config.username],
     ["SMTP_PASS", config.password],
     ["SMTP_FROM", config.from],
   ].filter(([, value]) => !value).map(([key]) => key);
+
   if (missing.length) {
-    throw new Error(`Missing SMTP secrets: ${missing.join(", ")}. Configure them in Supabase Edge Function secrets, not only local .env.`);
+    throw new Error(`Missing SMTP settings: ${missing.join(", ")}. Configure Admin > Paramètres email or Supabase Edge Function secrets.`);
   }
+
   return {
     connection: {
-      hostname: config.hostname!,
+      hostname: config.hostname,
       port: config.port,
-      tls: config.port === 465,
-      auth: { username: config.username!, password: config.password! },
+      tls: config.secure === "ssl",
+      auth: { username: config.username, password: config.password },
     },
-    from: config.from!,
+    from: config.from,
+    fromName: config.fromName,
+    replyTo: config.replyTo,
   };
 }
 
@@ -158,10 +201,10 @@ Deno.serve(async (req) => {
     const text = `Nouveau message depuis LeJapon.ma\n\nNom: ${contact.name}\nEmail: ${contact.email}\nTéléphone: ${contact.phone ?? "—"}\nSujet: ${contact.subject ?? "—"}\nDate: ${sentAt}\n\nMessage:\n${contact.message}`;
 
     try {
-      const smtp = smtpConfig();
+      const smtp = await smtpConfig(admin);
       const client = new SMTPClient({ connection: smtp.connection });
       await client.send({
-        from: `LeJapon.ma / Moroccan Express Travel & Events <${smtp.from}>`,
+        from: `${smtp.fromName} <${smtp.from}>`,
         to: recipient,
         replyTo: contact.email,
         subject: emailSubject,

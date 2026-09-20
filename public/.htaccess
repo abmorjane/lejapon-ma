@@ -9,7 +9,7 @@ RewriteRule ^ https://www.lejapon.ma%{REQUEST_URI} [R=301,L]
 # Serve a lightweight HTML preview with article-specific meta tags, while keeping the
 # canonical URL on /blog/:slug and the normal SPA route for human visitors.
 RewriteCond %{HTTP_USER_AGENT} "(facebookexternalhit|Facebot|WhatsApp|Twitterbot|LinkedInBot|Slackbot|TelegramBot|Discordbot|Pinterest|SkypeUriPreview)" [NC]
-RewriteRule ^blog/([^/]+)/?$ https://nxnncbddtpjusrnhilxk.supabase.co/functions/v1/blog-social-preview?slug=$1 [R=302,L,NE]
+RewriteRule ^blog/([^/]+)/?$ https://nkovgpzspprmmhorwaxl.supabase.co/functions/v1/blog-social-preview?slug=$1 [R=302,L,NE]
 
 # Legacy WordPress taxonomy redirects with explicit SEO destinations.
 RewriteRule ^tag/visa-japon/?$ /visa-japon-maroc [R=301,L]

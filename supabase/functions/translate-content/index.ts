@@ -139,15 +139,49 @@ function systemPromptFor(item: Item) {
   );
 }
 
-async function translateOne(item: Item, apiKey: string): Promise<string> {
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+type AiConfig = {
+  apiKey: string;
+  apiUrl: string;
+  model: string;
+};
+
+function aiConfig(): AiConfig {
+  const apiKey = String(Deno.env.get("AI_API_KEY") || "").trim();
+  const apiUrl = String(
+    Deno.env.get("AI_API_URL") || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  ).trim();
+  const model = String(Deno.env.get("AI_MODEL") || "gemini-2.5-flash").trim();
+  if (!apiKey) throw new Error("AI_API_KEY not set");
+  if (!apiUrl) throw new Error("AI_API_URL not set");
+  if (!model) throw new Error("AI_MODEL not set");
+  return { apiKey, apiUrl, model };
+}
+
+async function requireStaff(admin: any, req: Request, serviceKey: string) {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!jwt) throw new Error("missing_auth");
+
+  // Allow trusted server-to-server invocations that use the project's service-role key.
+  if (jwt === serviceKey) return;
+
+  const { data, error } = await admin.auth.getUser(jwt);
+  if (error || !data.user) throw new Error("invalid_token");
+
+  const { data: isStaff, error: staffError } = await admin.rpc("is_staff", { _user_id: data.user.id });
+  if (staffError) throw new Error("staff_check_failed");
+  if (isStaff !== true) throw new Error("not_staff");
+}
+
+async function translateOne(item: Item, ai: AiConfig): Promise<string> {
+  const res = await fetch(ai.apiUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${ai.apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
+      model: ai.model,
       messages: [
         {
           role: "system",
@@ -176,13 +210,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const apiKey = Deno.env.get("LOVABLE_API_KEY");
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: "LOVABLE_API_KEY not set" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const admin = createClient(supabaseUrl, serviceKey);
+
+    await requireStaff(admin, req, serviceKey);
+    const ai = aiConfig();
 
     const body = await req.json().catch(() => ({}));
     const items: Item[] = Array.isArray(body?.items) ? body.items : [];
@@ -199,10 +232,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const admin = createClient(supabaseUrl, serviceKey);
-
     const results = await Promise.all(
       items.map(async (it) => {
         try {
@@ -212,7 +241,7 @@ Deno.serve(async (req) => {
           if (!["en", "ar"].includes(it.targetLang)) {
             return { ok: false, ...it, error: "bad lang" };
           }
-          const translated = await translateOne(it, apiKey);
+          const translated = await translateOne(it, ai);
           if (it.persist !== false && it.table && it.rowId && it.field) {
             const hash = await md5(it.sourceText);
             const { error } = await admin
@@ -255,8 +284,10 @@ Deno.serve(async (req) => {
       },
     );
   } catch (e: any) {
-    return new Response(JSON.stringify({ error: e?.message ?? "unknown" }), {
-      status: 500,
+    const message = e?.message ?? "unknown";
+    const status = ["missing_auth", "invalid_token"].includes(message) ? 401 : message === "not_staff" ? 403 : 500;
+    return new Response(JSON.stringify({ error: message }), {
+      status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

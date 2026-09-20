@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
         }).eq('id', rcp.id);
         const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '';
         await supabase.from('email_events').insert({
-          campaign_id: c, recipient_id: rcp.id, event_type: 'opened',
+          campaign_id: c, recipient_id: rcp.id, event_type: 'open',
           user_agent: req.headers.get('user-agent') ?? null,
           ip_hash: ip ? await hashIp(ip) : null,
         });

@@ -9,6 +9,18 @@ const BATCH_SIZE = parseInt(Deno.env.get('MARKETING_BATCH_SIZE') || '25', 10);
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
+async function isAuthorizedInternalRequest(req: Request): Promise<boolean> {
+  const authHeader = req.headers.get('Authorization') || '';
+  const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (bearer && bearer === SERVICE_ROLE) return true;
+
+  const cronSecret = (req.headers.get('x-cron-secret') || '').trim();
+  if (!cronSecret) return false;
+
+  const { data, error } = await supabase.rpc('verify_edge_cron_secret', { p_token: cronSecret });
+  return !error && data === true;
+}
+
 function renderTokens(html: string, ctx: Record<string, string>) {
   return html.replace(/\{\{(\w+)\}\}/g, (_, k) => ctx[k] ?? '');
 }
@@ -93,6 +105,13 @@ async function processCampaign(campaign: any, settings: any): Promise<{ sent: nu
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
+    if (!(await isAuthorizedInternalRequest(req))) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const { data: settings } = await supabase.from('email_settings').select('*').eq('is_active', true).limit(1).maybeSingle();
     if (!settings) {
       return new Response(JSON.stringify({ error: 'SMTP settings not configured' }), { status: 412, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

@@ -1,13 +1,42 @@
-project_id = "nxnncbddtpjusrnhilxk"
+project_id = "nkovgpzspprmmhorwaxl"
 
-[functions.recaptcha]
-verify_jwt = false
-
-[functions.translate-content]
+# Public endpoints or endpoints that implement their own token/origin checks.
+[functions.admin-password-recovery]
 verify_jwt = false
 
 [functions.blog-social-preview]
 verify_jwt = false
 
+[functions.client-password-recovery]
+verify_jwt = false
+
+[functions.recaptcha]
+verify_jwt = false
+
+[functions.send-contact-email]
+verify_jwt = false
+
+[functions.track-email-open]
+verify_jwt = false
+
 [functions.travel-agreement]
 verify_jwt = false
+
+[functions.visa-client-signup]
+verify_jwt = false
+
+# Authenticated staff only; translate-content also validates the user's staff role in code.
+[functions.translate-content]
+verify_jwt = true
+
+# Public tracking redirects/pixels validate opaque tracking tokens in code.
+[functions.track-email-click]
+verify_jwt = false
+
+# Internal workers authenticate either the service-role token or a Vault-backed cron secret in code.
+[functions.process-marketing-queue]
+verify_jwt = false
+
+[functions.send-visa-reminders]
+verify_jwt = false
+
