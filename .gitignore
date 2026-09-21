@@ -12,6 +12,34 @@ dist
 dist-ssr
 *.local
 
+# Local environment files. Keep only the documented template in Git.
+.env
+.env.*
+!.env.example
+
+# Generated frontend releases and local backup archives.
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# Database dumps and private backup outputs. SQL source files remain trackable.
+*.dump
+*.backup
+*.pgdump
+*.sql.gz
+*.sql.zst
+/backups/
+/backup-output/
+/private-exports/
+
+# Local migration snapshots and Supabase CLI state.
+/.migration-backups/
+/supabase/.temp/
+/supabase/functions.backup-*/
+/supabase/config.toml.backup-*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -22,5 +50,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-LeJapon-V2.200-Stable.zip
-LeJapon-V2.200-Stable.zip
