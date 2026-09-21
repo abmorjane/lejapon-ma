@@ -39,9 +39,9 @@ export default function BackupsAdmin() {
       const url = URL.createObjectURL(backup.blob);
       setResult(backup);
       setDownloadUrl(url);
-      toast.success("Backup généré avec succès");
+      toast.success("Export métier généré avec succès");
     } catch (error: any) {
-      toast.error(error?.message ?? "Impossible de générer le backup");
+      toast.error(error?.message ?? "Impossible de générer l’export métier");
     } finally {
       setBusy(false);
     }
@@ -55,7 +55,7 @@ export default function BackupsAdmin() {
         </div>
         <h2 className="font-display text-xl">Réservé aux Super Admins</h2>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Les backups complets contiennent des données sensibles et ne sont accessibles qu'au Super Admin.
+          Les exports métier contiennent des données sensibles et ne sont accessibles qu'au Super Admin.
         </p>
       </div>
     );
@@ -67,21 +67,29 @@ export default function BackupsAdmin() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="System · Backups"
-        description="Export manuel de reprise après sinistre pour la plateforme LeJapon.ma."
+        title="Sauvegardes & exports"
+        description="Export métier manuel et information sur la sauvegarde Disaster Recovery."
         action={
           <Button onClick={generate} disabled={busy} className="min-h-11">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileArchive className="h-4 w-4" />}
-            Generate Backup
+            Générer l’export métier
           </Button>
         }
       />
 
       <Alert className="border-amber-300 bg-amber-50 text-amber-950">
         <ShieldCheck className="h-4 w-4 text-amber-700" />
-        <AlertTitle>Backup sensible · {BACKUP_PLATFORM_LABEL}</AlertTitle>
+        <AlertTitle>Export métier manuel · {BACKUP_PLATFORM_LABEL}</AlertTitle>
         <AlertDescription>
           Le ZIP contient des exports JSON/CSV de la base, une liste Auth via la fonction sécurisée super_admin, et un manifeste Storage. Aucun fichier média n'est téléchargé dans le ZIP, seuls les chemins et métadonnées sont exportés.
+        </AlertDescription>
+      </Alert>
+
+      <Alert>
+        <ShieldCheck className="h-4 w-4" />
+        <AlertTitle>Sauvegarde Disaster Recovery</AlertTitle>
+        <AlertDescription>
+          La sauvegarde complète PostgreSQL, Auth et fichiers Storage est gérée séparément par une infrastructure chiffrée et sécurisée. Elle ne peut pas être déclenchée depuis cette page et aucun secret de stockage externe n'est exposé au navigateur.
         </AlertDescription>
       </Alert>
 
@@ -131,7 +139,7 @@ export default function BackupsAdmin() {
       <Card className="p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="font-display text-lg">Export complet V1.0.1 Stable</h2>
+            <h2 className="font-display text-lg">Export métier manuel V1.0.1 Stable</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Contenu: tables métier, utilisateurs Auth, manifeste des buckets passports, visa-docs, booking-docs, programme-pdfs, media, article-images et programme-images.
             </p>
@@ -161,7 +169,7 @@ export default function BackupsAdmin() {
         {result && (
           <div className="mt-5 rounded-lg border border-border bg-secondary/25 p-4 text-sm">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge>Backup prêt</Badge>
+              <Badge>Export prêt</Badge>
               <span className="text-muted-foreground">{result.filename}</span>
             </div>
             <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-3">

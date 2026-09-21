@@ -46,9 +46,11 @@ case "${OUTPUT_ROOT}" in
 esac
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP_ID="lejapon-prod-postgres-${TIMESTAMP}"
+BACKUP_ID="${LEJAPON_DB_BACKUP_ID:-lejapon-prod-postgres-${TIMESTAMP}}"
+[[ "${BACKUP_ID}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "LEJAPON_DB_BACKUP_ID is invalid."
 WORK_DIR="${OUTPUT_ROOT}/.${BACKUP_ID}.partial"
 FINAL_DIR="${OUTPUT_ROOT}/${BACKUP_ID}"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 [[ ! -e "${WORK_DIR}" && ! -e "${FINAL_DIR}" ]] || fail "Backup destination already exists."
 mkdir -p -- "${WORK_DIR}"
@@ -114,6 +116,7 @@ CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 LEJAPON_MANIFEST_DIR="${WORK_DIR}" \
 LEJAPON_BACKUP_ID="${BACKUP_ID}" \
+LEJAPON_STARTED_AT="${STARTED_AT}" \
 LEJAPON_CREATED_AT="${CREATED_AT}" \
 LEJAPON_SOURCE_COMMIT="${SOURCE_COMMIT}" \
 LEJAPON_CLI_VERSION="${CLI_VERSION}" \
@@ -140,8 +143,11 @@ const files = [...checksums.entries()].map(([name, sha256]) => ({
 }));
 
 const manifest = {
+  schema_version: 1,
   backup_id: process.env.LEJAPON_BACKUP_ID,
   status: "complete",
+  component: "postgresql-auth",
+  started_at: process.env.LEJAPON_STARTED_AT,
   created_at: process.env.LEJAPON_CREATED_AT,
   source: {
     environment: "production",
@@ -176,7 +182,7 @@ NODE
 (
   cd -- "${WORK_DIR}"
   checksum_file "manifest.json" >> SHA256SUMS
-  chmod 600 -- ./*.sql manifest.json SHA256SUMS
+  chmod 600 ./*.sql manifest.json SHA256SUMS
 )
 
 trap - ERR

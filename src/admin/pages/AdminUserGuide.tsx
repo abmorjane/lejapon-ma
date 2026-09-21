@@ -137,11 +137,11 @@ const GUIDE_SECTIONS: GuideSection[] = [
   },
   {
     category: "Backups",
-    summary: "Sauvegardes et points de contrôle avant changements majeurs.",
-    workflow: ["Vérifier état git", "Build", "Commit", "Tag si stable", "Documenter le checkpoint"],
-    buttons: ["Créer backup lance la procédure configurée", "Télécharger archive récupère un export"],
+    summary: "Export métier manuel et suivi des sauvegardes Disaster Recovery sécurisées.",
+    workflow: ["Générer l’export métier si nécessaire", "Télécharger le ZIP", "Contrôler séparément le backup Disaster Recovery", "Documenter le checkpoint"],
+    buttons: ["Générer l’export métier crée le ZIP navigateur", "Télécharger le ZIP récupère cet export partiel"],
     mistakes: ["Committer des secrets", "Supprimer des migrations de production"],
-    bestPractices: ["Créer un checkpoint avant les refontes larges", "Ne jamais inclure .env ou clés privées"],
+    bestPractices: ["Ne pas confondre l’export métier avec une restauration complète", "Ne jamais inclure .env ou clés privées"],
   },
   {
     category: "Permissions",

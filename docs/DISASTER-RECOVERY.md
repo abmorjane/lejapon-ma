@@ -828,3 +828,11 @@ Consigner ces informations dans un manifeste daté. Ne pas faire de capture cont
 - [rclone — S3 provider and checksum behavior](https://rclone.org/s3/)
 
 Ces pages évoluent. Avant un exercice ou une restauration réelle, vérifier la documentation et l'aide de la version CLI installée. Les commandes destructives ou de restauration exigent toujours une validation explicite.
+
+## 20. Infrastructure de backup externe — Phase A.2
+
+La Phase A.2 implémente l'automatisation décrite dans [`docs/BACKUP-AUTOMATION.md`](./BACKUP-AUTOMATION.md). Elle ajoute un workflow GitHub manuel, une copie PostgreSQL/Auth, la copie réelle de tous les buckets Storage détectés, le chiffrement client `rclone crypt`, les manifestes, SHA-256 et validations locale/distante.
+
+Le workflow ne contient aucun calendrier et la rotation distante reste désactivée. Un premier backup réel exige une validation explicite après configuration des secrets GitHub et du stockage S3-compatible. Le helper de restauration ne fait qu'afficher la procédure ; il n'exécute aucune restauration.
+
+Les deux secrets crypt originaux sont des éléments critiques du plan de reprise. Ils doivent être conservés dans le coffre principal et dans une copie hors ligne séparée du stockage des backups. Leur perte rend les snapshots chiffrés irrécupérables.
