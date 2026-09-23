@@ -50,6 +50,7 @@ import { getBookingPricingBreakdown } from "@/lib/booking-pricing";
 import { calculateCommercialDocumentTotals, invoiceTypeLabel } from "@/lib/commercial-documents";
 import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
 import { publicHotelLabel, publicRoomLabel } from "@/lib/booking-options";
+import { bookingStatusLabel } from "@/admin/lib/booking-status";
 
 const FINANCIAL_DOCUMENT_TYPES = new Set(["quote", "receipt", "invoice", "payment", "financial"]);
 
@@ -116,6 +117,30 @@ const toDateTimeLocal = (value?: string | null) => {
   if (Number.isNaN(date.getTime())) return "";
   const pad = (number: number) => String(number).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const parseCalendarDate = (value?: string | null) => {
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+};
+
+const formatTripDateRange = (startValue?: string | null, endValue?: string | null) => {
+  const start = parseCalendarDate(startValue);
+  const end = parseCalendarDate(endValue);
+  if (!start && !end) return "Dates non renseignées";
+  if (!start || !end) {
+    return new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(start ?? end!);
+  }
+  const startLabel = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short" }).format(start);
+  const endLabel = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(end);
+  return `${startLabel} – ${endLabel}`;
+};
+
+const formatFrenchList = (items: string[]) => {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} et ${items[items.length - 1]}`;
 };
 
 const fromDateTimeLocal = (value?: string | null) => value ? new Date(value).toISOString() : null;
@@ -237,6 +262,7 @@ export default function BookingDetail() {
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [flightOpen, setFlightOpen] = useState(false);
+  const [flightAdvancedOpen, setFlightAdvancedOpen] = useState(false);
   const [adjustmentsOpen, setAdjustmentsOpen] = useState(false);
   const [agencyOpen, setAgencyOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
@@ -1422,6 +1448,12 @@ export default function BookingDetail() {
   const flightIsFinalized = ["reserved", "partially_ticketed", "ticketed", "delivered"].includes(flightStatus);
   const flightFieldsReadOnly = flightStatus === "delivered" && !flightEditMode;
   const flightInputDisabled = flightBusy || !canEdit || flightFieldsReadOnly;
+  const contactDetails = [b.contact_email, b.contact_phone].filter((value) => String(value ?? "").trim());
+  const tripDateRange = formatTripDateRange(b.trips?.start_date, b.trips?.end_date);
+  const openFlightPanel = () => {
+    setFlightAdvancedOpen(false);
+    setFlightOpen(true);
+  };
 
   return (
     <motion.div
@@ -1430,13 +1462,14 @@ export default function BookingDetail() {
       transition={{ duration: 0.2 }}
       className="space-y-5 sm:space-y-6"
     >
-      <Link to="/admin/bookings" className="inline-flex min-h-11 items-center gap-2 rounded-full px-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="w-4 h-4" /> Retour</Link>
+      <div className="space-y-1">
+      <Link to="/admin/bookings" className="inline-flex min-h-9 items-center gap-2 rounded-full px-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="w-4 h-4" /> Retour</Link>
 
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-mono text-xs text-muted-foreground">{b.reference}</p>
-            <StatusBadge value={b.status} />
+            <StatusBadge value={b.status} label={bookingStatusLabel(b.status)} />
             {(taskSummary.overdue > 0 || taskSummary.critical > 0) && (
               <button type="button" onClick={() => setTasksOpen(true)} className="inline-flex min-h-8 items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 text-xs font-semibold text-red-800">
                 <AlertTriangle className="h-3.5 w-3.5" />
@@ -1446,23 +1479,24 @@ export default function BookingDetail() {
           </div>
           <h1 className="mt-1 font-display text-2xl leading-tight sm:text-3xl">{b.contact_name}</h1>
           <p className="mt-1 text-sm font-medium">{b.trips?.title ?? "Voyage non défini"}</p>
-          <p className="truncate text-sm text-muted-foreground">{b.contact_email} · {b.contact_phone || "—"}</p>
+          <p className="truncate text-sm text-muted-foreground">{contactDetails.length ? contactDetails.join(" · ") : "Coordonnées non renseignées"}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {b.trip_id && <Button asChild variant="outline" className="min-h-11"><Link to={tripWorkspacePath(b.trip_id, "reservations")}>Voir le voyage</Link></Button>}
           <Select value={b.status} onValueChange={updateStatus}>
             <SelectTrigger className="min-h-11 w-[160px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="lead">Lead</SelectItem><SelectItem value="confirmed">Confirmé</SelectItem><SelectItem value="paid">Payé</SelectItem><SelectItem value="cancelled">Annulé</SelectItem><SelectItem value="completed">Terminé</SelectItem>
+              <SelectItem value="lead">Prospect</SelectItem><SelectItem value="confirmed">Confirmée</SelectItem><SelectItem value="paid">Payée</SelectItem><SelectItem value="cancelled">Annulée</SelectItem><SelectItem value="completed">Terminée</SelectItem>
             </SelectContent>
           </Select>
         </div>
       </header>
+      </div>
 
       <Card className="overflow-hidden rounded-2xl border-border shadow-sm">
         <CardContent className="space-y-4 p-4 sm:p-5">
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
-            <div className="col-span-2 rounded-xl bg-muted/50 p-3 sm:col-span-1"><CalendarDays className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">Dates</p><p className="font-medium">{b.trips?.start_date || "—"}<br />{b.trips?.end_date || b.preferred_dates || "—"}</p></div>
+            <div className="col-span-2 rounded-xl bg-muted/50 p-3 sm:col-span-1"><CalendarDays className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">Dates</p><p className="font-medium leading-snug">{b.trips?.start_date || b.trips?.end_date ? tripDateRange : b.preferred_dates || "Dates non renseignées"}</p></div>
             <div className="rounded-xl bg-muted/50 p-3"><Users className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">PAX</p><p className="font-semibold">{totalTravelers}</p></div>
             <div className="rounded-xl bg-muted/50 p-3"><Hotel className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">Hébergement</p><p className="font-medium">{publicHotelLabel(b.formula)}</p></div>
             <div className="rounded-xl bg-muted/50 p-3"><BedDouble className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">Chambre</p><p className="font-semibold">{publicRoomLabel(b.room_type)}</p></div>
@@ -1482,7 +1516,7 @@ export default function BookingDetail() {
         <Button variant="outline" className="min-h-11" onClick={() => setEditing(true)} disabled={!canEdit}><Pencil className="h-4 w-4" /> Modifier</Button>
         <Button className="min-h-11 bg-emerald-700 hover:bg-emerald-800" onClick={() => setPaymentDialogOpen(true)} disabled={!canEdit}><CreditCard className="h-4 w-4" /> Ajouter paiement</Button>
         <Button className="min-h-11 border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100" variant="outline" onClick={() => setAdjustmentsOpen(true)}><SlidersHorizontal className="h-4 w-4" /> Ajuster devis</Button>
-        <Button variant="outline" className="min-h-11 border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100" onClick={() => setFlightOpen(true)}><Plane className="h-4 w-4" /> Vol</Button>
+        <Button variant="outline" className="min-h-11 border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100" onClick={openFlightPanel}><Plane className="h-4 w-4" /> Vol</Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild><Button variant="ghost" className="col-span-2 min-h-11 sm:col-span-1"><MoreHorizontal className="h-4 w-4" /> Plus</Button></DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
@@ -1661,7 +1695,7 @@ export default function BookingDetail() {
             </SheetContent>
           </Sheet>
 
-          <Sheet open={flightOpen} onOpenChange={setFlightOpen}>
+          <Sheet open={flightOpen} onOpenChange={(open) => { setFlightOpen(open); if (!open) setFlightAdvancedOpen(false); }}>
             <SheetContent className="w-full max-w-none p-0 sm:w-[min(920px,96vw)] sm:max-w-none">
               <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1870,7 +1904,11 @@ export default function BookingDetail() {
                 )}
               </div>
 
-              <details className="group rounded-xl border border-border bg-muted/30 p-3">
+              <details
+                className="group rounded-xl border border-border bg-muted/30 p-3"
+                open={flightAdvancedOpen}
+                onToggle={(event) => setFlightAdvancedOpen(event.currentTarget.open)}
+              >
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold">
                   Billets PDF et import avancé
                   <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
@@ -1977,7 +2015,9 @@ export default function BookingDetail() {
                   Email envoyé
                 </label>
                 <div className="text-xs text-muted-foreground">
-                  {flightMissing.length > 0 ? `${flightMissing.length} élément(s) requis pour l’étape demandée.` : "Le vol peut être enregistré avec les informations essentielles."}
+                  {flightMissing.length > 0
+                    ? `Pour marquer le vol comme réservé, renseignez ${formatFrenchList(flightMissing)}. Le brouillon reste enregistrable.`
+                    : "Toutes les informations essentielles sont renseignées : le vol peut être marqué comme réservé."}
                 </div>
               </div>
 
@@ -2395,18 +2435,13 @@ export default function BookingDetail() {
             </SheetContent>
           </Sheet>
 
-          <details className="group rounded-2xl border border-border bg-background shadow-sm lg:block" open>
-            <summary className="flex list-none items-center justify-between p-4 font-display text-lg cursor-pointer lg:cursor-default">
-              Édition rapide
-              <span className="text-xs text-muted-foreground group-open:hidden lg:hidden">ouvrir</span>
-            </summary>
-            <div className="px-4 pb-4 sm:px-6 sm:pb-6">
-            <div className="space-y-3">
-              <div><Label className="text-xs">Total (MAD)</Label><Input type="number" inputMode="decimal" defaultValue={b.total_amount_mad} onBlur={(e) => saveField("total_amount_mad", +e.target.value)} /></div>
-              <div><Label className="text-xs">Notes internes</Label><Textarea rows={4} defaultValue={b.message ?? ""} onBlur={(e) => saveField("message", e.target.value)} /></div>
+          <section className="rounded-2xl border border-border bg-background p-4 shadow-sm sm:p-5">
+            <div className="mb-3">
+              <h2 className="font-display text-base">Notes internes</h2>
+              <p className="text-xs text-muted-foreground">Enregistrées automatiquement lorsque vous quittez le champ.</p>
             </div>
-            </div>
-          </details>
+            <Textarea rows={3} defaultValue={b.message ?? ""} onBlur={(e) => saveField("message", e.target.value)} placeholder="Ajouter une note interne…" />
+          </section>
 
           <details className="group rounded-2xl border border-border bg-background shadow-sm lg:block">
             <summary className="flex list-none items-center justify-between p-4 font-display text-lg cursor-pointer">

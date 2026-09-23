@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
-import { Plus, UserPlus, Trash2, Pencil, Save, X, ExternalLink, AlertTriangle, ChevronDown, UserCheck } from "lucide-react";
+import { Plus, UserPlus, Trash2, Pencil, Save, X, ExternalLink, AlertTriangle, ChevronDown, UserCheck, MoreHorizontal } from "lucide-react";
 import { AddTravelerDialog } from "./AddTravelerDialog";
 import { LinkExistingClientDialog } from "./LinkExistingClientDialog";
 import { QuickActions } from "./QuickActions";
@@ -343,11 +344,13 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-lg">Voyageurs associés</h2>
-          <div className="mt-2 grid grid-cols-3 gap-2 text-xs sm:flex sm:flex-wrap">
-            <Badge variant="outline">Prévus : {counters.expected}</Badge>
-            <Badge variant="outline">Renseignés : {counters.visible}</Badge>
-            <Badge variant="outline">Stockés DB : {counters.stored}</Badge>
-            <Badge variant={counters.remaining === 0 ? "default" : "secondary"}>Restant : {counters.remaining}</Badge>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {counters.visible} voyageur{counters.visible > 1 ? "s" : ""} renseigné{counters.visible > 1 ? "s" : ""} sur {counters.expected}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+            {counters.remaining > 0 && (
+              <Badge variant="secondary" className="gap-1"><AlertTriangle className="h-3 w-3" /> {counters.remaining} voyageur{counters.remaining > 1 ? "s" : ""} à renseigner</Badge>
+            )}
             {counters.overflow && (
               <Badge variant="destructive" className="gap-1"><AlertTriangle className="w-3 h-3" /> Dépassement</Badge>
             )}
@@ -369,9 +372,20 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
             </Button>
           )}
           {responsibleDeleted && list.length === 0 && <Button size="sm" variant="outline" className="min-h-11" onClick={restoreResponsible}>Restaurer responsable</Button>}
-          <Button size="sm" variant="outline" className="min-h-11" onClick={repairDuplicates}>Nettoyer les doublons</Button>
           <Button size="sm" variant="outline" className="min-h-11" onClick={() => setOpenLink(true)}><UserPlus className="w-4 h-4" /> Associer</Button>
           <Button size="sm" className="min-h-11" onClick={() => setOpenAdd(true)}><Plus className="w-4 h-4" /> Nouveau</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" className="col-span-2 min-h-11 px-3 sm:col-span-1" aria-label="Plus d’actions voyageurs">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem className="min-h-11 text-destructive focus:text-destructive" onClick={repairDuplicates}>
+                <Trash2 className="mr-2 h-4 w-4" /> Nettoyer les doublons
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

@@ -12,6 +12,7 @@ import { quoteAdjustmentsFromBooking, quoteTotalWithAdjustments } from "@/lib/qu
 import { StatusBadge } from "./StatusBadge";
 import { EditBookingDialog } from "./EditBookingDialog";
 import { AdminPaymentDialog } from "./AdminPaymentDialog";
+import { bookingStatusLabel } from "@/admin/lib/booking-status";
 
 type Props = {
   booking: any | null;
@@ -100,7 +101,7 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
                   <SheetTitle className="truncate font-display text-xl">{current?.contact_name ?? "Réservation"}</SheetTitle>
                   <SheetDescription>{current?.reference ?? "—"} · {current?.trips?.title ?? booking?.trips?.title ?? "Voyage non renseigné"}</SheetDescription>
                 </div>
-                {current?.status && <StatusBadge value={current.status} />}
+                {current?.status && <StatusBadge value={current.status} label={bookingStatusLabel(current.status)} />}
               </div>
             </SheetHeader>
 

@@ -10,6 +10,7 @@ import { LoyaltyBadge } from "../components/LoyaltyBadge";
 import { QuickActions } from "../components/QuickActions";
 import { CreateBookingDialog } from "../components/CreateBookingDialog";
 import { BookingQuickViewSheet } from "../components/BookingQuickViewSheet";
+import { bookingStatusLabel } from "@/admin/lib/booking-status";
 import { useAuth } from "@/hooks/useAuth";
 import { hasAnyRole } from "../lib/permissions";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
@@ -154,9 +155,12 @@ type NormalBookingRow = {
   paid_amount_mad: number | null;
   created_at: string;
   source?: string | null;
+  formula?: string | null;
+  room_type?: string | null;
   trip_id?: string | null;
   trips?: { title?: string | null } | null;
   clients?: { loyalty_tier?: string | null; is_returning?: boolean | null; trips_completed?: number | null } | null;
+  booking_extras?: Array<{ name_snapshot?: string | null; qty?: number | null }> | null;
 };
 
 type UnifiedReservation =
@@ -376,7 +380,7 @@ export default function Bookings() {
     setBookingsError(null);
     let query = supabase
       .from("bookings")
-      .select("id, reference, contact_name, contact_email, contact_phone, status, num_adults, num_children, total_amount_mad, paid_amount_mad, created_at, source, trip_id, trips(title), clients(loyalty_tier, is_returning, trips_completed)")
+      .select("id, reference, contact_name, contact_email, contact_phone, status, num_adults, num_children, total_amount_mad, paid_amount_mad, created_at, source, formula, room_type, trip_id, trips(title), clients(loyalty_tier, is_returning, trips_completed), booking_extras(name_snapshot,qty)")
       .order("created_at", { ascending: false })
       .limit(160);
     if (scopedTripId) query = query.eq("trip_id", scopedTripId);
@@ -1220,7 +1224,7 @@ export default function Bookings() {
                     <p className="text-xs text-muted-foreground truncate">{b.trips?.title ?? "—"}</p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <StatusBadge value={b.status} />
+                    <StatusBadge value={b.status} label={bookingStatusLabel(b.status)} />
                     <ChevronDown className="w-4 h-4 ml-auto mt-2 text-muted-foreground transition-transform group-open:rotate-180" />
                   </div>
                 </div>
@@ -1347,7 +1351,7 @@ export default function Bookings() {
                 return (
                   <tr
                     key={`booking-${b.id}`}
-                    className="cursor-pointer hover:bg-secondary/30 focus-within:bg-secondary/30 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+                    className="group cursor-pointer transition-colors hover:bg-accent/10 focus-within:bg-accent/10 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
                     onClick={() => setQuickViewBooking(b)}
                     onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setQuickViewBooking(b); } }}
                     tabIndex={0}
@@ -1355,7 +1359,7 @@ export default function Bookings() {
                     aria-label={`Aperçu de la réservation ${b.reference}`}
                   >
                     <td className="p-4"><Badge variant="outline">{bookingSourceLabel(b)}</Badge></td>
-                    <td className="p-4"><button type="button" className="text-accent font-medium">{b.reference}</button></td>
+                    <td className="p-4"><button type="button" className="font-medium text-accent underline-offset-2 group-hover:underline">{b.reference}</button></td>
                     <td className="p-4">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium">{b.contact_name}</p>
@@ -1368,10 +1372,17 @@ export default function Bookings() {
                     </td>
                     <td className="p-4">{b.trips?.title ?? "—"}</td>
                     <td className="p-4">{b.num_adults}A {Number(b.num_children || 0) > 0 && `+ ${b.num_children}E`}</td>
-                    <td className="p-4 text-xs text-muted-foreground">—</td>
+                    <td className="p-4 text-xs">
+                      <p className="font-medium text-foreground">{b.room_type || b.formula || "Non renseigné"}</p>
+                      {b.booking_extras?.length ? (
+                        <p className="mt-1 max-w-[200px] truncate text-muted-foreground">
+                          {b.booking_extras.slice(0, 2).map((extra) => `${extra.name_snapshot || "Extra"}${Number(extra.qty || 0) > 1 ? ` × ${extra.qty}` : ""}`).join(" · ")}
+                        </p>
+                      ) : null}
+                    </td>
                     <td className="p-4">{fmtMAD(b.total_amount_mad)}</td>
-                    <td className="p-4">—</td>
-                    <td className="p-4"><StatusBadge value={b.status} /></td>
+                    <td className="p-4"><span className="sr-only">Sans commission agence</span></td>
+                    <td className="p-4"><StatusBadge value={b.status} label={bookingStatusLabel(b.status)} /></td>
                     <td className="p-4 text-xs text-muted-foreground">{fmtDateTime(b.created_at)}</td>
                   </tr>
                 );
