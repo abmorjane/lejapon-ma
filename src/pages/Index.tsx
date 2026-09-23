@@ -11,6 +11,7 @@ import { NewsletterSection } from "@/components/site/NewsletterSection";
 import { TripCard, TripCardSkeleton, type TripCardData } from "@/components/trips/TripCard";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { trackEvent } from "@/lib/analytics";
+import { commercialDateKey } from "@/lib/public-commercial-visibility";
 import hero from "@/assets/hero-fuji.jpg";
 import kyoto from "@/assets/kyoto-alley.jpg";
 import shibuya from "@/assets/tokyo-shibuya.jpg";
@@ -258,7 +259,8 @@ const Index = () => {
           .from("trips")
           .select("id,title,slug,label,season,start_date,end_date,duration_days,base_price_mad,currency,cover_url,cover_alt,slots_left,highlights,destinations,badge_type,badge_text,promo_percent,program_link,is_featured,sort_order")
           .is("archived_at", null)
-          .in("status", ["open", "completed"])
+          .eq("status", "open")
+          .gte("end_date", commercialDateKey())
           .eq("is_featured", true)
           .order("sort_order", { ascending: true })
           .order("is_featured", { ascending: false })

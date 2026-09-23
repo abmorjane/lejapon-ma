@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Trash2, Plus, Save, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ensureI18n, type I18nString } from "@/lib/i18n-content";
@@ -15,6 +16,7 @@ type ItemField = { key: string; label: string; noI18n?: boolean; rows?: number }
 type Field =
   | { key: string; label: string; type: "text" | "textarea"; placeholder?: string; rows?: number; help?: string }
   | { key: string; label: string; type: "url" | "switch"; placeholder?: string; help?: string }
+  | { key: string; label: string; type: "datetime" | "trip"; help?: string }
   | { key: string; label: string; type: "list"; itemFields: ItemField[]; help?: string };
 type Group = { title: string; fields: Field[] };
 type Section = {
@@ -24,6 +26,15 @@ type Section = {
   description: string;
   fields?: Field[];
   groups?: Group[];
+};
+
+type TripOption = {
+  id: string;
+  title: string;
+  season: string | null;
+  end_date: string | null;
+  status: string;
+  archived_at: string | null;
 };
 
 const LANGS = [
@@ -172,6 +183,9 @@ const SECTIONS: Section[] = [
       { key: "text", label: "Texte principal", type: "text", placeholder: "Sakura 2026 · 4 places restantes" },
       { key: "cta_label", label: "Texte du lien", type: "text", placeholder: "Réserver maintenant" },
       { key: "cta_url", label: "URL du lien", type: "url", placeholder: "/reserver" },
+      { key: "active_from", label: "Date de début", type: "datetime", help: "Laisser vide pour afficher immédiatement." },
+      { key: "expires_at", label: "Date d’expiration", type: "datetime", help: "Le bandeau disparaîtra automatiquement après cette date." },
+      { key: "linked_trip_id", label: "Voyage lié", type: "trip", help: "Si un voyage est choisi, le bandeau disparaît lorsqu’il est fermé, archivé ou terminé." },
     ],
   },
   {
@@ -259,16 +273,24 @@ export default function Frontend() {
   const [data, setData] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [tripOptions, setTripOptions] = useState<TripOption[]>([]);
 
   useEffect(() => {
     (async () => {
-      const { data: rows } = await supabase
-        .from("pages")
-        .select("slug,content")
-        .in("slug", SECTIONS.map((s) => s.slug));
+      const [{ data: rows }, { data: trips }] = await Promise.all([
+        supabase
+          .from("pages")
+          .select("slug,content")
+          .in("slug", SECTIONS.map((s) => s.slug)),
+        supabase
+          .from("trips")
+          .select("id,title,season,end_date,status,archived_at")
+          .order("start_date", { ascending: false, nullsFirst: false }),
+      ]);
       const d: Record<string, any> = {};
       (rows ?? []).forEach((r) => (d[r.slug] = r.content ?? {}));
       setData(d);
+      setTripOptions((trips ?? []) as TripOption[]);
       setLoading(false);
     })();
   }, []);
@@ -315,6 +337,7 @@ export default function Frontend() {
               key={f.key}
               field={f}
               value={v[f.key]}
+              tripOptions={tripOptions}
               onChange={(val) => update(section.slug, f.key, val)}
             />
           );
@@ -365,7 +388,17 @@ export default function Frontend() {
   );
 }
 
-function FieldEditor({ field, value, onChange }: { field: Field; value: any; onChange: (v: any) => void }) {
+function FieldEditor({
+  field,
+  value,
+  tripOptions,
+  onChange,
+}: {
+  field: Field;
+  value: any;
+  tripOptions: TripOption[];
+  onChange: (v: any) => void;
+}) {
   if (field.type === "switch") {
     return (
       <div className="flex items-center justify-between gap-4 p-4 border border-border rounded-xl">
@@ -379,6 +412,51 @@ function FieldEditor({ field, value, onChange }: { field: Field; value: any; onC
       <div>
         <Label className="text-sm font-medium mb-2 block">{field.label}</Label>
         <Input value={value ?? ""} placeholder={(field as any).placeholder} onChange={(e) => onChange(e.target.value)} />
+      </div>
+    );
+  }
+  if (field.type === "datetime") {
+    const date = value ? new Date(value) : null;
+    const isValid = date && !Number.isNaN(date.getTime());
+    const localValue = isValid
+      ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+      : "";
+    return (
+      <div>
+        <Label className="text-sm font-medium mb-2 block">{field.label}</Label>
+        <Input
+          type="datetime-local"
+          value={localValue}
+          onChange={(event) => {
+            const next = event.target.value ? new Date(event.target.value) : null;
+            onChange(next && !Number.isNaN(next.getTime()) ? next.toISOString() : "");
+          }}
+        />
+        {field.help && <p className="mt-1.5 text-xs text-muted-foreground">{field.help}</p>}
+        {field.key === "expires_at" && isValid && (
+          <p className="mt-1 text-xs font-medium text-foreground">
+            Expire le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short" }).format(date)}
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (field.type === "trip") {
+    return (
+      <div>
+        <Label className="text-sm font-medium mb-2 block">{field.label}</Label>
+        <Select value={value || "__none"} onValueChange={(next) => onChange(next === "__none" ? "" : next)}>
+          <SelectTrigger><SelectValue placeholder="Aucun voyage lié" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none">Aucun voyage lié</SelectItem>
+            {tripOptions.map((trip) => (
+              <SelectItem key={trip.id} value={trip.id}>
+                {trip.title}{trip.season ? ` · ${trip.season}` : ""} · {trip.archived_at ? "Archivé" : trip.status}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {field.help && <p className="mt-1.5 text-xs text-muted-foreground">{field.help}</p>}
       </div>
     );
   }

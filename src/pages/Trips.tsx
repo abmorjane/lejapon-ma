@@ -9,6 +9,7 @@ import { TripCard, TripCardSkeleton, type TripCardData } from "@/components/trip
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTranslatedTable } from "@/hooks/useTranslated";
+import { commercialDateKey } from "@/lib/public-commercial-visibility";
 
 const fallbackImgs = [hero, torii, shibuya];
 
@@ -28,7 +29,8 @@ const Trips = () => {
         .from("trips")
         .select("id,title,slug,label,season,start_date,end_date,duration_days,base_price_mad,currency,cover_url,cover_alt,slots_left,highlights,destinations,badge_type,badge_text,promo_percent,program_link,sort_order")
         .is("archived_at", null)
-        .in("status", ["open", "completed"])
+        .eq("status", "open")
+        .gte("end_date", commercialDateKey())
         .order("sort_order", { ascending: true })
         .order("start_date", { ascending: true, nullsFirst: false });
       setTrips((data ?? []) as Trip[]);

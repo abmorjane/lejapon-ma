@@ -4,10 +4,16 @@ import { useTranslation } from "react-i18next";
 import { Menu, X, Globe, Sparkles } from "lucide-react";
 import logo from "@/assets/logo-lejapon.png";
 import { setLang } from "@/i18n";
+import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
 import { trackEvent } from "@/lib/analytics";
+import {
+  commercialDateKey,
+  isPromotionCurrentlyVisible,
+  type PublicTripAvailability,
+} from "@/lib/public-commercial-visibility";
 
 const langs = [{ c: "fr", l: "FR" }, { c: "en", l: "EN" }, { c: "ar", l: "ع" }] as const;
 
@@ -22,7 +28,14 @@ export const Header = () => {
     text: "Sakura 2026 · 4 places restantes",
     cta_label: "Réserver maintenant",
     cta_url: "/reserver",
+    active_from: "",
+    expires_at: "",
+    linked_trip_id: "",
   });
+  const [commercialNow, setCommercialNow] = useState(() => new Date());
+  const [linkedPromoTrip, setLinkedPromoTrip] = useState<PublicTripAvailability | null | undefined>(null);
+  const linkedTripId = typeof promo.linked_trip_id === "string" ? promo.linked_trip_id.trim() : "";
+  const commercialToday = commercialDateKey(commercialNow);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -31,6 +44,40 @@ export const Header = () => {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
   useEffect(() => setOpen(false), [loc.pathname]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCommercialNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!linkedTripId) {
+      setLinkedPromoTrip(null);
+      return;
+    }
+
+    let active = true;
+    setLinkedPromoTrip(undefined);
+    void supabase
+      .from("trips")
+      .select("status,end_date,archived_at")
+      .eq("id", linkedTripId)
+      .is("archived_at", null)
+      .eq("status", "open")
+      .gte("end_date", commercialToday)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) console.error("Unable to validate the promotional trip:", error.message);
+        setLinkedPromoTrip(error ? null : data);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [commercialToday, linkedTripId]);
+
+  const promoVisible = isPromotionCurrentlyVisible(promo, linkedPromoTrip, commercialNow);
 
   const links = [
     { to: pathFor(slugs, "trips"), label: t("nav.price") },
@@ -43,7 +90,7 @@ export const Header = () => {
   return (
     <>
       {/* Promo bar */}
-      {promo.enabled && (
+      {promoVisible && (
         <div className="flex min-h-8 items-center justify-center bg-gradient-vermillion px-2 py-1.5 text-center text-[11px] font-medium leading-tight text-accent-foreground sm:min-h-9 sm:px-4 sm:py-2 sm:text-xs md:text-sm">
           <div className="flex max-w-full items-center justify-center gap-1.5 sm:gap-2">
             <Sparkles className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />

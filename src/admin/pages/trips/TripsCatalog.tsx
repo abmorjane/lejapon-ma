@@ -453,10 +453,11 @@ export default function TripsCatalog() {
                     <SelectContent>
                       <SelectItem value="draft">Brouillon</SelectItem>
                       <SelectItem value="open">Ouvert</SelectItem>
-                      <SelectItem value="closed">Fermé</SelectItem>
-                      <SelectItem value="completed">Terminé</SelectItem>
+                      <SelectItem value="closed">Complet / fermé</SelectItem>
+                      <SelectItem value="completed">Terminé (historique)</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">Seul un voyage ouvert et dont la date de fin n’est pas dépassée est commercialisé sur le site public.</p>
                 </div>
                 <div><Label>Type de badge</Label>
                   <Select disabled={publicFieldDisabled} value={edit.badge_type || "none"} onValueChange={(v) => setEdit({ ...edit, badge_type: v === "none" ? "" : v })}>

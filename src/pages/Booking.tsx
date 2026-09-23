@@ -13,6 +13,7 @@ import { useRecaptcha } from "@/hooks/useRecaptcha";
 import { trackEvent } from "@/lib/analytics";
 import { findOrCreateClientForBooking } from "@/lib/crm-client";
 import { useAgencySettings } from "@/hooks/useAgencySettings";
+import { commercialDateKey } from "@/lib/public-commercial-visibility";
 import {
   CHILD_DISCOUNT_MAD,
   HOTEL_SUPPLEMENT,
@@ -81,7 +82,7 @@ const Booking = () => {
     };
   }, []);
 
-  // Load trips from admin (open or completed) — runs once
+  // Load trips that are still commercially available — runs once
   useEffect(() => {
     let active = true;
     setLoadingTrips(true);
@@ -90,7 +91,8 @@ const Booking = () => {
         .from("trips")
         .select("id,title,slug,season,start_date,end_date,duration_days,short_description,base_price_mad,promo_percent")
         .is("archived_at", null)
-        .in("status", ["open", "completed"])
+        .eq("status", "open")
+        .gte("end_date", commercialDateKey())
         .order("start_date", { ascending: true, nullsFirst: false });
       if (active) {
         setTripsList((data ?? []) as TripRow[]);
