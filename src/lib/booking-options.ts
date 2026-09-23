@@ -22,3 +22,52 @@ export const getRoomAdjustmentPerPerson = (roomType: PublicRoomKey) => {
   if (roomType === "triple") return -TRIPLE_DISCOUNT_PER_PERSON_MAD;
   return 0;
 };
+
+const normalizeOption = (value: unknown) => String(value ?? "").trim().toLowerCase();
+
+export const publicHotelKeyOrNull = (value: unknown): PublicHotelKey | null => {
+  const normalized = normalizeOption(value);
+  if (normalized === "ryokan" || normalized.includes("tradition")) return "ryokan";
+  if (normalized === "modern" || normalized.includes("moderne")) return "modern";
+  return null;
+};
+
+export const publicRoomKeyOrNull = (value: unknown): PublicRoomKey | null => {
+  const normalized = normalizeOption(value);
+  if (normalized === "single" || normalized.includes("individ")) return "single";
+  if (normalized === "triple") return "triple";
+  if (normalized === "double" || normalized === "twin" || normalized.includes("double")) return "double";
+  return null;
+};
+
+export const normalizePublicHotelKey = (value: unknown): PublicHotelKey => publicHotelKeyOrNull(value) ?? "modern";
+export const normalizePublicRoomKey = (value: unknown): PublicRoomKey => publicRoomKeyOrNull(value) ?? "double";
+
+export const publicHotelLabel = (value: unknown) => {
+  if (!String(value ?? "").trim()) return "Non renseigné";
+  return PUBLIC_HOTEL_OPTIONS[normalizePublicHotelKey(value)].name;
+};
+
+export const publicRoomLabel = (value: unknown) => {
+  if (!String(value ?? "").trim()) return "Non renseignée";
+  return PUBLIC_ROOM_LABELS[normalizePublicRoomKey(value)];
+};
+
+export type BookingOptionSelection = {
+  hotel: PublicHotelKey;
+  room: PublicRoomKey;
+};
+
+export const bookingOptionPricePerPerson = ({ hotel, room }: BookingOptionSelection) =>
+  HOTEL_SUPPLEMENT[hotel] + getRoomAdjustmentPerPerson(room);
+
+/** Returns only the difference between the options already priced and the new selection. */
+export const bookingOptionChangeImpact = (
+  previous: BookingOptionSelection,
+  next: BookingOptionSelection,
+  travelers: number,
+) => {
+  const perPerson = bookingOptionPricePerPerson(next) - bookingOptionPricePerPerson(previous);
+  const safeTravelers = Number.isFinite(travelers) ? Math.max(0, Math.floor(travelers)) : 0;
+  return { perPerson, total: perPerson * safeTravelers };
+};

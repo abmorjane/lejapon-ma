@@ -44,6 +44,8 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
   const [openLink, setOpenLink] = useState(false);
   const [choosingResponsible, setChoosingResponsible] = useState(false);
   const [dbCount, setDbCount] = useState(0);
+  const [activitiesByParticipant, setActivitiesByParticipant] = useState<Record<string, string[]>>({});
+  const [roomByParticipant, setRoomByParticipant] = useState<Record<string, string>>({});
 
   const load = async () => {
     const bookingWithMetadata = await (supabase as any)
@@ -69,6 +71,34 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
       .order("created_at", { ascending: true });
     setList(data ?? []);
     setDbCount(count ?? data?.length ?? 0);
+    const participantIds = (data ?? []).map((participant) => participant.id);
+    if (!participantIds.length) {
+      setActivitiesByParticipant({});
+      setRoomByParticipant({});
+      return;
+    }
+    const [{ data: activityRows }, { data: assignmentRows }] = await Promise.all([
+      (supabase as any).from("booking_participant_activities").select("participant_id,extra_id,is_selected").in("participant_id", participantIds).eq("is_selected", true),
+      (supabase as any).from("room_assignments").select("participant_id,room_id").in("participant_id", participantIds),
+    ]);
+    const extraIds = Array.from(new Set((activityRows ?? []).map((row: any) => row.extra_id).filter(Boolean)));
+    const roomIds = Array.from(new Set((assignmentRows ?? []).map((row: any) => row.room_id).filter(Boolean)));
+    const [{ data: extraRows }, { data: roomRows }] = await Promise.all([
+      extraIds.length ? (supabase as any).from("extras").select("id,name").in("id", extraIds) : Promise.resolve({ data: [] }),
+      roomIds.length ? (supabase as any).from("trip_rooms").select("id,room_number,room_type").in("id", roomIds) : Promise.resolve({ data: [] }),
+    ]);
+    const extraNames = new Map((extraRows ?? []).map((row: any) => [row.id, row.name]));
+    const roomNames = new Map((roomRows ?? []).map((row: any) => [row.id, [row.room_number || row.room_name, row.room_type].filter(Boolean).join(" · ")]));
+    setActivitiesByParticipant((activityRows ?? []).reduce((acc: Record<string, string[]>, row: any) => {
+      const name = extraNames.get(row.extra_id);
+      if (name) acc[row.participant_id] = [...(acc[row.participant_id] ?? []), String(name)];
+      return acc;
+    }, {}));
+    setRoomByParticipant((assignmentRows ?? []).reduce((acc: Record<string, string>, row: any) => {
+      const label = roomNames.get(row.room_id);
+      if (label) acc[row.participant_id] = String(label);
+      return acc;
+    }, {}));
   };
   useEffect(() => { load(); }, [bookingId]);
   useEffect(() => {
@@ -426,12 +456,15 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                     </Link>
                   )}
                 </div>
-                <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {p.sex || "—"} · {p.date_of_birth ?? "—"} · {p.nationality || "—"}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {p.profession || "—"} · {maritalStatusLabel(p.marital_status)}
-                </p>
+                <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                  <p><span className="font-medium text-foreground">Passeport :</span> {p.passport_no || "Non renseigné"}</p>
+                  <p><span className="font-medium text-foreground">Chambre :</span> {roomByParticipant[p.id] || "Non attribuée"}</p>
+                </div>
+                {activitiesByParticipant[p.id]?.length ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {activitiesByParticipant[p.id].map((activity) => <Badge key={activity} variant="secondary" className="text-[10px]">{activity}</Badge>)}
+                  </div>
+                ) : <p className="mt-2 text-xs text-muted-foreground">Aucune activité individuelle sélectionnée.</p>}
               </div>
               <div className="flex shrink-0 flex-wrap justify-end gap-1">
                 {!p.is_lead && (
@@ -451,7 +484,7 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
               <QuickActions phone={p.phone} email={p.email} passport={p.passport_no} compact className="mt-3" />
               <details className="group mt-3 rounded-lg bg-muted/40">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between px-3 text-xs font-semibold text-muted-foreground">
-                  Passeport & détails
+                  Identité, contact & détails
                   <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="grid grid-cols-2 gap-3 px-3 pb-3 text-xs">
@@ -459,6 +492,10 @@ export function BookingParticipantsSection({ bookingId, tripId, expectedTraveler
                   <div><p className="text-muted-foreground">Expiration</p><p className="font-medium text-foreground">{p.passport_expiry || "—"}</p></div>
                   <div><p className="text-muted-foreground">Émission</p><p className="font-medium text-foreground">{p.passport_issue_date || "—"}</p></div>
                   <div><p className="text-muted-foreground">Contact</p><p className="truncate font-medium text-foreground">{p.email || p.phone || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Naissance</p><p className="font-medium text-foreground">{p.date_of_birth || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Profession</p><p className="font-medium text-foreground">{p.profession || "—"}</p></div>
+                  <div><p className="text-muted-foreground">Nationalité</p><p className="font-medium text-foreground">{p.nationality || "—"}</p></div>
+                  <div><p className="text-muted-foreground">État civil</p><p className="font-medium text-foreground">{maritalStatusLabel(p.marital_status)}</p></div>
                   {p.address && <div className="col-span-2"><p className="text-muted-foreground">Adresse</p><p className="break-words font-medium text-foreground">{p.address}</p></div>}
                 </div>
               </details>

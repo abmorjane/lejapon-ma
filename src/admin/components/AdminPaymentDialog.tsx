@@ -11,11 +11,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { fmtMAD } from "@/lib/format";
 import { PAYMENT_METHOD_OPTIONS, normalisePaymentMethod } from "@/lib/payment-methods";
+import { quoteAdjustmentsFromBooking, quoteTotalWithAdjustments } from "@/lib/quote-adjustments";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved?: () => void;
+  bookingId?: string | null;
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -25,7 +27,7 @@ const paymentStatuses = [
   { value: "refunded", label: "Remboursé" },
 ];
 
-export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
+export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: Props) {
   const { user } = useAuth();
   const [bookings, setBookings] = useState<any[]>([]);
   const [query, setQuery] = useState("");
@@ -41,21 +43,26 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
   });
 
   const loadBookings = async () => {
-    const { data, error } = await (supabase as any)
+    let query = (supabase as any)
       .from("bookings")
-      .select("id,reference,contact_name,contact_email,contact_phone,client_id,total_amount_mad,paid_amount_mad,status,created_at,trips:trip_id(title,season,start_date)")
-      .order("created_at", { ascending: false })
-      .limit(250);
+      .select("id,reference,contact_name,contact_email,contact_phone,client_id,total_amount_mad,paid_amount_mad,quote_adjustments,metadata,status,created_at,trips:trip_id(title,season,start_date)");
+    query = bookingId
+      ? query.eq("id", bookingId)
+      : query.order("created_at", { ascending: false }).limit(250);
+    const { data, error } = await query;
     if (error) {
       toast.error(error.message);
       return;
     }
     setBookings(data ?? []);
+    if (bookingId && (data ?? []).some((booking: any) => booking.id === bookingId)) {
+      setSelectedBookingId(bookingId);
+    }
   };
 
   useEffect(() => {
     if (open) void loadBookings();
-  }, [open]);
+  }, [open, bookingId]);
 
   const filteredBookings = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -71,10 +78,13 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
   }, [bookings, query]);
 
   const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId) ?? null;
+  const selectedBookingTotal = selectedBooking
+    ? quoteTotalWithAdjustments(Number(selectedBooking.total_amount_mad || 0), quoteAdjustmentsFromBooking(selectedBooking))
+    : 0;
 
   const reset = () => {
     setQuery("");
-    setSelectedBookingId("");
+    setSelectedBookingId(bookingId ?? "");
     setDraft({
       amount_mad: "",
       method: "bank_transfer",
@@ -151,13 +161,13 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={(value) => { onOpenChange(value); if (!value) reset(); }}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-2xl overflow-y-auto rounded-2xl p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Ajouter paiement</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div>
+          {!bookingId && <div>
             <Label>Réservation</Label>
             <div className="relative mt-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -174,7 +184,8 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
               </SelectTrigger>
               <SelectContent>
                 {filteredBookings.map((booking) => {
-                  const remaining = Number(booking.total_amount_mad || 0) - Number(booking.paid_amount_mad || 0);
+                  const total = quoteTotalWithAdjustments(Number(booking.total_amount_mad || 0), quoteAdjustmentsFromBooking(booking));
+                  const remaining = total - Number(booking.paid_amount_mad || 0);
                   return (
                     <SelectItem key={booking.id} value={booking.id}>
                       {booking.reference} — {booking.contact_name} — {booking.trips?.title || "Voyage"} · reste {fmtMAD(Math.max(0, remaining))}
@@ -189,21 +200,29 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
                 <p>{selectedBooking.trips?.title || "Voyage non renseigné"} · payé {fmtMAD(selectedBooking.paid_amount_mad)} / {fmtMAD(selectedBooking.total_amount_mad)}</p>
               </div>
             )}
-          </div>
+          </div>}
+
+          {bookingId && selectedBooking && (
+            <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-muted/30 p-3 text-sm">
+              <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">{fmtMAD(selectedBookingTotal)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Déjà payé</p><p className="font-semibold text-emerald-700">{fmtMAD(selectedBooking.paid_amount_mad)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Reste</p><p className="font-semibold text-orange-700">{fmtMAD(Math.max(0, selectedBookingTotal - Number(selectedBooking.paid_amount_mad || 0)))}</p></div>
+            </div>
+          )}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label>Montant MAD</Label>
-              <Input type="number" min={0} value={draft.amount_mad} onChange={(event) => setDraft((current) => ({ ...current, amount_mad: event.target.value }))} />
+              <Input className="min-h-11" type="number" min={0} value={draft.amount_mad} onChange={(event) => setDraft((current) => ({ ...current, amount_mad: event.target.value }))} />
             </div>
             <div>
               <Label>Date paiement</Label>
-              <Input type="date" value={draft.paid_at} onChange={(event) => setDraft((current) => ({ ...current, paid_at: event.target.value }))} />
+              <Input className="min-h-11" type="date" value={draft.paid_at} onChange={(event) => setDraft((current) => ({ ...current, paid_at: event.target.value }))} />
             </div>
             <div>
               <Label>Méthode</Label>
               <Select value={normalisePaymentMethod(draft.method)} onValueChange={(value) => setDraft((current) => ({ ...current, method: value }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {PAYMENT_METHOD_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
                 </SelectContent>
@@ -212,7 +231,7 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
             <div>
               <Label>Statut</Label>
               <Select value={draft.status} onValueChange={(value) => setDraft((current) => ({ ...current, status: value }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {paymentStatuses.map((status) => <SelectItem key={status.value} value={status.value}>{status.label}</SelectItem>)}
                 </SelectContent>
@@ -220,7 +239,7 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
             </div>
             <div className="sm:col-span-2">
               <Label>Référence</Label>
-              <Input value={draft.reference} onChange={(event) => setDraft((current) => ({ ...current, reference: event.target.value }))} placeholder="Référence virement, reçu, transaction..." />
+              <Input className="min-h-11" value={draft.reference} onChange={(event) => setDraft((current) => ({ ...current, reference: event.target.value }))} placeholder="Référence virement, reçu, transaction..." />
             </div>
             <div className="sm:col-span-2">
               <Label>Notes</Label>
@@ -229,9 +248,9 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved }: Props) {
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Annuler</Button>
-          <Button onClick={save} disabled={saving}>
+        <DialogFooter className="sticky bottom-0 -mx-4 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:px-6">
+          <Button className="min-h-11" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Annuler</Button>
+          <Button className="min-h-11" onClick={save} disabled={saving}>
             <CreditCard className="h-4 w-4" /> {saving ? "Enregistrement…" : "Enregistrer le paiement"}
           </Button>
         </DialogFooter>

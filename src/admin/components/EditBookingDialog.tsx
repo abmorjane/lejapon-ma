@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useExtras } from "@/hooks/useExtras";
 import { useAuth } from "@/hooks/useAuth";
 import { fmtMAD } from "@/lib/format";
@@ -17,8 +18,17 @@ import {
   getBookingPricingBreakdown,
   resolveBookingTripUnitPrice,
 } from "@/lib/booking-pricing";
-import { quoteAdjustmentsFromBooking } from "@/lib/quote-adjustments";
+import { makeQuoteAdjustment, quoteAdjustmentsFromBooking } from "@/lib/quote-adjustments";
 import { calculateCommercialDocumentTotals } from "@/lib/commercial-documents";
+import {
+  bookingOptionChangeImpact,
+  publicHotelKeyOrNull,
+  publicRoomKeyOrNull,
+  PUBLIC_HOTEL_OPTIONS,
+  PUBLIC_ROOM_LABELS,
+  type PublicHotelKey,
+  type PublicRoomKey,
+} from "@/lib/booking-options";
 
 type Props = {
   open: boolean;
@@ -53,6 +63,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
   const [items, setItems] = useState<{ extra_id: string | null; name_snapshot: string; qty: number; unit_price_mad: number; id?: string }[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<string>("bank_transfer");
   const [busy, setBusy] = useState(false);
+  const [applyOptionImpact, setApplyOptionImpact] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -84,8 +95,8 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         preferred_dates: booking.preferred_dates ?? "",
         num_adults: booking.num_adults ?? 1,
         num_children: booking.num_children ?? 0,
-        formula: booking.formula ?? "",
-        room_type: booking.room_type ?? "",
+        formula: publicHotelKeyOrNull(booking.formula) ?? "",
+        room_type: publicRoomKeyOrNull(booking.room_type) ?? "",
         message: booking.message ?? "",
         status: booking.status,
         trip_unit_price_per_person_mad: Math.round(tripUnitPrice),
@@ -95,6 +106,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         total_amount_mad: Number(booking.total_amount_mad ?? 0),
         paid_amount_mad: Number(booking.paid_amount_mad ?? 0),
       });
+      setApplyOptionImpact(false);
     })();
   }, [open, booking?.id]);
 
@@ -132,6 +144,17 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
   });
   const computedTotal = pricing.calculatedBaseTotal;
   const remaining = commercialTotals.remainingAmount;
+  const pricedOptions = bookingMetadata(booking).admin_priced_booking_options as { hotel?: unknown; room?: unknown } | undefined;
+  const previousHotel = publicHotelKeyOrNull(pricedOptions?.hotel ?? booking.formula);
+  const previousRoom = publicRoomKeyOrNull(pricedOptions?.room ?? booking.room_type);
+  const nextHotel = publicHotelKeyOrNull(form.formula);
+  const nextRoom = publicRoomKeyOrNull(form.room_type);
+  const previousOptions = previousHotel && previousRoom ? { hotel: previousHotel, room: previousRoom } : null;
+  const nextOptions = nextHotel && nextRoom ? { hotel: nextHotel, room: nextRoom } : null;
+  const optionImpact = previousOptions && nextOptions
+    ? bookingOptionChangeImpact(previousOptions, nextOptions, pax)
+    : { perPerson: 0, total: 0 };
+  const optionSelectionChanged = Boolean(previousOptions && nextOptions && (previousOptions.hotel !== nextOptions.hotel || previousOptions.room !== nextOptions.room));
 
   const setField = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
@@ -226,6 +249,34 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
             }
           : {}),
       };
+
+      if (applyOptionImpact && previousOptions && nextOptions && optionImpact.total !== 0) {
+        const previousLabel = `${PUBLIC_HOTEL_OPTIONS[previousOptions.hotel].name} · ${PUBLIC_ROOM_LABELS[previousOptions.room]}`;
+        const nextLabel = `${PUBLIC_HOTEL_OPTIONS[nextOptions.hotel].name} · ${PUBLIC_ROOM_LABELS[nextOptions.room]}`;
+        const optionAdjustment = makeQuoteAdjustment({
+          label: "Changement hébergement / chambre",
+          type: optionImpact.total > 0 ? "supplement" : "discount",
+          calculation_type: "fixed_amount",
+          amount: String(Math.abs(optionImpact.total)),
+          reason: `${previousLabel} → ${nextLabel} · ${pax} voyageur(s)`,
+          visible_on_quote: true,
+        }, user?.id, "admin_booking_options");
+        const nextAdjustments = [...quoteAdjustments, optionAdjustment];
+        updates.quote_adjustments = nextAdjustments;
+        nextMetadata.quote_adjustments = nextAdjustments;
+        nextMetadata.admin_priced_booking_options = nextOptions;
+        audits.push({
+          booking_id: booking.id,
+          user_id: user?.id ?? null,
+          user_email: user?.email ?? null,
+          field: "Impact hébergement / chambre appliqué au devis",
+          old_value: previousLabel,
+          new_value: `${nextLabel} (${optionImpact.total > 0 ? "+" : "-"}${fmtMAD(Math.abs(optionImpact.total))})`,
+        });
+      }
+      if (optionSelectionChanged && optionImpact.total === 0 && nextOptions) {
+        nextMetadata.admin_priced_booking_options = nextOptions;
+      }
       updates.metadata = nextMetadata;
 
       if (tripPriceChanged) {
@@ -284,7 +335,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-3xl overflow-y-auto rounded-2xl p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Modifier l'inscription · {booking?.reference}</DialogTitle>
         </DialogHeader>
@@ -292,7 +343,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         <div className="space-y-6 py-2">
           <section>
             <h3 className="font-display text-sm uppercase tracking-wide text-muted-foreground mb-3">Client</h3>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div><Label className="text-xs">Nom</Label><Input value={form.contact_name} onChange={(e) => setField("contact_name", e.target.value)} /></div>
               <div><Label className="text-xs">Email</Label><Input type="email" value={form.contact_email} onChange={(e) => setField("contact_email", e.target.value)} /></div>
               <div><Label className="text-xs">Téléphone</Label><Input value={form.contact_phone} onChange={(e) => setField("contact_phone", e.target.value)} /></div>
@@ -302,8 +353,8 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
 
           <section>
             <h3 className="font-display text-sm uppercase tracking-wide text-muted-foreground mb-3">Voyage</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
                 <Label className="text-xs">Voyage</Label>
                 <Select value={form.trip_id || "none"} onValueChange={setSelectedTrip}>
                   <SelectTrigger><SelectValue placeholder="Sélectionner" /></SelectTrigger>
@@ -314,7 +365,17 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
                 </Select>
               </div>
               <div><Label className="text-xs">Dates souhaitées</Label><Input value={form.preferred_dates} onChange={(e) => setField("preferred_dates", e.target.value)} /></div>
-              <div><Label className="text-xs">Formule / Hôtel</Label><Input value={form.formula} onChange={(e) => setField("formula", e.target.value)} /></div>
+              <div>
+                <Label className="text-xs">Hébergement</Label>
+                <Select value={publicHotelKeyOrNull(form.formula) ?? "none"} onValueChange={(value) => setField("formula", value === "none" ? "" : value as PublicHotelKey)}>
+                  <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Non renseigné</SelectItem>
+                    <SelectItem value="modern">Hôtel moderne</SelectItem>
+                    <SelectItem value="ryokan">Ryokan traditionnel · +2 500 MAD / personne</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div><Label className="text-xs">Adultes</Label><Input type="number" min={0} value={form.num_adults} onChange={(e) => setField("num_adults", e.target.value)} /></div>
               <div><Label className="text-xs">Enfants</Label><Input type="number" min={0} value={form.num_children} onChange={(e) => setField("num_children", e.target.value)} /></div>
               <div>
@@ -331,7 +392,36 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
                 <Label className="text-xs">Total voyage</Label>
                 <Input value={fmtMAD(pricing.tripTotal)} readOnly className="bg-secondary/40" />
               </div>
-              <div className="col-span-2"><Label className="text-xs">Type de chambre</Label><Input value={form.room_type} onChange={(e) => setField("room_type", e.target.value)} /></div>
+              <div>
+                <Label className="text-xs">Type de chambre</Label>
+                <Select value={publicRoomKeyOrNull(form.room_type) ?? "none"} onValueChange={(value) => setField("room_type", value === "none" ? "" : value as PublicRoomKey)}>
+                  <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Non renseigné</SelectItem>
+                    <SelectItem value="single">Single · +15 000 MAD / personne</SelectItem>
+                    <SelectItem value="double">Double · inclus</SelectItem>
+                    <SelectItem value="triple">Triple · -1 000 MAD / personne</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {optionSelectionChanged && (
+                <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950 sm:col-span-2">
+                  <p className="font-semibold">Impact du changement</p>
+                  <p className="mt-1">
+                    {PUBLIC_ROOM_LABELS[previousOptions.room]} → {PUBLIC_ROOM_LABELS[nextOptions.room]}
+                    {previousOptions.hotel !== nextOptions.hotel ? ` · ${PUBLIC_HOTEL_OPTIONS[previousOptions.hotel].name} → ${PUBLIC_HOTEL_OPTIONS[nextOptions.hotel].name}` : ""}
+                  </p>
+                  <p className="mt-1">Impact par personne : <strong>{optionImpact.perPerson >= 0 ? "+" : "-"}{fmtMAD(Math.abs(optionImpact.perPerson))}</strong></p>
+                  <p>Impact réservation : <strong>{optionImpact.total >= 0 ? "+" : "-"}{fmtMAD(Math.abs(optionImpact.total))}</strong></p>
+                  {optionImpact.total !== 0 && (
+                    <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-orange-200 bg-background px-3">
+                      <Checkbox checked={applyOptionImpact} onCheckedChange={(checked) => setApplyOptionImpact(checked === true)} />
+                      <span>Appliquer au devis comme ligne auditée</span>
+                    </label>
+                  )}
+                  <p className="mt-2 text-xs">Le total de base n’est pas écrasé. Seule la différence entre l’ancienne et la nouvelle option est ajoutée.</p>
+                </div>
+              )}
             </div>
           </section>
 
@@ -340,10 +430,10 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
             <div className="space-y-2 mb-3">
               {items.length === 0 && <p className="text-sm text-muted-foreground">Aucun extra.</p>}
               {items.map((it, idx) => (
-                <div key={idx} className="flex items-center gap-2 border border-border rounded-lg p-2">
+                <div key={idx} className="grid grid-cols-[1fr_auto] gap-2 rounded-lg border border-border p-2 sm:flex sm:items-center">
                   <span className="flex-1 text-sm">{it.name_snapshot}</span>
-                  <Input type="number" min={1} className="w-20" value={it.qty} onChange={(e) => updateItem(idx, { qty: Math.max(1, Number(e.target.value) || 1) })} />
-                  <Input type="number" className="w-28" value={it.unit_price_mad} onChange={(e) => updateItem(idx, { unit_price_mad: Number(e.target.value) || 0 })} />
+                  <Input type="number" min={1} className="min-h-11 w-full sm:w-20" value={it.qty} onChange={(e) => updateItem(idx, { qty: Math.max(1, Number(e.target.value) || 1) })} />
+                  <Input type="number" className="min-h-11 w-full sm:w-28" value={it.unit_price_mad} onChange={(e) => updateItem(idx, { unit_price_mad: Number(e.target.value) || 0 })} />
                   <span className="w-28 text-right text-sm font-medium">{fmtMAD(it.qty * it.unit_price_mad)}</span>
                   <Button size="sm" variant="ghost" onClick={() => removeItem(idx)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                 </div>
@@ -364,7 +454,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
 
           <section>
             <h3 className="font-display text-sm uppercase tracking-wide text-muted-foreground mb-3">Paiement</h3>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <Label className="text-xs">Statut</Label>
                 <Select value={form.status} onValueChange={(v) => setField("status", v)}>
@@ -457,9 +547,9 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
           </section>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Annuler</Button>
-          <Button onClick={save} disabled={busy}>{busy ? "Enregistrement…" : "Enregistrer les modifications"}</Button>
+        <DialogFooter className="sticky bottom-0 -mx-4 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:px-6">
+          <Button className="min-h-11" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Annuler</Button>
+          <Button className="min-h-11" onClick={save} disabled={busy}>{busy ? "Enregistrement…" : "Enregistrer les modifications"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

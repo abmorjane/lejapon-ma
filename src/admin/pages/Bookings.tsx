@@ -9,6 +9,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { LoyaltyBadge } from "../components/LoyaltyBadge";
 import { QuickActions } from "../components/QuickActions";
 import { CreateBookingDialog } from "../components/CreateBookingDialog";
+import { BookingQuickViewSheet } from "../components/BookingQuickViewSheet";
 import { useAuth } from "@/hooks/useAuth";
 import { hasAnyRole } from "../lib/permissions";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
@@ -364,6 +365,7 @@ export default function Bookings() {
   const [originFilter, setOriginFilter] = useState<ReservationOrigin>("all");
   const [agencyFilter, setAgencyFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [quickViewBooking, setQuickViewBooking] = useState<NormalBookingRow | null>(null);
   const { roles, user } = useAuth();
   const canCreate = hasAnyRole(roles, ["super_admin", "admin", "manager"]);
   const canManageAgencyReservations = hasAnyRole(roles, ["super_admin", "admin"]);
@@ -1114,6 +1116,12 @@ export default function Bookings() {
       </Card>
 
       {canCreate && <CreateBookingDialog open={createOpen} onOpenChange={setCreateOpen} />}
+      <BookingQuickViewSheet
+        booking={quickViewBooking}
+        open={Boolean(quickViewBooking)}
+        onOpenChange={(open) => { if (!open) setQuickViewBooking(null); }}
+        onChanged={load}
+      />
 
       {bookingsError ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
@@ -1198,12 +1206,13 @@ export default function Bookings() {
               animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
               transition={{ duration: 0.18, delay: Math.min(index, 8) * 0.025 }}
               className="group overflow-hidden rounded-2xl border border-border bg-background shadow-sm"
+              onClick={() => setQuickViewBooking(b)}
             >
               <summary className="list-none p-4 cursor-pointer min-h-[96px]">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <Badge variant="outline" className="mb-2">{bookingSourceLabel(b)}</Badge>
-                    <Link to={`/admin/bookings/${b.id}`} className="font-semibold text-accent" onClick={(e) => e.stopPropagation()}>{b.reference}</Link>
+                    <button type="button" className="font-semibold text-accent">{b.reference}</button>
                     <div className="flex items-center gap-2 flex-wrap mt-1">
                       <p className="truncate font-medium">{b.contact_name}</p>
                       <LoyaltyBadge tier={b.clients?.loyalty_tier} isReturning={b.clients?.is_returning} trips={b.clients?.trips_completed} />
@@ -1215,7 +1224,9 @@ export default function Bookings() {
                     <ChevronDown className="w-4 h-4 ml-auto mt-2 text-muted-foreground transition-transform group-open:rotate-180" />
                   </div>
                 </div>
-                <QuickActions phone={b.contact_phone} email={b.contact_email} compact className="mt-3" />
+                <div onClick={(event) => event.stopPropagation()}>
+                  <QuickActions phone={b.contact_phone} email={b.contact_email} compact className="mt-3" />
+                </div>
               </summary>
               <div className="grid grid-cols-2 gap-3 border-t border-border bg-muted/20 p-4 text-sm">
                 <div><p className="text-xs text-muted-foreground">Pax</p><p className="font-medium">{b.num_adults}A {Number(b.num_children || 0) > 0 && `+ ${b.num_children}E`}</p></div>
@@ -1228,9 +1239,7 @@ export default function Bookings() {
                     <span className="font-semibold text-foreground">{fmtMAD(Math.max(0, remaining))}</span>
                   </div>
                 </div>
-                <Link to={`/admin/bookings/${b.id}`} className="col-span-2 inline-flex h-11 items-center justify-center rounded-xl bg-accent px-4 text-sm font-semibold text-accent-foreground">
-                  Ouvrir la réservation
-                </Link>
+                <Button type="button" className="col-span-2 min-h-11">Aperçu rapide</Button>
               </div>
             </motion.details>
           );
@@ -1336,9 +1345,17 @@ export default function Bookings() {
 
                 const b = item.booking;
                 return (
-                  <tr key={`booking-${b.id}`} className="hover:bg-secondary/30">
+                  <tr
+                    key={`booking-${b.id}`}
+                    className="cursor-pointer hover:bg-secondary/30 focus-within:bg-secondary/30 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+                    onClick={() => setQuickViewBooking(b)}
+                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setQuickViewBooking(b); } }}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`Aperçu de la réservation ${b.reference}`}
+                  >
                     <td className="p-4"><Badge variant="outline">{bookingSourceLabel(b)}</Badge></td>
-                    <td className="p-4"><Link to={`/admin/bookings/${b.id}`} className="text-accent font-medium">{b.reference}</Link></td>
+                    <td className="p-4"><button type="button" className="text-accent font-medium">{b.reference}</button></td>
                     <td className="p-4">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium">{b.contact_name}</p>

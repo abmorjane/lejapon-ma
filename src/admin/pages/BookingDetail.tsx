@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { StatusBadge } from "../components/StatusBadge";
 import { fmtDateTime, fmtMAD } from "@/lib/format";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck, Save, Upload, Mail, Plane, TicketCheck, FileSearch } from "lucide-react";
+import { ArrowLeft, Plus, FileText, Receipt, Download, Eye, Trash2, Pencil, History, ChevronDown, Building2, UserCheck, Save, Upload, Mail, Plane, TicketCheck, FileSearch, CreditCard, SlidersHorizontal, ListChecks, MoreHorizontal, CalendarDays, Users, BedDouble, Hotel, AlertTriangle, FolderOpen } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { generateQuotePdf, generateReceiptPdf, generateInvoicePdf, downloadBytes } from "@/lib/booking-pdfs";
 import { PdfPreviewDialog } from "../components/PdfPreviewDialog";
@@ -20,9 +20,11 @@ import { EditBookingDialog } from "../components/EditBookingDialog";
 import { useNavigate } from "react-router-dom";
 import { BookingParticipantsSection } from "../components/BookingParticipantsSection";
 import { LinkExistingClientDialog } from "../components/LinkExistingClientDialog";
-import { QuickActions } from "../components/QuickActions";
 import { OperationChecklistPanel } from "../components/OperationChecklistPanel";
+import { AdminPaymentDialog } from "../components/AdminPaymentDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   getFlightTicketStatus,
@@ -47,6 +49,7 @@ import {
 import { getBookingPricingBreakdown } from "@/lib/booking-pricing";
 import { calculateCommercialDocumentTotals, invoiceTypeLabel } from "@/lib/commercial-documents";
 import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
+import { publicHotelLabel, publicRoomLabel } from "@/lib/booking-options";
 
 const FINANCIAL_DOCUMENT_TYPES = new Set(["quote", "receipt", "invoice", "payment", "financial"]);
 
@@ -230,6 +233,14 @@ export default function BookingDetail() {
   const [selectedAgencyUserId, setSelectedAgencyUserId] = useState("");
   const [assignmentNotes, setAssignmentNotes] = useState("");
   const [assignmentBusy, setAssignmentBusy] = useState(false);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [paymentsOpen, setPaymentsOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [flightOpen, setFlightOpen] = useState(false);
+  const [adjustmentsOpen, setAdjustmentsOpen] = useState(false);
+  const [agencyOpen, setAgencyOpen] = useState(false);
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [taskSummary, setTaskSummary] = useState({ total: 0, overdue: 0, critical: 0 });
   const [docDraft, setDocDraft] = useState({
     type: "autre",
     title: "",
@@ -267,6 +278,25 @@ export default function BookingDetail() {
       .order("created_at", { ascending: true });
     if (participantError) console.warn("[booking-detail] participants unavailable", participantError);
     setParticipants(participantRows ?? []);
+    const { data: checklistRows } = await (supabase as any)
+      .from("operation_checklists")
+      .select("id")
+      .eq("booking_id", id);
+    const checklistIds = (checklistRows ?? []).map((row: any) => row.id);
+    if (checklistIds.length) {
+      const { data: taskRows } = await (supabase as any)
+        .from("operation_checklist_items")
+        .select("status,priority,deadline")
+        .in("checklist_id", checklistIds);
+      const activeTasks = (taskRows ?? []).filter((task: any) => !["completed", "cancelled"].includes(String(task.status)));
+      setTaskSummary({
+        total: activeTasks.length,
+        overdue: activeTasks.filter((task: any) => task.deadline && new Date(task.deadline).getTime() < Date.now()).length,
+        critical: activeTasks.filter((task: any) => task.priority === "critical").length,
+      });
+    } else {
+      setTaskSummary({ total: 0, overdue: 0, critical: 0 });
+    }
     const { data: d, error: docsError } = await supabase.from("booking_documents" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false });
     if (docsError) console.warn("[booking-detail] documents unavailable", docsError);
     setDocs((d as any) ?? []);
@@ -281,7 +311,9 @@ export default function BookingDetail() {
       const missingFlightTable = /booking_flight_reservations|schema cache|Could not find the table/i.test(flightError.message ?? "");
       if (!missingFlightTable) console.warn("[booking-detail] flight reservation unavailable", flightError);
       setFlightReservation(null);
-      setFlightDraft(emptyFlightDraft);
+      const defaultTravelerIds = (participantRows ?? []).map((participant: any) => participant.id).filter(Boolean);
+      setFlightDraft({ ...emptyFlightDraft, traveler_ids: defaultTravelerIds });
+      setFlightTicketTravelerIds(defaultTravelerIds);
       setFlightTravelers([]);
       setFlightTicketDocuments([]);
       setFlightTicketDocumentTravelers([]);
@@ -351,15 +383,18 @@ export default function BookingDetail() {
         ticketNumberRows = loadedTicketNumbers ?? [];
         historyRows = loadedHistory ?? [];
       }
+      const defaultTravelerIds = flightRow?.id
+        ? travelerRows.filter((row) => row.traveler_status !== "cancelled").map((row) => row.participant_id).filter(Boolean)
+        : (participantRows ?? []).map((participant: any) => participant.id).filter(Boolean);
       setFlightTravelers(travelerRows);
       setFlightTicketDocuments(ticketDocumentRows);
       setFlightTicketDocumentTravelers(ticketDocumentTravelerRows);
       setFlightTravelerTicketNumbers(ticketNumberRows);
-      setFlightTicketTravelerIds(travelerRows.filter((row) => row.traveler_status !== "cancelled").map((row) => row.participant_id).filter(Boolean));
+      setFlightTicketTravelerIds(defaultTravelerIds);
       setFlightHistory(historyRows);
       setFlightDraft({
         ...flightDraftFromRow(flightRow),
-        traveler_ids: travelerRows.filter((row) => row.traveler_status !== "cancelled").map((row) => row.participant_id).filter(Boolean),
+        traveler_ids: defaultTravelerIds,
       });
     }
     const { data: log, error: logError } = await supabase.from("booking_audit_log" as any).select("*").eq("booking_id", id).order("created_at", { ascending: false }).limit(50);
@@ -539,6 +574,7 @@ export default function BookingDetail() {
       if (auditError) console.warn("[booking-agency-assignment] audit log failed", auditError);
 
       toast.success(selectedAgencyOrgId ? "Réservation attribuée à l’agence." : "Attribution agence retirée.");
+      setAgencyOpen(false);
       load();
     } catch (error: any) {
       toast.error(error?.message ?? "Impossible d’enregistrer l’attribution agence.");
@@ -588,7 +624,7 @@ export default function BookingDetail() {
   };
 
   const deleteBooking = async () => {
-    if (!confirm("Supprimer définitivement cette inscription ainsi que ses paiements et extras ?")) return;
+    if (!confirm(`Supprimer définitivement la réservation ${b.reference} de ${b.contact_name}, ainsi que ses paiements et extras ?`)) return;
     await supabase.from("payments").delete().eq("booking_id", b.id);
     await supabase.from("booking_extras").delete().eq("booking_id", b.id);
     const { error } = await supabase.from("bookings").delete().eq("id", b.id);
@@ -1335,6 +1371,19 @@ export default function BookingDetail() {
   const quoteSummary = pricing.enteredAdjustmentSummary;
   const displayedQuoteTotal = commercialTotals.totalTTC;
   const remainingAmount = commercialTotals.remainingAmount;
+  const adjustmentPreviewValue = Number(adjustmentDraft.amount || 0);
+  const adjustmentPreviewRows = quoteAdjustments.filter((adjustment) => adjustment.id !== editingAdjustmentId);
+  if (Number.isFinite(adjustmentPreviewValue) && adjustmentPreviewValue > 0) {
+    adjustmentPreviewRows.push({
+      id: "preview",
+      label: adjustmentDraft.label || "Ajustement",
+      type: adjustmentDraft.type,
+      calculation_type: adjustmentDraft.calculation_type,
+      amount: adjustmentPreviewValue,
+      visible_on_quote: adjustmentDraft.visible_on_quote,
+    });
+  }
+  const adjustmentPreviewTotal = summarizeQuoteAdjustments(adjustmentPreviewRows, Number(b.total_amount_mad || 0)).finalTotal;
   const paidPercent = displayedQuoteTotal > 0
     ? Math.min(100, Math.round((Number(b.paid_amount_mad || 0) / displayedQuoteTotal) * 100))
     : 0;
@@ -1385,97 +1434,71 @@ export default function BookingDetail() {
 
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground font-mono">{b.reference}</p>
-          <h1 className="mt-1 truncate font-display text-xl leading-tight sm:text-2xl">{b.contact_name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-mono text-xs text-muted-foreground">{b.reference}</p>
+            <StatusBadge value={b.status} />
+            {(taskSummary.overdue > 0 || taskSummary.critical > 0) && (
+              <button type="button" onClick={() => setTasksOpen(true)} className="inline-flex min-h-8 items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 text-xs font-semibold text-red-800">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {taskSummary.overdue > 0 ? `${taskSummary.overdue} en retard` : `${taskSummary.critical} critique`}
+              </button>
+            )}
+          </div>
+          <h1 className="mt-1 font-display text-2xl leading-tight sm:text-3xl">{b.contact_name}</h1>
+          <p className="mt-1 text-sm font-medium">{b.trips?.title ?? "Voyage non défini"}</p>
           <p className="truncate text-sm text-muted-foreground">{b.contact_email} · {b.contact_phone || "—"}</p>
-          {b.originating_fit_quote_id && <Link to="/admin/fit-quotes" className="mt-2 inline-flex text-sm font-medium text-accent hover:underline">Issue d’un devis FIT · Ouvrir le module FIT</Link>}
-          <QuickActions
-            phone={b.contact_phone}
-            email={b.contact_email}
-            onPdf={() => setPreview({ kind: "quote" })}
-            className="mt-3 sm:hidden"
-          />
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3">
-          {b.trip_id && <Button asChild variant="outline"><Link to={tripWorkspacePath(b.trip_id, "reservations")}>Voir le voyage</Link></Button>}
-          <StatusBadge value={b.status} />
+        <div className="flex flex-wrap items-center gap-2">
+          {b.trip_id && <Button asChild variant="outline" className="min-h-11"><Link to={tripWorkspacePath(b.trip_id, "reservations")}>Voir le voyage</Link></Button>}
           <Select value={b.status} onValueChange={updateStatus}>
-            <SelectTrigger className="w-full sm:w-[160px] min-h-11"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="min-h-11 w-[160px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="lead">Lead</SelectItem>
-              <SelectItem value="confirmed">Confirmé</SelectItem>
-              <SelectItem value="paid">Payé</SelectItem>
-              <SelectItem value="cancelled">Annulé</SelectItem>
-              <SelectItem value="completed">Terminé</SelectItem>
+              <SelectItem value="lead">Lead</SelectItem><SelectItem value="confirmed">Confirmé</SelectItem><SelectItem value="paid">Payé</SelectItem><SelectItem value="cancelled">Annulé</SelectItem><SelectItem value="completed">Terminé</SelectItem>
             </SelectContent>
           </Select>
-          {canEdit && (
-            <Button variant="outline" size="sm" className="min-h-11" onClick={() => setEditing(true)}>
-              <Pencil className="w-4 h-4" /> Modifier
-            </Button>
-          )}
-          <Button variant="destructive" size="sm" className="min-h-11" onClick={deleteBooking}>
-            <Trash2 className="w-4 h-4" /> Supprimer
-          </Button>
         </div>
       </header>
 
       <Card className="overflow-hidden rounded-2xl border-border shadow-sm">
-        <CardContent className="p-4 sm:p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">Résumé réservation</p>
-              <h2 className="mt-1 truncate font-display text-xl">{b.contact_name}</h2>
-              <p className="truncate text-xs text-muted-foreground">{b.reference} · {b.trips?.title ?? "Voyage non défini"}</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {b.client_id ? (
-                  <Button asChild size="sm" variant="outline" className="h-8">
-                    <Link to={`/admin/clients/${b.client_id}`}>Fiche client liée</Link>
-                  </Button>
-                ) : (
-                  <Button size="sm" variant="outline" className="h-8" onClick={() => setLinkClientOpen(true)}>
-                    Associer à un client
-                  </Button>
-                )}
-              </div>
-            </div>
-            <StatusBadge value={b.status} />
+        <CardContent className="space-y-4 p-4 sm:p-5">
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
+            <div className="col-span-2 rounded-xl bg-muted/50 p-3 sm:col-span-1"><CalendarDays className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">Dates</p><p className="font-medium">{b.trips?.start_date || "—"}<br />{b.trips?.end_date || b.preferred_dates || "—"}</p></div>
+            <div className="rounded-xl bg-muted/50 p-3"><Users className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">PAX</p><p className="font-semibold">{totalTravelers}</p></div>
+            <div className="rounded-xl bg-muted/50 p-3"><Hotel className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">Hébergement</p><p className="font-medium">{publicHotelLabel(b.formula)}</p></div>
+            <div className="rounded-xl bg-muted/50 p-3"><BedDouble className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">Chambre</p><p className="font-semibold">{publicRoomLabel(b.room_type)}</p></div>
+            <div className="rounded-xl bg-muted/50 p-3"><FileText className="mb-2 h-4 w-4 text-muted-foreground" /><p className="text-xs text-muted-foreground">Extras</p><p className="font-semibold">{extras.length}</p></div>
           </div>
-          <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/10 p-3">
-            <div className="flex items-center justify-between gap-3 text-sm">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">Paiement</p>
-                <p className="font-display text-lg">{fmtMAD(b.paid_amount_mad)} encaissé</p>
-              </div>
-              <div className="text-right">
-                <p className="text-[11px] text-muted-foreground">Reste</p>
-                <p className="font-semibold">{fmtMAD(remainingAmount)}</p>
-              </div>
-            </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-background">
-              <div className="h-full rounded-full bg-accent" style={{ width: `${paidPercent}%` }} />
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
-            <div className="rounded-xl bg-muted/60 p-3">
-              <p className="text-[11px] text-muted-foreground">Total</p>
-              <p className="truncate font-semibold">{fmtMAD(displayedQuoteTotal)}</p>
-            </div>
-            <div className="rounded-xl bg-muted/60 p-3">
-              <p className="text-[11px] text-muted-foreground">Voyageurs</p>
-              <p className="truncate font-semibold">{totalTravelers}</p>
-            </div>
-            <div className="rounded-xl bg-muted/60 p-3">
-              <p className="text-[11px] text-muted-foreground">Reçu</p>
-              <p className="truncate font-semibold">{fmtDateTime(b.created_at)}</p>
-            </div>
+          {extras.length > 0 && <div className="flex flex-wrap gap-2">{extras.slice(0, 6).map((extra) => <span key={extra.id} className="rounded-full bg-secondary px-2.5 py-1 text-xs">{extra.name_snapshot} × {extra.qty}</span>)}</div>}
+          <div className="grid grid-cols-3 gap-2 rounded-2xl border border-accent/20 bg-accent/5 p-3 text-sm">
+            <div><p className="text-xs text-muted-foreground">Total</p><p className="font-display text-base sm:text-lg">{fmtMAD(displayedQuoteTotal)}</p></div>
+            <div><p className="text-xs text-muted-foreground">Payé</p><p className="font-display text-base text-emerald-700 sm:text-lg">{fmtMAD(b.paid_amount_mad)}</p></div>
+            <div><p className="text-xs text-muted-foreground">Reste</p><p className="font-display text-base text-orange-700 sm:text-lg">{fmtMAD(remainingAmount)}</p></div>
+            <div className="col-span-3 h-2 overflow-hidden rounded-full bg-background"><div className="h-full rounded-full bg-accent" style={{ width: `${paidPercent}%` }} /></div>
           </div>
         </CardContent>
       </Card>
 
+      <div className="sticky bottom-2 z-20 grid grid-cols-2 gap-2 rounded-2xl border border-border bg-background/95 p-2 shadow-lg backdrop-blur sm:grid-cols-5 lg:static lg:shadow-sm">
+        <Button variant="outline" className="min-h-11" onClick={() => setEditing(true)} disabled={!canEdit}><Pencil className="h-4 w-4" /> Modifier</Button>
+        <Button className="min-h-11 bg-emerald-700 hover:bg-emerald-800" onClick={() => setPaymentDialogOpen(true)} disabled={!canEdit}><CreditCard className="h-4 w-4" /> Ajouter paiement</Button>
+        <Button className="min-h-11 border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100" variant="outline" onClick={() => setAdjustmentsOpen(true)}><SlidersHorizontal className="h-4 w-4" /> Ajuster devis</Button>
+        <Button variant="outline" className="min-h-11 border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100" onClick={() => setFlightOpen(true)}><Plane className="h-4 w-4" /> Vol</Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button variant="ghost" className="col-span-2 min-h-11 sm:col-span-1"><MoreHorizontal className="h-4 w-4" /> Plus</Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem className="min-h-11" onClick={() => setTasksOpen(true)}><ListChecks className="mr-2 h-4 w-4" /> Tâches {taskSummary.total ? `(${taskSummary.total})` : ""}</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" onClick={() => setPaymentsOpen(true)}><CreditCard className="mr-2 h-4 w-4" /> Historique paiements</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" onClick={() => setAgencyOpen(true)}><Building2 className="mr-2 h-4 w-4" /> Attribuer agence</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" onClick={() => setDocumentsOpen(true)}><FolderOpen className="mr-2 h-4 w-4" /> Documents</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="min-h-11 text-destructive focus:text-destructive" onClick={deleteBooking}><Trash2 className="mr-2 h-4 w-4" /> Supprimer réservation</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       <div className="grid gap-5 lg:grid-cols-3 lg:gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <details className="group rounded-2xl border border-border bg-background shadow-sm">
+        <div className="flex flex-col gap-6 lg:col-span-2">
+          <details className="group order-2 rounded-2xl border border-border bg-background shadow-sm">
             <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 p-4">
               <div className="min-w-0">
                 <h2 className="font-display text-lg">Détails du voyage</h2>
@@ -1556,19 +1579,32 @@ export default function BookingDetail() {
             onChanged={load}
           />
 
-          <OperationChecklistPanel
-            title="Checklist opérationnelle réservation"
-            description="Passport, visa, assurance, vols, hôtels, transferts et documents finaux."
-            bookingId={b.id}
-            tripId={b.trip_id}
-            customerId={b.client_id}
-          />
+          <Sheet open={tasksOpen} onOpenChange={(open) => { setTasksOpen(open); if (!open) void load(); }}>
+            <SheetContent className="w-full max-w-none p-0 sm:w-[min(760px,94vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
+                <SheetTitle>Tâches · {b.reference}</SheetTitle>
+                <SheetDescription>Checklist opérationnelle de la réservation.</SheetDescription>
+              </SheetHeader>
+              <div className="p-3 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
+                <OperationChecklistPanel
+                  title="Checklist opérationnelle réservation"
+                  description="Passeport, visa, assurance, vols, hôtels, transferts et documents finaux."
+                  bookingId={b.id}
+                  tripId={b.trip_id}
+                  customerId={b.client_id}
+                  compact
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
 
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="font-display text-lg">Paiement</CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+          <Sheet open={paymentsOpen} onOpenChange={setPaymentsOpen}>
+            <SheetContent className="w-full max-w-none p-0 sm:w-[min(680px,92vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
+                <SheetTitle>Paiements · {b.reference}</SheetTitle>
+                <SheetDescription>{fmtMAD(b.paid_amount_mad)} encaissé sur {fmtMAD(displayedQuoteTotal)}.</SheetDescription>
+              </SheetHeader>
+              <div className="p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
             <div className="space-y-2 mb-4">
               {payments.length === 0 && <p className="text-sm text-muted-foreground">Aucun paiement enregistré.</p>}
               {payments.map((p) => (
@@ -1621,22 +1657,22 @@ export default function BookingDetail() {
               <span className="text-muted-foreground">Encaissé</span>
               <span className="font-semibold">{fmtMAD(b.paid_amount_mad)} / {fmtMAD(displayedQuoteTotal)}</span>
             </div>
-            </CardContent>
-          </Card>
+              </div>
+            </SheetContent>
+          </Sheet>
 
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader className="pb-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <CardTitle className="flex items-center gap-2 font-display text-lg">
-                  <Plane className="h-4 w-4 text-accent" />
-                  Réservation vol
-                </CardTitle>
+          <Sheet open={flightOpen} onOpenChange={setFlightOpen}>
+            <SheetContent className="w-full max-w-none p-0 sm:w-[min(920px,96vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <SheetTitle className="flex items-center gap-2"><Plane className="h-4 w-4 text-accent" /> Vol · {b.reference}</SheetTitle>
                 <span className={`inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-semibold ${FLIGHT_STATUS_CLASSES[flightStatus] ?? FLIGHT_STATUS_CLASSES.not_booked}`}>
                   {FLIGHT_STATUS_LABELS[flightStatus] ?? "Non réservé"}
                 </span>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
+                <SheetDescription>Enregistrez un brouillon incomplet ou confirmez le vol avec les informations essentielles.</SheetDescription>
+              </SheetHeader>
+              <div className="space-y-4 p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs leading-relaxed text-blue-950">
                 Enregistrez le vol dès que le PNR est réservé. Les numéros e-ticket, les PDF, les segments, les bagages et les détails de vol peuvent être complétés ensuite ou importés depuis le billet.
               </div>
@@ -1691,7 +1727,7 @@ export default function BookingDetail() {
 
               <details className="rounded-xl border border-border p-3">
                 <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold">
-                  Détails du vol – facultatifs
+                  Détails avancés
                   <ChevronDown className="h-4 w-4" />
                 </summary>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -1834,11 +1870,12 @@ export default function BookingDetail() {
                 )}
               </div>
 
-              <div className="rounded-xl border border-border bg-muted/30 p-3">
-                <div className="mb-3">
-                  <p className="text-sm font-semibold">Billets PDF</p>
-                  <p className="text-xs text-muted-foreground">Un fichier peut être associé à un ou plusieurs voyageurs. L’original reste inchangé.</p>
-                </div>
+              <details className="group rounded-xl border border-border bg-muted/30 p-3">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold">
+                  Billets PDF et import avancé
+                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+                </summary>
+                <p className="mb-3 text-xs text-muted-foreground">Facultatif. Un fichier peut être associé à un ou plusieurs voyageurs, et l’original reste inchangé.</p>
                 {flightTicketDocumentsWithTravelers.length > 0 && (
                   <div className="mb-3 space-y-2">
                     {flightTicketDocumentsWithTravelers.map((doc) => {
@@ -1920,7 +1957,7 @@ export default function BookingDetail() {
                     </Button>
                   </div>
                 </div>
-              </div>
+              </details>
 
               <div className="grid gap-2 rounded-xl bg-secondary/40 p-3 text-sm sm:grid-cols-3">
                 <label className="flex items-center gap-2">
@@ -1991,8 +2028,9 @@ export default function BookingDetail() {
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
+              </div>
+            </SheetContent>
+          </Sheet>
 
           <Dialog open={flightImportDialogOpen} onOpenChange={setFlightImportDialogOpen}>
             <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
@@ -2066,17 +2104,19 @@ export default function BookingDetail() {
             </DialogContent>
           </Dialog>
 
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader className="pb-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <CardTitle className="font-display text-lg">Ajustements devis</CardTitle>
+          <Sheet open={adjustmentsOpen} onOpenChange={setAdjustmentsOpen}>
+            <SheetContent className="w-full max-w-none p-0 sm:w-[min(760px,94vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <SheetTitle>Ajustements devis · {b.reference}</SheetTitle>
                 <Button type="button" size="sm" onClick={() => openAdjustmentDialog()} className="min-h-10">
                   <Plus className="h-4 w-4" />
                   Ajouter une ligne
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
+                <SheetDescription>Suppléments et réductions audités sans écraser le prix de base.</SheetDescription>
+              </SheetHeader>
+              <div className="space-y-4 p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
               {quoteAdjustments.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
                   Aucune réduction ou supplément spécial ajouté au devis.
@@ -2138,19 +2178,19 @@ export default function BookingDetail() {
                 <div><span className="text-muted-foreground">Réductions</span><p className="font-semibold">-{fmtMAD(quoteSummary.discountsTotal)}</p></div>
                 <div><span className="text-muted-foreground">Total devis</span><p className="font-display text-lg">{fmtMAD(displayedQuoteTotal)}</p></div>
               </div>
-            </CardContent>
-          </Card>
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
 
         <aside className="space-y-5 lg:space-y-6">
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 font-display text-lg">
-                <Building2 className="h-4 w-4 text-accent" />
-                Attribution agence V2
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 p-4 pt-0 sm:p-6 sm:pt-0">
+          <Sheet open={agencyOpen} onOpenChange={setAgencyOpen}>
+            <SheetContent className="w-full max-w-none p-0 sm:w-[min(560px,92vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
+                <SheetTitle className="flex items-center gap-2"><Building2 className="h-4 w-4 text-accent" /> Attribuer agence</SheetTitle>
+                <SheetDescription>Organisation, utilisateur et notes internes.</SheetDescription>
+              </SheetHeader>
+              <div className="space-y-3 p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
               <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-950">
                 Lecture seule côté agence. Aucune commission ni paiement n’est calculé ici.
               </p>
@@ -2216,14 +2256,17 @@ export default function BookingDetail() {
                 <UserCheck className="h-4 w-4" />
                 {assignmentBusy ? "Enregistrement…" : "Enregistrer l’attribution"}
               </Button>
-            </CardContent>
-          </Card>
+              </div>
+            </SheetContent>
+          </Sheet>
 
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="font-display text-lg">Documents réservation</CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+          <Sheet open={documentsOpen} onOpenChange={setDocumentsOpen}>
+            <SheetContent className="w-full max-w-none p-0 sm:w-[min(680px,92vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
+                <SheetTitle>Documents · {b.reference}</SheetTitle>
+                <SheetDescription>Documents commerciaux et pièces partagées avec le client.</SheetDescription>
+              </SheetHeader>
+              <div className="p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
             <div className="grid grid-cols-2 gap-2 mb-4">
               <Button size="sm" className="min-h-11" onClick={() => saveAndDownload("quote")} disabled={busy}>
                 <FileText className="w-4 h-4" /> Devis PDF
@@ -2348,8 +2391,9 @@ export default function BookingDetail() {
                 </div>
               ))}
             </div>
-            </CardContent>
-          </Card>
+              </div>
+            </SheetContent>
+          </Sheet>
 
           <details className="group rounded-2xl border border-border bg-background shadow-sm lg:block" open>
             <summary className="flex list-none items-center justify-between p-4 font-display text-lg cursor-pointer lg:cursor-default">
@@ -2460,6 +2504,10 @@ export default function BookingDetail() {
               />
               Visible sur le devis client
             </label>
+            <div className="flex items-center justify-between rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950">
+              <span>Nouveau total du devis</span>
+              <strong className="font-display text-lg">{fmtMAD(adjustmentPreviewTotal)}</strong>
+            </div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setAdjustmentDialogOpen(false)}>Annuler</Button>
@@ -2483,6 +2531,13 @@ export default function BookingDetail() {
         title={`Aperçu ${invoiceTypeLabel(commercialTotals.invoiceType)}`}
         filename={`facture-${b?.reference ?? ""}.pdf`}
         generate={buildInvoice}
+      />
+
+      <AdminPaymentDialog
+        open={paymentDialogOpen}
+        onOpenChange={setPaymentDialogOpen}
+        bookingId={b.id}
+        onSaved={load}
       />
 
       {canEdit && (
