@@ -245,6 +245,14 @@ export default function Clients() {
   const [clientPayments, setClientPayments] = useState<any[]>([]);
   const [clientVisas, setClientVisas] = useState<any[]>([]);
   const [clientDocuments, setClientDocuments] = useState<any[]>([]);
+  const [clientParticipants, setClientParticipants] = useState<any[]>([]);
+  const [clientFitQuotes, setClientFitQuotes] = useState<any[]>([]);
+  const [identityConflicts, setIdentityConflicts] = useState<any[]>([]);
+  const relatedTripCount = useMemo(() => new Set([
+    ...history.map((booking: any) => booking.trip_id),
+    ...clientParticipants.map((participant: any) => participant.trip_id),
+    ...clientVisas.flatMap((visa: any) => [visa.document_trip_id, visa.selected_trip_id, visa.trip_id]),
+  ].filter(Boolean)).size, [history, clientParticipants, clientVisas]);
 
   const fetchClients = async () => {
     let query = supabase
@@ -409,7 +417,7 @@ export default function Clients() {
 
   const openClient = async (c: any) => {
     setSelected(c);
-    const [{ data: n }, { data: r }, { data: h }, visaResult] = await Promise.all([
+    const [{ data: n }, { data: r }, { data: h }, visaResult, participantResult, fitResult, conflictResult] = await Promise.all([
       supabase.from("client_notes").select("*").eq("client_id", c.id).order("created_at", { ascending: false }),
       supabase.from("client_rewards" as any).select("*").eq("client_id", c.id).order("created_at", { ascending: false }),
       supabase
@@ -419,8 +427,25 @@ export default function Clients() {
         .order("created_at", { ascending: false }),
       (supabase as any)
         .from("visa_applications")
-        .select("id, reference, status, selected_trip_id, trip_id, created_at")
+        .select("id, reference, status, document_trip_id, selected_trip_id, trip_id, created_at")
         .eq("client_id", c.id)
+        .order("created_at", { ascending: false }),
+      (supabase as any)
+        .from("booking_participants")
+        .select("id, booking_id, trip_id, first_name, last_name, email, phone, passport_no, is_lead, created_at")
+        .eq("client_id", c.id)
+        .order("created_at", { ascending: false }),
+      (supabase as any)
+        .from("fit_quotes")
+        .select("id, quote_number, status, travelers_count, travel_start_date, travel_end_date, updated_at")
+        .eq("client_id", c.id)
+        .is("deleted_at", null)
+        .order("updated_at", { ascending: false }),
+      (supabase as any)
+        .from("crm_identity_conflicts")
+        .select("id, source_kind, matched_by, candidate_client_ids, created_at")
+        .eq("status", "pending")
+        .contains("candidate_client_ids", [c.id])
         .order("created_at", { ascending: false }),
     ]);
     setNotes(n ?? []);
@@ -440,6 +465,9 @@ export default function Clients() {
       setClientDocuments([]);
     }
     setClientVisas(visaResult.data ?? []);
+    setClientParticipants(participantResult.data ?? []);
+    setClientFitQuotes(fitResult.data ?? []);
+    setIdentityConflicts(conflictResult.data ?? []);
   };
 
   const openClientById = async (id: string) => {
@@ -546,10 +574,13 @@ export default function Clients() {
   };
 
   const clientHasProtectedHistory = async (clientId: string) => {
-    const { data: bookings } = await supabase.from("bookings").select("id").eq("client_id", clientId).limit(1);
-    const { data: visas } = await (supabase as any).from("visa_applications").select("id").eq("client_id", clientId).limit(1);
-    if ((bookings ?? []).length > 0 || (visas ?? []).length > 0) return true;
-    return false;
+    const [bookings, visas, participants, fitQuotes] = await Promise.all([
+      supabase.from("bookings").select("id").eq("client_id", clientId).limit(1),
+      (supabase as any).from("visa_applications").select("id").eq("client_id", clientId).limit(1),
+      (supabase as any).from("booking_participants").select("id").eq("client_id", clientId).limit(1),
+      (supabase as any).from("fit_quotes").select("id").eq("client_id", clientId).limit(1),
+    ]);
+    return [bookings, visas, participants, fitQuotes].some((result) => (result.data ?? []).length > 0);
   };
 
   const deleteOrArchiveClient = async (client: any) => {
@@ -1109,6 +1140,27 @@ export default function Clients() {
               </div>
               <Button size="sm" variant="outline" className="w-full min-h-11 mb-4" onClick={() => { setEdit(selected); setOpen(true); }}>Modifier la fiche</Button>
 
+              {identityConflicts.length > 0 && (
+                <div className="mb-4 flex items-start gap-2 rounded-xl border border-orange-300 bg-orange-50 p-3 text-xs text-orange-900">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <p className="font-semibold">Doublon potentiel à valider</p>
+                    <p>{identityConflicts.length} rapprochement(s) ambigu(s) ont été laissés sans fusion automatique.</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-4 rounded-xl border border-border bg-muted/20 p-3 text-xs">
+                <p className="mb-2 font-semibold uppercase text-muted-foreground">Relations CRM</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  <div><p className="text-muted-foreground">Réservations</p><p className="font-display text-lg">{history.length}</p></div>
+                  <div><p className="text-muted-foreground">Voyages</p><p className="font-display text-lg">{relatedTripCount}</p></div>
+                  <div><p className="text-muted-foreground">Participants</p><p className="font-display text-lg">{clientParticipants.length}</p></div>
+                  <div><p className="text-muted-foreground">Dossiers visa</p><p className="font-display text-lg">{clientVisas.length}</p></div>
+                  <div><p className="text-muted-foreground">Devis FIT</p><p className="font-display text-lg">{clientFitQuotes.length}</p></div>
+                </div>
+              </div>
+
               <div className="mb-4">
                 <Label className="text-xs mb-2 block">Historique des voyages</Label>
                 <div className="space-y-2 max-h-72 overflow-y-auto">
@@ -1131,6 +1183,22 @@ export default function Clients() {
                       </Link>
                     );
                   })}
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <Label className="text-xs mb-2 block">Participants liés</Label>
+                <div className="space-y-2 max-h-52 overflow-y-auto">
+                  {clientParticipants.length === 0 && <p className="text-xs text-muted-foreground">Aucun participant lié.</p>}
+                  {clientParticipants.map((participant: any) => (
+                    <Link key={participant.id} to={`/admin/bookings/${participant.booking_id}`} className="block rounded-lg bg-muted p-3 text-xs transition-colors hover:bg-muted/70">
+                      <div className="flex justify-between gap-2">
+                        <p className="font-medium">{[participant.first_name, participant.last_name].filter(Boolean).join(" ") || "Participant"}</p>
+                        {participant.is_lead && <span className="text-[10px] uppercase text-muted-foreground">Responsable</span>}
+                      </div>
+                      <p className="text-muted-foreground">Réservation liée · {fmtDate(participant.created_at)}</p>
+                    </Link>
+                  ))}
                 </div>
               </div>
 
@@ -1161,6 +1229,25 @@ export default function Clients() {
                         <span className="text-muted-foreground">{visa.status}</span>
                       </div>
                       <p className="text-muted-foreground">Créé le {fmtDate(visa.created_at)}</p>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <Label className="text-xs mb-2 block">Devis FIT</Label>
+                <div className="space-y-2 max-h-52 overflow-y-auto">
+                  {clientFitQuotes.length === 0 && <p className="text-xs text-muted-foreground">Aucun devis FIT lié.</p>}
+                  {clientFitQuotes.map((quote: any) => (
+                    <Link key={quote.id} to={`/admin/fit-quotes?quote=${quote.id}`} className="block rounded-lg bg-muted p-3 text-xs transition-colors hover:bg-muted/70">
+                      <div className="flex justify-between gap-2">
+                        <p className="font-medium">{quote.quote_number || "Devis FIT"}</p>
+                        <span className="text-muted-foreground">{quote.status}</span>
+                      </div>
+                      <p className="text-muted-foreground">
+                        {quote.travelers_count ?? 1} voyageur(s)
+                        {quote.travel_start_date ? ` · ${fmtDate(quote.travel_start_date)}` : ""}
+                      </p>
                     </Link>
                   ))}
                 </div>

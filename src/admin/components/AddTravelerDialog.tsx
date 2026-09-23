@@ -102,6 +102,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expec
       const row: any = Array.isArray(rpc) ? rpc[0] : rpc;
       const clientId = row?.client_id ?? null;
       const wasExisting = !!row?.was_existing;
+      const potentialDuplicate = !clientId && Boolean(form.email || form.phone || form.passport_no);
 
       if (wasExisting) {
         const { count } = await supabase
@@ -118,21 +119,6 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expec
           setBusy(false);
           return;
         }
-      }
-
-      if (clientId) {
-        await supabase.from("clients").update({
-          birthdate: form.date_of_birth || null,
-          nationality: form.nationality || null,
-          sex: form.sex || null,
-          profession: form.profession || null,
-          marital_status: form.marital_status || null,
-          address: form.address || null,
-          city: form.city || null,
-          passport_issue_date: form.passport_issue_date || null,
-          passport_expiry: form.passport_expiry || null,
-          passport_file_path: form.passport_file_path || null,
-        } as any).eq("id", clientId);
       }
 
       const { error: insErr } = await supabase.from("booking_participants").insert({
@@ -158,7 +144,11 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expec
       } as any);
       if (insErr) throw insErr;
 
-      toast.success(wasExisting ? "Voyageur associé" : "Voyageur ajouté");
+      if (potentialDuplicate) {
+        toast.warning("Voyageur ajouté sans fusion : doublon potentiel à valider dans le CRM.");
+      } else {
+        toast.success(wasExisting ? "Voyageur associé" : "Voyageur ajouté");
+      }
       setForm({
         first_name: "", last_name: "", sex: "", date_of_birth: "",
         profession: "", marital_status: "", address: "",
