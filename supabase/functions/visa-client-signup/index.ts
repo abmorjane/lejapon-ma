@@ -190,56 +190,11 @@ async function lookupPrefillStatus(admin: any, passportNo: string, lastName: str
   return "not_found";
 }
 
-async function upsertClient(admin: any, userId: string, firstName: string, lastName: string, email: string, passportNo: string | null) {
+async function upsertAccountProfile(admin: any, userId: string, firstName: string, lastName: string) {
   const fullName = `${firstName} ${lastName}`.trim();
-  const basePayload: Record<string, unknown> = {
-    email,
-    source: "visa_signup",
-  };
-  if (passportNo) basePayload.passport_number = passportNo;
-
-  const byEmail = await admin
-    .from("clients")
-    .select("id,full_name,email,passport_number,country")
-    .eq("email", email)
-    .limit(1)
-    .maybeSingle();
-
-  let targetClient = byEmail.data ?? null;
-  if (!targetClient && passportNo) {
-    const byPassport = await admin
-      .from("clients")
-      .select("id,full_name,email,passport_number,country")
-      .eq("passport_number", passportNo)
-      .limit(3);
-    if (!byPassport.error) {
-      const safe = (byPassport.data ?? []).filter((row: any) => lastNameMatches(row.full_name, lastName) || emailMatches(row.email, email));
-      if (safe.length === 1) targetClient = safe[0];
-    }
-  }
-
-  const result = targetClient?.id
-    ? await admin.from("clients").update({
-        ...basePayload,
-        full_name: targetClient.full_name || fullName,
-        country: targetClient.country || "Maroc",
-      }).eq("id", targetClient.id).select("id").single()
-    : await admin.from("clients").insert({
-        ...basePayload,
-        full_name: fullName,
-        country: "Maroc",
-      }).select("id").single();
-
-  if (result.error) {
-    safeLogWarn("client upsert skipped", result.error);
-    return null;
-  }
-
   await admin.from("profiles").upsert({ id: userId, full_name: fullName }).then(({ error }: any) => {
     if (error) safeLogWarn("profile upsert skipped", error);
   });
-
-  return result.data?.id ?? null;
 }
 
 async function smtpConfig(admin: any) {
@@ -467,7 +422,9 @@ Deno.serve(async (req) => {
       return reply({ success: false, error: "signup_failed", message: "Création du compte impossible. Merci de réessayer." }, 500);
     }
 
-    const clientId = await upsertClient(admin, created.user.id, firstName, lastName, email, passportNo || null);
+    // The Auth user is the family account manager, not necessarily the Visa
+    // applicant. A CRM person is resolved only from a completed application.
+    await upsertAccountProfile(admin, created.user.id, firstName, lastName);
 
     let emailSent = true;
     let emailError: string | null = null;
@@ -482,7 +439,7 @@ Deno.serve(async (req) => {
     return reply({
       success: true,
       user_id: created.user.id,
-      client_id: clientId,
+      client_id: null,
       prefill_status: prefillStatus,
       email_sent: emailSent,
       email_error: emailSent ? null : "email_send_failed",

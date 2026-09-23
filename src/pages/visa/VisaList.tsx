@@ -9,8 +9,6 @@ import { Plus, FileText, ArrowRight } from "lucide-react";
 import { Seo } from "@/components/Seo";
 import { toast } from "sonner";
 import { useRouteSlugs, pathFor } from "@/hooks/useRouteSlugs";
-import { lookupVisaPrefillByPassport, normalizePassportNo } from "@/lib/visa-prefill";
-import { syncVisaApplicationToClient } from "@/lib/visa-crm-sync";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -69,28 +67,6 @@ export default function VisaList() {
   const create = async () => {
     if (!user) return;
     setBusy(true);
-    const metadata = user.user_metadata ?? {};
-    const passportNo = normalizePassportNo(metadata.passport_no);
-    let prefillPatch: Record<string, unknown> = {};
-    let prefillMessage: string | null = null;
-
-    if (passportNo) {
-      const lookup = await lookupVisaPrefillByPassport({
-        passportNo,
-        lastName: String(metadata.last_name ?? ""),
-        email: user.email ?? "",
-      });
-      if (lookup.status === "matched") {
-        prefillPatch = lookup.patch;
-        prefillMessage = "Informations préremplies depuis votre dossier passeport. Merci de vérifier avant validation.";
-      } else if (lookup.status === "multiple") {
-        setBusy(false);
-        toast.error(lookup.message);
-        return;
-      } else {
-        prefillMessage = lookup.message;
-      }
-    }
 
     const { data, error } = await supabase
       .from("visa_applications")
@@ -100,24 +76,11 @@ export default function VisaList() {
         passport_type: "ordinary",
         purpose_of_visit: "Tourisme",
         date_of_application: todayISO(),
-        surname: metadata.last_name || null,
-        given_names: metadata.first_name || null,
-        passport_no: passportNo || null,
-        ...prefillPatch,
       })
       .select("id")
       .single();
     setBusy(false);
     if (error) return toast.error(error.message);
-    try {
-      await syncVisaApplicationToClient(data!.id);
-    } catch {
-      // Non-blocking: the draft remains usable and will sync again on submission.
-    }
-    if (prefillMessage) {
-      if (prefillMessage.startsWith("Informations préremplies")) toast.success(prefillMessage);
-      else toast.info(prefillMessage);
-    }
     nav(visaFormPath(data!.id));
   };
 

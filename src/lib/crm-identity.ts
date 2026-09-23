@@ -78,17 +78,16 @@ export function resolveCrmIdentity(
     phone: phone ? candidates.filter((candidate) => normalizeCrmPhone(candidate.phone) === phone) : [],
   };
 
-  for (const key of ["passport", "email", "phone"] as const) {
-    const ids = [...new Set(byKey[key].map((candidate) => candidate.id))];
-    if (ids.length > 1) return { kind: "ambiguous", candidateIds: ids, matchedBy: key };
-  }
+  // Identity keys are authoritative in order. A valid passport isolates a person
+  // even when several family members share the same email address or telephone.
+  const selectedKey = passport ? "passport" : email ? "email" : phone ? "phone" : null;
+  if (!selectedKey) return { kind: "none", candidateIds: [], matchedBy: null };
 
-  const allIds = [...new Set([...byKey.passport, ...byKey.email, ...byKey.phone].map((candidate) => candidate.id))];
-  if (allIds.length > 1) return { kind: "ambiguous", candidateIds: allIds, matchedBy: "conflicting_fields" };
-  if (allIds.length === 0) return { kind: "none", candidateIds: [], matchedBy: null };
+  const candidateIds = [...new Set(byKey[selectedKey].map((candidate) => candidate.id))];
+  if (candidateIds.length > 1) return { kind: "ambiguous", candidateIds, matchedBy: selectedKey };
+  if (candidateIds.length === 0) return { kind: "none", candidateIds: [], matchedBy: null };
 
-  const matchedBy = byKey.passport.length ? "passport" : byKey.email.length ? "email" : "phone";
-  return { kind: "match", clientId: allIds[0], candidateIds: allIds, matchedBy };
+  return { kind: "match", clientId: candidateIds[0], candidateIds, matchedBy: selectedKey };
 }
 
 const isMissing = (value: unknown) => value == null || (typeof value === "string" && value.trim() === "");

@@ -23,7 +23,6 @@ import { isVisaChecklistDocument, upsertVisaChecklistDocument } from "@/lib/visa
 import {
   PROFESSIONAL_SITUATIONS,
   checklistSnapshotText,
-  crmSituationToVisaSituation,
   findChecklistForSituation,
   professionalSituationLabel,
 } from "@/lib/visa-document-checklists";
@@ -83,9 +82,6 @@ const japanStayDaysFromTrip = (trip: VisaTripOption | null) => {
 const isJapanStayFallback = (trip: VisaTripOption | null) =>
   visaTripDatesFromTrip(trip).usesStayFallback;
 
-const firstString = (...values: unknown[]) =>
-  values.find((value) => typeof value === "string" && value.trim()) as string | undefined;
-
 export default function VisaForm() {
   const { id } = useParams();
   const { user, loading } = useAuth();
@@ -136,53 +132,6 @@ export default function VisaForm() {
         purpose_of_visit: appRes.data.purpose_of_visit || "Tourisme",
         date_of_application: appRes.data.date_of_application || todayISO(),
       };
-      const metadata = user.user_metadata ?? {};
-      const metadataPassportNo = normalizePassportNo(firstString(metadata.passport_no, metadata.passport_number));
-      const userClientProfile = user.email
-        ? await supabase
-            .from("clients")
-            .select("id,email,passport_number,passport_no,metadata")
-            .eq("email", user.email)
-            .limit(1)
-            .maybeSingle()
-        : { data: null, error: null };
-      const clientMetadata = userClientProfile.data?.metadata && typeof userClientProfile.data.metadata === "object"
-        ? userClientProfile.data.metadata as Record<string, any>
-        : {};
-      const clientPassportOcr = clientMetadata.passport_ocr && typeof clientMetadata.passport_ocr === "object"
-        ? clientMetadata.passport_ocr as Record<string, any>
-        : {};
-      const profilePassportNo = normalizePassportNo(firstString(
-        userClientProfile.data?.passport_number,
-        userClientProfile.data?.passport_no,
-        clientPassportOcr.passport_number,
-        clientPassportOcr.passport_no,
-      ));
-      const passportForAutoPrefill = metadataPassportNo || profilePassportNo;
-      const metadataPatch = applyEmptyFieldPatch(hydratedApp, {
-        surname: metadata.last_name,
-        given_names: metadata.first_name,
-        passport_no: passportForAutoPrefill,
-        category: crmSituationToVisaSituation(String(metadata.professional_situation ?? "")) || undefined,
-      });
-      hydratedApp = { ...hydratedApp, ...metadataPatch };
-      if (hydratedApp.status === "draft" && passportForAutoPrefill && !appRes.data.submitted_at) {
-        const lookup = await lookupVisaPrefillByPassport({
-          passportNo: passportForAutoPrefill,
-          lastName: String(metadata.last_name ?? hydratedApp.surname ?? ""),
-          email: user.email ?? "",
-        });
-        if (lookup.status === "matched") {
-          const safePatch = applyEmptyFieldPatch(hydratedApp, lookup.patch);
-          hydratedApp = { ...hydratedApp, ...safePatch };
-          if (Object.keys(safePatch).length) {
-            await supabase.from("visa_applications").update(safePatch as any).eq("id", hydratedApp.id);
-            toast.info("Informations préremplies depuis votre dossier passeport. Merci de vérifier avant validation.");
-          }
-        } else if (lookup.status === "none" || lookup.status === "multiple") {
-          toast.info(lookup.message);
-        }
-      }
       setApp(hydratedApp);
       setDocs(docsRes.data ?? []);
       setSettings(sRes.data);
