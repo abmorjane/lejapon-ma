@@ -3,20 +3,29 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Download, ExternalLink, Loader2 } from "lucide-react";
 import { downloadBlob } from "@/lib/visa-pdf";
+import { useOverlayHistory } from "@/hooks/useOverlayHistory";
+import { AdminOverlayCloseButton } from "./AdminOverlayCloseButton";
 
 type Props = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   title: string;
   filename: string;
+  overlayHistoryId?: string;
   /** Async generator returning the PDF bytes. Re-invoked each time the dialog opens. */
   generate: () => Promise<Uint8Array>;
 };
 
-export function PdfPreviewDialog({ open, onOpenChange, title, filename, generate }: Props) {
+export function PdfPreviewDialog({ open, onOpenChange, title, filename, overlayHistoryId, generate }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const overlay = useOverlayHistory(
+    open,
+    () => onOpenChange(false),
+    overlayHistoryId ?? `pdf-preview-${filename}`,
+    Boolean(overlayHistoryId),
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -43,11 +52,17 @@ export function PdfPreviewDialog({ open, onOpenChange, title, filename, generate
   }, [open, generate]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[85dvh] w-[95vw] max-w-5xl flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="p-4 border-b flex-row items-center justify-between space-y-0">
-          <DialogTitle>{title}</DialogTitle>
-          <div className="flex items-center gap-2 mr-8">
+    <Dialog open={open} onOpenChange={overlayHistoryId ? overlay.handleOpenChange : onOpenChange}>
+      <DialogContent className={overlayHistoryId
+        ? "flex h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-5xl flex-col gap-0 overflow-hidden rounded-2xl p-0 [&>button:last-child]:hidden sm:h-[85dvh] sm:w-[95vw]"
+        : "flex h-[85dvh] w-[95vw] max-w-5xl flex-col gap-0 overflow-hidden p-0"}
+      >
+        <DialogHeader className={overlayHistoryId
+          ? "flex-row flex-wrap items-center justify-between gap-2 space-y-0 border-b p-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:pt-4"
+          : "flex-row items-center justify-between space-y-0 border-b p-4"}
+        >
+          <DialogTitle className="min-w-0 flex-1 text-left">{title}</DialogTitle>
+          <div className={`flex items-center gap-2 ${overlayHistoryId ? "flex-wrap justify-end" : "mr-8"}`}>
             <Button
               size="sm"
               variant="outline"
@@ -67,6 +82,7 @@ export function PdfPreviewDialog({ open, onOpenChange, title, filename, generate
             >
               <Download className="w-4 h-4" /> Télécharger
             </Button>
+            {overlayHistoryId && <AdminOverlayCloseButton onClick={() => overlay.requestClose()} />}
           </div>
         </DialogHeader>
         <div className="flex-1 bg-secondary/30 overflow-hidden">

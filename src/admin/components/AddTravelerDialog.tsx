@@ -12,6 +12,7 @@ import { AlertTriangle, FileScan } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { PassportScannerDialog, type PassportOcrFields } from "./PassportScannerDialog";
 import { checkPassportExpiry } from "@/lib/passport-mrz";
+import { useOverlayHistory } from "@/hooks/useOverlayHistory";
 
 type Props = {
   open: boolean;
@@ -57,6 +58,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expec
   });
   const [busy, setBusy] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const overlay = useOverlayHistory(open, () => onOpenChange(false), `add-booking-traveler-${bookingId}`);
 
   const setF = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
@@ -156,8 +158,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expec
         nationality: "", passport_no: "", passport_issue_date: "", passport_expiry: "",
         passport_file_path: "", email: "", phone: "", relation: "self",
       });
-      onOpenChange(false);
-      onSaved?.();
+      overlay.requestClose(onSaved);
     } catch (e: any) {
       toast.error(e.message ?? "Erreur");
     } finally {
@@ -166,8 +167,8 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expec
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+    <Dialog open={open} onOpenChange={overlay.handleOpenChange}>
+      <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-2xl overflow-y-auto rounded-2xl p-4 sm:p-6">
         <DialogHeader><DialogTitle>Ajouter un voyageur</DialogTitle></DialogHeader>
         {isAdmin && (
           <>
@@ -180,6 +181,7 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expec
             <PassportScannerDialog
               open={scannerOpen}
               onOpenChange={setScannerOpen}
+              overlayHistoryId={`booking-passport-scanner-${bookingId}`}
               currentPath={form.passport_file_path}
               onStoredPathChange={(path) => setF("passport_file_path", path ?? "")}
               onApply={applyPassportFields}
@@ -237,9 +239,9 @@ export function AddTravelerDialog({ open, onOpenChange, bookingId, tripId, expec
           <div><Label className="text-xs">Email</Label><Input type="email" value={form.email} onChange={(e) => setF("email", e.target.value)} /></div>
           <div><Label className="text-xs">Téléphone</Label><Input value={form.phone} onChange={(e) => setF("phone", e.target.value)} /></div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Annuler</Button>
-          <Button onClick={submit} disabled={busy}>{busy ? "Enregistrement…" : "Ajouter"}</Button>
+        <DialogFooter className="sticky bottom-0 -mx-4 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:px-6">
+          <Button className="min-h-11" variant="outline" onClick={() => overlay.requestClose()} disabled={busy}>Annuler</Button>
+          <Button className="min-h-11" onClick={submit} disabled={busy}>{busy ? "Enregistrement…" : "Ajouter"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

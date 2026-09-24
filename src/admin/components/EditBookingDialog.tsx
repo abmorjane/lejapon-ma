@@ -29,6 +29,7 @@ import {
   type PublicHotelKey,
   type PublicRoomKey,
 } from "@/lib/booking-options";
+import { useOverlayHistory } from "@/hooks/useOverlayHistory";
 
 type Props = {
   open: boolean;
@@ -64,6 +65,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
   const [paymentMethod, setPaymentMethod] = useState<string>("bank_transfer");
   const [busy, setBusy] = useState(false);
   const [applyOptionImpact, setApplyOptionImpact] = useState(false);
+  const overlay = useOverlayHistory(open, () => onOpenChange(false), `edit-booking-${booking?.id ?? "unknown"}`);
 
   useEffect(() => {
     if (!open) return;
@@ -324,8 +326,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
       }
 
       toast.success("Inscription mise à jour");
-      onOpenChange(false);
-      onSaved();
+      overlay.requestClose(onSaved);
     } catch (e: any) {
       toast.error(e.message ?? "Erreur");
     } finally {
@@ -334,7 +335,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={overlay.handleOpenChange}>
       <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-3xl overflow-y-auto rounded-2xl p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Modifier l'inscription · {booking?.reference}</DialogTitle>
@@ -548,7 +549,7 @@ export function EditBookingDialog({ open, onOpenChange, booking, extras: initial
         </div>
 
         <DialogFooter className="sticky bottom-0 -mx-4 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:px-6">
-          <Button className="min-h-11" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Annuler</Button>
+          <Button className="min-h-11" variant="outline" onClick={() => overlay.requestClose()} disabled={busy}>Annuler</Button>
           <Button className="min-h-11" onClick={save} disabled={busy}>{busy ? "Enregistrement…" : "Enregistrer les modifications"}</Button>
         </DialogFooter>
       </DialogContent>

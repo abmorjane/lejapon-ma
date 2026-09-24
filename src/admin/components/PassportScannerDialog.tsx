@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { checkPassportExpiry } from "@/lib/passport-mrz";
+import { useOverlayHistory } from "@/hooks/useOverlayHistory";
 
 export type PassportOcrFields = {
   first_name?: string;
@@ -40,6 +41,7 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   currentPath?: string | null;
   bucket?: "passports" | "visa-docs";
+  overlayHistoryId?: string;
   onStoredPathChange?: (path: string | null) => void;
   onApply: (fields: PassportOcrFields) => void;
 };
@@ -142,9 +144,15 @@ async function directStorageUpload(file: File, ext: string, contentType: string,
   return { path };
 }
 
-export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket = "passports", onStoredPathChange, onApply }: Props) {
+export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket = "passports", overlayHistoryId, onStoredPathChange, onApply }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const overlay = useOverlayHistory(
+    open,
+    () => onOpenChange(false),
+    overlayHistoryId ?? `passport-scanner-${bucket}`,
+    Boolean(overlayHistoryId),
+  );
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewKind, setPreviewKind] = useState<"image" | "pdf" | null>(null);
   const [storedPath, setStoredPath] = useState<string | null>(currentPath ?? null);
@@ -248,7 +256,7 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket 
     if (!fields) return;
     onApply(fields);
     toast.info("Veuillez vérifier les informations avant validation.");
-    onOpenChange(false);
+    overlay.requestClose();
   };
 
   const setField = (key: keyof PassportOcrFields, value: string) => {
@@ -269,8 +277,11 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket 
   const canApplyDetectedFields = Boolean(fields?.passport_no && (fields.last_name || fields.full_name));
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-3xl">
+    <Dialog open={open} onOpenChange={overlayHistoryId ? overlay.handleOpenChange : onOpenChange}>
+      <DialogContent className={overlayHistoryId
+        ? "max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] overflow-y-auto rounded-2xl p-4 sm:max-w-3xl sm:p-6"
+        : "max-h-[92dvh] overflow-y-auto sm:max-w-3xl"}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileScan className="h-5 w-5 text-accent" /> Scanner passeport
@@ -380,11 +391,14 @@ export function PassportScannerDialog({ open, onOpenChange, currentPath, bucket 
           )}
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+        <DialogFooter className={overlayHistoryId
+          ? "sticky bottom-0 -mx-4 gap-2 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:gap-0 sm:px-6"
+          : "gap-2 sm:gap-0"}
+        >
+          <Button className={overlayHistoryId ? "min-h-11" : undefined} type="button" variant="outline" onClick={() => overlay.requestClose()} disabled={busy}>
             <X className="h-4 w-4" /> Annuler
           </Button>
-          <Button type="button" onClick={apply} disabled={!canApplyDetectedFields || busy}>
+          <Button className={overlayHistoryId ? "min-h-11" : undefined} type="button" onClick={apply} disabled={!canApplyDetectedFields || busy}>
             Appliquer ces informations au profil
           </Button>
         </DialogFooter>

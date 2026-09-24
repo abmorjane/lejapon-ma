@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { fmtMAD } from "@/lib/format";
 import { PAYMENT_METHOD_OPTIONS, normalisePaymentMethod } from "@/lib/payment-methods";
 import { quoteAdjustmentsFromBooking, quoteTotalWithAdjustments } from "@/lib/quote-adjustments";
+import { useOverlayHistory } from "@/hooks/useOverlayHistory";
 
 type Props = {
   open: boolean;
@@ -41,6 +42,7 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: P
     status: "received",
     notes: "",
   });
+  const overlay = useOverlayHistory(open, () => onOpenChange(false), `booking-payment-${bookingId ?? "selection"}`);
 
   const loadBookings = async () => {
     let query = (supabase as any)
@@ -150,8 +152,7 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: P
       }
       toast.success("Paiement enregistré.");
       reset();
-      onOpenChange(false);
-      onSaved?.();
+      overlay.requestClose(onSaved);
     } catch (error: any) {
       toast.error(error?.message ?? "Impossible d’enregistrer le paiement.");
     } finally {
@@ -160,7 +161,9 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: P
   };
 
   return (
-    <Dialog open={open} onOpenChange={(value) => { onOpenChange(value); if (!value) reset(); }}>
+    <Dialog open={open} onOpenChange={(value) => {
+      if (!value) overlay.requestClose(reset);
+    }}>
       <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-2xl overflow-y-auto rounded-2xl p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Ajouter paiement</DialogTitle>
@@ -249,7 +252,7 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: P
         </div>
 
         <DialogFooter className="sticky bottom-0 -mx-4 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:px-6">
-          <Button className="min-h-11" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Annuler</Button>
+          <Button className="min-h-11" variant="outline" onClick={() => overlay.requestClose(reset)} disabled={saving}>Annuler</Button>
           <Button className="min-h-11" onClick={save} disabled={saving}>
             <CreditCard className="h-4 w-4" /> {saving ? "Enregistrement…" : "Enregistrer le paiement"}
           </Button>

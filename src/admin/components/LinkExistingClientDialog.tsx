@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Search } from "lucide-react";
 import { findMatchingParticipantForClient } from "@/admin/lib/booking-participants";
+import { useOverlayHistory } from "@/hooks/useOverlayHistory";
 
 type Props = {
   open: boolean;
@@ -33,6 +34,7 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
   const [selected, setSelected] = useState<any>(null);
   const [relation, setRelation] = useState("family");
   const [busy, setBusy] = useState(false);
+  const overlay = useOverlayHistory(open, () => onOpenChange(false), `link-booking-client-${bookingId}`);
 
   useEffect(() => { if (!open) { setQ(""); setResults([]); setSelected(null); setRelation("family"); } }, [open]);
 
@@ -64,8 +66,7 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
 
       if ((alreadyLinkedCount ?? 0) > 0) {
         toast.error("Ce voyageur est déjà associé à cette réservation.");
-        onOpenChange(false);
-        onSaved?.();
+        overlay.requestClose(onSaved);
         setBusy(false);
         return;
       }
@@ -118,8 +119,7 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
           });
       if (error) throw error;
       toast.success("Voyageur associé");
-      onOpenChange(false);
-      onSaved?.();
+      overlay.requestClose(onSaved);
     } catch (e: any) {
       toast.error(e.message ?? "Erreur");
     } finally {
@@ -128,8 +128,8 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+    <Dialog open={open} onOpenChange={overlay.handleOpenChange}>
+      <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-2xl overflow-y-auto rounded-2xl p-4 sm:p-6">
         <DialogHeader><DialogTitle>Associer un client existant</DialogTitle></DialogHeader>
         <div className="space-y-3 py-2">
           <div className="relative">
@@ -161,9 +161,9 @@ export function LinkExistingClientDialog({ open, onOpenChange, bookingId, tripId
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Annuler</Button>
-          <Button onClick={associate} disabled={busy || !selected}>{busy ? "…" : "Associer"}</Button>
+        <DialogFooter className="sticky bottom-0 -mx-4 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:px-6">
+          <Button className="min-h-11" variant="outline" onClick={() => overlay.requestClose()} disabled={busy}>Annuler</Button>
+          <Button className="min-h-11" onClick={associate} disabled={busy || !selected}>{busy ? "…" : "Associer"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -51,6 +51,8 @@ import { calculateCommercialDocumentTotals, invoiceTypeLabel } from "@/lib/comme
 import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
 import { publicHotelLabel, publicRoomLabel } from "@/lib/booking-options";
 import { bookingStatusLabel } from "@/admin/lib/booking-status";
+import { useOverlayHistory } from "@/hooks/useOverlayHistory";
+import { AdminOverlayCloseButton } from "@/admin/components/AdminOverlayCloseButton";
 
 const FINANCIAL_DOCUMENT_TYPES = new Set(["quote", "receipt", "invoice", "payment", "financial"]);
 
@@ -540,6 +542,29 @@ export default function BookingDetail() {
     [b, extras, quoteAdjustments, payments, participants, agency, docs]
   );
 
+  const tasksOverlay = useOverlayHistory(tasksOpen, () => {
+    setTasksOpen(false);
+    void load();
+  }, `booking-tasks-${id ?? "unknown"}`);
+  const paymentsOverlay = useOverlayHistory(paymentsOpen, () => setPaymentsOpen(false), `booking-payments-${id ?? "unknown"}`);
+  const flightOverlay = useOverlayHistory(flightOpen, () => {
+    setFlightOpen(false);
+    setFlightAdvancedOpen(false);
+  }, `booking-flight-${id ?? "unknown"}`);
+  const flightImportOverlay = useOverlayHistory(
+    flightImportDialogOpen,
+    () => setFlightImportDialogOpen(false),
+    `booking-flight-import-${id ?? "unknown"}`,
+  );
+  const adjustmentsOverlay = useOverlayHistory(adjustmentsOpen, () => setAdjustmentsOpen(false), `booking-adjustments-${id ?? "unknown"}`);
+  const adjustmentDialogOverlay = useOverlayHistory(
+    adjustmentDialogOpen,
+    () => setAdjustmentDialogOpen(false),
+    `booking-adjustment-editor-${id ?? "unknown"}`,
+  );
+  const agencyOverlay = useOverlayHistory(agencyOpen, () => setAgencyOpen(false), `booking-agency-${id ?? "unknown"}`);
+  const documentsOverlay = useOverlayHistory(documentsOpen, () => setDocumentsOpen(false), `booking-documents-${id ?? "unknown"}`);
+
   if (!b) return <p className="text-muted-foreground">Chargement…</p>;
 
   const updateStatus = async (status: string) => {
@@ -600,8 +625,7 @@ export default function BookingDetail() {
       if (auditError) console.warn("[booking-agency-assignment] audit log failed", auditError);
 
       toast.success(selectedAgencyOrgId ? "Réservation attribuée à l’agence." : "Attribution agence retirée.");
-      setAgencyOpen(false);
-      load();
+      agencyOverlay.requestClose(load);
     } catch (error: any) {
       toast.error(error?.message ?? "Impossible d’enregistrer l’attribution agence.");
     } finally {
@@ -783,7 +807,7 @@ export default function BookingDetail() {
       ? quoteAdjustments.map((adjustment) => adjustment.id === existing.id ? nextAdjustment : adjustment)
       : [...quoteAdjustments, nextAdjustment];
     const saved = await saveQuoteAdjustments(nextAdjustments);
-    if (saved) setAdjustmentDialogOpen(false);
+    if (saved) adjustmentDialogOverlay.requestClose();
   };
 
   const deleteAdjustment = async (adjustment: QuoteAdjustment) => {
@@ -1246,7 +1270,7 @@ export default function BookingDetail() {
       }
     });
     setTicketNumberDrafts((current) => ({ ...current, ...nextTicketDrafts }));
-    setFlightImportDialogOpen(false);
+    flightImportOverlay.requestClose();
     toast.success("Informations détectées préparées. Vérifiez puis enregistrez.");
   };
 
@@ -1613,11 +1637,16 @@ export default function BookingDetail() {
             onChanged={load}
           />
 
-          <Sheet open={tasksOpen} onOpenChange={(open) => { setTasksOpen(open); if (!open) void load(); }}>
-            <SheetContent className="w-full max-w-none p-0 sm:w-[min(760px,94vw)] sm:max-w-none">
-              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
-                <SheetTitle>Tâches · {b.reference}</SheetTitle>
-                <SheetDescription>Checklist opérationnelle de la réservation.</SheetDescription>
+          <Sheet open={tasksOpen} onOpenChange={tasksOverlay.handleOpenChange}>
+            <SheetContent className="w-full max-w-none p-0 [&>button:last-child]:hidden sm:w-[min(760px,94vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-6 sm:pt-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 text-left">
+                    <SheetTitle>Tâches · {b.reference}</SheetTitle>
+                    <SheetDescription>Checklist opérationnelle de la réservation.</SheetDescription>
+                  </div>
+                  <AdminOverlayCloseButton onClick={() => tasksOverlay.requestClose()} />
+                </div>
               </SheetHeader>
               <div className="p-3 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
                 <OperationChecklistPanel
@@ -1632,11 +1661,16 @@ export default function BookingDetail() {
             </SheetContent>
           </Sheet>
 
-          <Sheet open={paymentsOpen} onOpenChange={setPaymentsOpen}>
-            <SheetContent className="w-full max-w-none p-0 sm:w-[min(680px,92vw)] sm:max-w-none">
-              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
-                <SheetTitle>Paiements · {b.reference}</SheetTitle>
-                <SheetDescription>{fmtMAD(b.paid_amount_mad)} encaissé sur {fmtMAD(displayedQuoteTotal)}.</SheetDescription>
+          <Sheet open={paymentsOpen} onOpenChange={paymentsOverlay.handleOpenChange}>
+            <SheetContent className="w-full max-w-none p-0 [&>button:last-child]:hidden sm:w-[min(680px,92vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-6 sm:pt-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 text-left">
+                    <SheetTitle>Paiements · {b.reference}</SheetTitle>
+                    <SheetDescription>{fmtMAD(b.paid_amount_mad)} encaissé sur {fmtMAD(displayedQuoteTotal)}.</SheetDescription>
+                  </div>
+                  <AdminOverlayCloseButton onClick={() => paymentsOverlay.requestClose()} />
+                </div>
               </SheetHeader>
               <div className="p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
             <div className="space-y-2 mb-4">
@@ -1695,16 +1729,21 @@ export default function BookingDetail() {
             </SheetContent>
           </Sheet>
 
-          <Sheet open={flightOpen} onOpenChange={(open) => { setFlightOpen(open); if (!open) setFlightAdvancedOpen(false); }}>
-            <SheetContent className="w-full max-w-none p-0 sm:w-[min(920px,96vw)] sm:max-w-none">
-              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <SheetTitle className="flex items-center gap-2"><Plane className="h-4 w-4 text-accent" /> Vol · {b.reference}</SheetTitle>
-                <span className={`inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-semibold ${FLIGHT_STATUS_CLASSES[flightStatus] ?? FLIGHT_STATUS_CLASSES.not_booked}`}>
-                  {FLIGHT_STATUS_LABELS[flightStatus] ?? "Non réservé"}
-                </span>
-              </div>
-                <SheetDescription>Enregistrez un brouillon incomplet ou confirmez le vol avec les informations essentielles.</SheetDescription>
+          <Sheet open={flightOpen} onOpenChange={flightOverlay.handleOpenChange}>
+            <SheetContent className="w-full max-w-none p-0 [&>button:last-child]:hidden sm:w-[min(920px,96vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-6 sm:pt-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 text-left">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SheetTitle className="flex items-center gap-2"><Plane className="h-4 w-4 text-accent" /> Vol · {b.reference}</SheetTitle>
+                      <span className={`inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-semibold ${FLIGHT_STATUS_CLASSES[flightStatus] ?? FLIGHT_STATUS_CLASSES.not_booked}`}>
+                        {FLIGHT_STATUS_LABELS[flightStatus] ?? "Non réservé"}
+                      </span>
+                    </div>
+                    <SheetDescription>Enregistrez un brouillon incomplet ou confirmez le vol avec les informations essentielles.</SheetDescription>
+                  </div>
+                  <AdminOverlayCloseButton onClick={() => flightOverlay.requestClose()} />
+                </div>
               </SheetHeader>
               <div className="space-y-4 p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs leading-relaxed text-blue-950">
@@ -2072,8 +2111,8 @@ export default function BookingDetail() {
             </SheetContent>
           </Sheet>
 
-          <Dialog open={flightImportDialogOpen} onOpenChange={setFlightImportDialogOpen}>
-            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <Dialog open={flightImportDialogOpen} onOpenChange={flightImportOverlay.handleOpenChange}>
+            <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] overflow-y-auto rounded-2xl p-4 sm:max-w-2xl sm:p-6">
               <DialogHeader>
                 <DialogTitle>Vérifier les informations détectées</DialogTitle>
               </DialogHeader>
@@ -2137,24 +2176,27 @@ export default function BookingDetail() {
               ) : (
                 <p className="text-sm text-muted-foreground">Aucune information détectée.</p>
               )}
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setFlightImportDialogOpen(false)}>Annuler</Button>
-                <Button type="button" onClick={applyFlightImportPreview} disabled={!flightImportPreview}>Appliquer au brouillon</Button>
+              <DialogFooter className="sticky bottom-0 -mx-4 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:px-6">
+                <Button className="min-h-11" type="button" variant="outline" onClick={() => flightImportOverlay.requestClose()}>Annuler</Button>
+                <Button className="min-h-11" type="button" onClick={applyFlightImportPreview} disabled={!flightImportPreview}>Appliquer au brouillon</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
 
-          <Sheet open={adjustmentsOpen} onOpenChange={setAdjustmentsOpen}>
-            <SheetContent className="w-full max-w-none p-0 sm:w-[min(760px,94vw)] sm:max-w-none">
-              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <SheetTitle>Ajustements devis · {b.reference}</SheetTitle>
-                <Button type="button" size="sm" onClick={() => openAdjustmentDialog()} className="min-h-10">
+          <Sheet open={adjustmentsOpen} onOpenChange={adjustmentsOverlay.handleOpenChange}>
+            <SheetContent className="w-full max-w-none p-0 [&>button:last-child]:hidden sm:w-[min(760px,94vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-6 sm:pt-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 text-left">
+                    <SheetTitle>Ajustements devis · {b.reference}</SheetTitle>
+                    <SheetDescription>Suppléments et réductions audités sans écraser le prix de base.</SheetDescription>
+                  </div>
+                  <AdminOverlayCloseButton onClick={() => adjustmentsOverlay.requestClose()} />
+                </div>
+                <Button type="button" size="sm" onClick={() => openAdjustmentDialog()} className="mt-2 min-h-11 w-fit">
                   <Plus className="h-4 w-4" />
                   Ajouter une ligne
                 </Button>
-              </div>
-                <SheetDescription>Suppléments et réductions audités sans écraser le prix de base.</SheetDescription>
               </SheetHeader>
               <div className="space-y-4 p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
               {quoteAdjustments.length === 0 ? (
@@ -2224,11 +2266,16 @@ export default function BookingDetail() {
         </div>
 
         <aside className="space-y-5 lg:space-y-6">
-          <Sheet open={agencyOpen} onOpenChange={setAgencyOpen}>
-            <SheetContent className="w-full max-w-none p-0 sm:w-[min(560px,92vw)] sm:max-w-none">
-              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
-                <SheetTitle className="flex items-center gap-2"><Building2 className="h-4 w-4 text-accent" /> Attribuer agence</SheetTitle>
-                <SheetDescription>Organisation, utilisateur et notes internes.</SheetDescription>
+          <Sheet open={agencyOpen} onOpenChange={agencyOverlay.handleOpenChange}>
+            <SheetContent className="w-full max-w-none p-0 [&>button:last-child]:hidden sm:w-[min(560px,92vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-6 sm:pt-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 text-left">
+                    <SheetTitle className="flex items-center gap-2"><Building2 className="h-4 w-4 text-accent" /> Attribuer agence</SheetTitle>
+                    <SheetDescription>Organisation, utilisateur et notes internes.</SheetDescription>
+                  </div>
+                  <AdminOverlayCloseButton onClick={() => agencyOverlay.requestClose()} />
+                </div>
               </SheetHeader>
               <div className="space-y-3 p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
               <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-950">
@@ -2300,11 +2347,16 @@ export default function BookingDetail() {
             </SheetContent>
           </Sheet>
 
-          <Sheet open={documentsOpen} onOpenChange={setDocumentsOpen}>
-            <SheetContent className="w-full max-w-none p-0 sm:w-[min(680px,92vw)] sm:max-w-none">
-              <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
-                <SheetTitle>Documents · {b.reference}</SheetTitle>
-                <SheetDescription>Documents commerciaux et pièces partagées avec le client.</SheetDescription>
+          <Sheet open={documentsOpen} onOpenChange={documentsOverlay.handleOpenChange}>
+            <SheetContent className="w-full max-w-none p-0 [&>button:last-child]:hidden sm:w-[min(680px,92vw)] sm:max-w-none">
+              <SheetHeader className="border-b px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-6 sm:pt-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 text-left">
+                    <SheetTitle>Documents · {b.reference}</SheetTitle>
+                    <SheetDescription>Documents commerciaux et pièces partagées avec le client.</SheetDescription>
+                  </div>
+                  <AdminOverlayCloseButton onClick={() => documentsOverlay.requestClose()} />
+                </div>
               </SheetHeader>
               <div className="p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:p-6">
             <div className="grid grid-cols-2 gap-2 mb-4">
@@ -2467,12 +2519,13 @@ export default function BookingDetail() {
       <PdfPreviewDialog
         open={preview?.kind === "quote"}
         onOpenChange={(v) => !v && setPreview(null)}
+        overlayHistoryId={`booking-quote-preview-${b.id}`}
         title="Aperçu du devis"
         filename={`devis-${b?.reference ?? ""}.pdf`}
         generate={buildQuote}
       />
-      <Dialog open={adjustmentDialogOpen} onOpenChange={setAdjustmentDialogOpen}>
-        <DialogContent className="sm:max-w-xl">
+      <Dialog open={adjustmentDialogOpen} onOpenChange={adjustmentDialogOverlay.handleOpenChange}>
+        <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] overflow-y-auto rounded-2xl p-4 sm:max-w-xl sm:p-6">
           <DialogHeader>
             <DialogTitle>{editingAdjustmentId ? "Modifier une ligne devis" : "Ajouter une ligne devis"}</DialogTitle>
           </DialogHeader>
@@ -2544,9 +2597,9 @@ export default function BookingDetail() {
               <strong className="font-display text-lg">{fmtMAD(adjustmentPreviewTotal)}</strong>
             </div>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setAdjustmentDialogOpen(false)}>Annuler</Button>
-            <Button type="button" onClick={saveAdjustmentDraft}>
+          <DialogFooter className="sticky bottom-0 -mx-4 border-t bg-background px-4 pb-[env(safe-area-inset-bottom)] pt-3 sm:-mx-6 sm:px-6">
+            <Button className="min-h-11" type="button" variant="outline" onClick={() => adjustmentDialogOverlay.requestClose()}>Annuler</Button>
+            <Button className="min-h-11" type="button" onClick={saveAdjustmentDraft}>
               <Save className="h-4 w-4" />
               Enregistrer
             </Button>
@@ -2556,6 +2609,7 @@ export default function BookingDetail() {
       <PdfPreviewDialog
         open={preview?.kind === "receipt"}
         onOpenChange={(v) => !v && setPreview(null)}
+        overlayHistoryId={`booking-receipt-preview-${b.id}`}
         title="Aperçu du reçu"
         filename={`recu-${b?.reference ?? ""}.pdf`}
         generate={buildReceipt}
@@ -2563,6 +2617,7 @@ export default function BookingDetail() {
       <PdfPreviewDialog
         open={preview?.kind === "invoice"}
         onOpenChange={(v) => !v && setPreview(null)}
+        overlayHistoryId={`booking-invoice-preview-${b.id}`}
         title={`Aperçu ${invoiceTypeLabel(commercialTotals.invoiceType)}`}
         filename={`facture-${b?.reference ?? ""}.pdf`}
         generate={buildInvoice}

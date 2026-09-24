@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { AlertTriangle, BedDouble, CalendarDays, CreditCard, ExternalLink, Hotel, Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,6 +13,8 @@ import { StatusBadge } from "./StatusBadge";
 import { EditBookingDialog } from "./EditBookingDialog";
 import { AdminPaymentDialog } from "./AdminPaymentDialog";
 import { bookingStatusLabel } from "@/admin/lib/booking-status";
+import { useOverlayHistory } from "@/hooks/useOverlayHistory";
+import { AdminOverlayCloseButton } from "./AdminOverlayCloseButton";
 
 type Props = {
   booking: any | null;
@@ -25,12 +27,14 @@ const activeTask = (item: any) => !["completed", "cancelled"].includes(String(it
 const overdueTask = (item: any) => activeTask(item) && item.deadline && new Date(item.deadline).getTime() < Date.now();
 
 export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }: Props) {
+  const navigate = useNavigate();
   const [detail, setDetail] = useState<any>(null);
   const [extras, setExtras] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const overlay = useOverlayHistory(open, () => onOpenChange(false), "booking-quick-view");
 
   const load = async () => {
     if (!booking?.id) return;
@@ -77,8 +81,7 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
     const { error } = await supabase.from("bookings").delete().eq("id", current.id);
     if (error) return toast.error(error.message);
     toast.success("Réservation supprimée.");
-    onOpenChange(false);
-    onChanged?.();
+    overlay.requestClose(onChanged);
   };
 
   const current = detail ?? booking;
@@ -92,16 +95,17 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
 
   return (
     <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="w-full max-w-none p-0 sm:w-[min(680px,92vw)] sm:max-w-none">
+      <Sheet open={open} onOpenChange={overlay.handleOpenChange}>
+        <SheetContent className="w-full max-w-none p-0 [&>button:last-child]:hidden sm:w-[min(680px,92vw)] sm:max-w-none">
           <div className="flex min-h-full flex-col">
-            <SheetHeader className="border-b px-4 py-4 pr-12 sm:px-6">
-              <div className="flex flex-wrap items-start justify-between gap-2">
+            <SheetHeader className="border-b px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-6 sm:pt-4">
+              <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 text-left">
                   <SheetTitle className="truncate font-display text-xl">{current?.contact_name ?? "Réservation"}</SheetTitle>
                   <SheetDescription>{current?.reference ?? "—"} · {current?.trips?.title ?? booking?.trips?.title ?? "Voyage non renseigné"}</SheetDescription>
+                  {current?.status && <div className="mt-2"><StatusBadge value={current.status} label={bookingStatusLabel(current.status)} /></div>}
                 </div>
-                {current?.status && <StatusBadge value={current.status} label={bookingStatusLabel(current.status)} />}
+                <AdminOverlayCloseButton onClick={() => overlay.requestClose()} />
               </div>
             </SheetHeader>
 
@@ -138,7 +142,12 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
               </section>
 
               <div className="grid gap-2 sm:grid-cols-3">
-                <Button asChild className="min-h-11"><Link to={`/admin/bookings/${current?.id}`}><ExternalLink className="h-4 w-4" /> Ouvrir dossier</Link></Button>
+                <Button
+                  className="min-h-11"
+                  onClick={() => current?.id && overlay.requestClose(() => navigate(`/admin/bookings/${current.id}`))}
+                >
+                  <ExternalLink className="h-4 w-4" /> Ouvrir dossier
+                </Button>
                 <Button variant="outline" className="min-h-11" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" /> Modifier</Button>
                 <Button className="min-h-11 bg-emerald-700 hover:bg-emerald-800" onClick={() => setPaymentOpen(true)}><CreditCard className="h-4 w-4" /> Ajouter paiement</Button>
               </div>
