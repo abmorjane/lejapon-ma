@@ -53,6 +53,8 @@ function Harness() {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
   window.history.replaceState({}, "", "/admin/bookings");
 });
 
@@ -65,6 +67,8 @@ describe("BookingQuickViewSheet", () => {
     render(<BrowserRouter><Harness /></BrowserRouter>);
     const close = await screen.findByRole("button", { name: "Fermer" });
     expect(close).toHaveClass("min-h-11");
+    expect(screen.getByTestId("booking-quick-view-header")).toHaveClass("sticky", "top-0", "z-40");
+    expect(screen.getByTestId("booking-quick-view-header").className).toContain("safe-area-inset-top");
     await waitFor(() => expect(window.history.state?.[OVERLAY_HISTORY_STATE_KEY]).toHaveLength(1));
 
     act(() => {
@@ -87,5 +91,17 @@ describe("BookingQuickViewSheet", () => {
 
     expect(await screen.findByText("Dossier réservation")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/admin/bookings/booking-1");
+  });
+
+  it("ferme immédiatement avec le bouton visible sans dépendre du retour navigateur", async () => {
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    render(<BrowserRouter><Harness /></BrowserRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Fermer" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Liste réservations")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/admin/bookings");
+    await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
   });
 });

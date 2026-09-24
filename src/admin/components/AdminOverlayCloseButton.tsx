@@ -14,7 +14,7 @@ export function AdminOverlayCloseButton({ onClick, className }: Props) {
       size="sm"
       variant="outline"
       onClick={onClick}
-      className={cn("min-h-11 shrink-0 gap-1.5 rounded-full px-3", className)}
+      className={cn("relative z-20 min-h-11 shrink-0 touch-manipulation gap-1.5 rounded-full px-3", className)}
       aria-label="Fermer"
     >
       <X className="h-4 w-4" />
@@ -22,4 +22,3 @@ export function AdminOverlayCloseButton({ onClick, className }: Props) {
     </Button>
   );
 }
-

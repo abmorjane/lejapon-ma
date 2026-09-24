@@ -98,14 +98,20 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
       <Sheet open={open} onOpenChange={overlay.handleOpenChange}>
         <SheetContent className="w-full max-w-none p-0 [&>button:last-child]:hidden sm:w-[min(680px,92vw)] sm:max-w-none">
           <div className="flex min-h-full flex-col">
-            <SheetHeader className="border-b px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))] sm:px-6 sm:pt-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 text-left">
-                  <SheetTitle className="truncate font-display text-xl">{current?.contact_name ?? "Réservation"}</SheetTitle>
-                  <SheetDescription>{current?.reference ?? "—"} · {current?.trips?.title ?? booking?.trips?.title ?? "Voyage non renseigné"}</SheetDescription>
-                  {current?.status && <div className="mt-2"><StatusBadge value={current.status} label={bookingStatusLabel(current.status)} /></div>}
-                </div>
-                <AdminOverlayCloseButton onClick={() => overlay.requestClose()} />
+            <SheetHeader
+              data-testid="booking-quick-view-header"
+              className="sticky top-0 z-40 border-b bg-background px-4 pb-4 pt-[calc(0.75rem+env(safe-area-inset-top))] shadow-sm sm:px-6 sm:pt-4"
+            >
+              <div className="flex min-h-11 items-center justify-between gap-3">
+                <AdminOverlayCloseButton
+                  onClick={() => onOpenChange(false)}
+                  className="border-foreground/20 bg-background font-semibold shadow-sm"
+                />
+                {current?.status && <StatusBadge value={current.status} label={bookingStatusLabel(current.status)} />}
+              </div>
+              <div className="min-w-0 pt-1 text-left">
+                <SheetTitle className="truncate font-display text-xl">{current?.contact_name ?? "Réservation"}</SheetTitle>
+                <SheetDescription>{current?.reference ?? "—"} · {current?.trips?.title ?? booking?.trips?.title ?? "Voyage non renseigné"}</SheetDescription>
               </div>
             </SheetHeader>
 
