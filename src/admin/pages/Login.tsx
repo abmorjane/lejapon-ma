@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import logo from "@/assets/logo-lejapon.png";
+import { evaluateAdminRecaptcha } from "@/admin/lib/admin-login-recaptcha";
+import { isStandalonePwa } from "@/lib/pwa-display-mode";
 
 export default function AdminLogin() {
   const { t, language } = useSupplierTranslation();
@@ -23,7 +25,6 @@ export default function AdminLogin() {
     executeRecaptcha,
     verify: verifyRecaptcha,
     enabled: recaptchaEnabled,
-    bypass: recaptchaBypass,
     error: recaptchaError,
   } = useRecaptcha();
 
@@ -35,36 +36,23 @@ export default function AdminLogin() {
     e.preventDefault();
     setBusy(true);
     try {
-      const action = mode === "login" ? "login" : "signup";
-      const hostname = window.location.hostname;
-      const isLocalDev = import.meta.env.DEV || hostname === "localhost" || hostname === "127.0.0.1";
-
-      if (recaptchaEnabled) {
-        if (recaptchaError && !isLocalDev && !recaptchaBypass) {
-          throw new Error(t("Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA."));
-        }
-
-        let token = "";
-        try {
-          token = await executeRecaptcha(action);
-        } catch (err) {
-          if (isLocalDev || recaptchaBypass) {
-            console.warn("[admin-login] reCAPTCHA indisponible en développement, connexion non bloquée.", err);
-          } else {
-            throw new Error(t("Configuration reCAPTCHA indisponible en production. Vérifiez les clés reCAPTCHA."));
-          }
-        }
-
-        if (token) {
-          const check = await verifyRecaptcha(token, action);
-          if (!check.ok) {
-            if (isLocalDev || recaptchaBypass) {
-              console.warn("[admin-login] reCAPTCHA refusé en développement, connexion non bloquée.", check);
-            } else {
-              throw new Error(t("Vérification anti-spam refusée. Vérifiez la configuration reCAPTCHA."));
-            }
-          }
-        }
+      const captchaGate = await evaluateAdminRecaptcha({
+        mode,
+        enabled: recaptchaEnabled,
+        initializationError: recaptchaError,
+        execute: executeRecaptcha,
+        verify: verifyRecaptcha,
+      });
+      if (!captchaGate.allowed) {
+        throw new Error(captchaGate.technicalUnavailable
+          ? t("Configuration reCAPTCHA indisponible. Réessayez dans quelques instants.")
+          : t("Vérification anti-spam refusée. Veuillez réessayer."));
+      }
+      if (mode === "login" && captchaGate.technicalUnavailable) {
+        console.warn("[admin-login] recaptcha unavailable, continuing password login", {
+          reason: captchaGate.reason,
+          standalone: isStandalonePwa(),
+        });
       }
 
       if (mode === "login") {

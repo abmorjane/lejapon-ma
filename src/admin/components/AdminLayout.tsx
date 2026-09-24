@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Plane, CalendarCheck, Sparkles, Users, FileText, Wallet, Banknote,
@@ -25,6 +25,7 @@ type AdminNavGroup = { id: NavGroupId; label: string; icon: LucideIcon; items: A
 
 const ADMIN_NAV_STATE_KEY = "lejapon.admin.nav.openGroups";
 const ADMIN_LAST_PAGE_KEY = "lejapon.admin.lastPage";
+export const ADMIN_SIDEBAR_SCROLL_KEY = "lejapon.admin.sidebar.scrollTop";
 
 const navGroups: AdminNavGroup[] = [
   {
@@ -143,10 +144,17 @@ const PlatformVersionBadge = ({ compact = false }: { compact?: boolean }) => (
   </div>
 );
 
+export const AdminContentFallback = () => (
+  <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground" data-testid="admin-content-fallback">
+    Chargement du contenu…
+  </div>
+);
+
 export const AdminLayout = ({ children }: { children?: ReactNode }) => {
   const { user, isStaff, isSupplierOnly, loading, signOut, roles, can } = useAuth();
   const loc = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const desktopSidebarScrollRef = useRef<HTMLElement | null>(null);
   const [theme, setTheme] = useState<AdminThemeId>(() => readAdminTheme());
   const [pushBusy, setPushBusy] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
@@ -190,6 +198,27 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
       // Non-critical navigation preference only.
     }
   }, [openGroups]);
+
+  useEffect(() => {
+    const sidebar = desktopSidebarScrollRef.current;
+    if (!sidebar) return;
+    try {
+      const stored = Number(window.sessionStorage.getItem(ADMIN_SIDEBAR_SCROLL_KEY));
+      if (Number.isFinite(stored) && stored > 0) sidebar.scrollTop = stored;
+    } catch {
+      // Scroll restoration is a non-critical navigation convenience.
+    }
+  }, [loading, user]);
+
+  const rememberSidebarScroll = () => {
+    const sidebar = desktopSidebarScrollRef.current;
+    if (!sidebar) return;
+    try {
+      window.sessionStorage.setItem(ADMIN_SIDEBAR_SCROLL_KEY, String(sidebar.scrollTop));
+    } catch {
+      // Ignore unavailable sessionStorage (private browsing / embedded webviews).
+    }
+  };
 
   const visibleGroups = useMemo(() => navGroups
     .map((group) => ({ ...group, items: group.items.filter((item) => can(item.module)) }))
@@ -239,7 +268,7 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
     setOpenGroups((current) => ({ ...current, [id]: !current[id] }));
   };
 
-  const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => (
+  const renderSidebarBody = (onNavigate?: () => void, scrollRef?: typeof desktopSidebarScrollRef) => (
     <>
       <div className="admin-sidebar-header p-5 border-b">
         <NavLink to="/" className="flex items-center gap-2" onClick={onNavigate}>
@@ -247,12 +276,12 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
           <span className="admin-sidebar-kicker text-xs font-medium">/ admin</span>
         </NavLink>
       </div>
-      <nav className="flex-1 overflow-y-auto p-3">
+      <nav ref={scrollRef} onScroll={scrollRef ? rememberSidebarScroll : undefined} className="flex-1 overflow-y-auto p-3" data-testid={scrollRef ? "admin-sidebar-scroll" : undefined}>
         <div className="space-y-3">
           {visibleGroups.map((group) => {
             const GroupIcon = group.icon;
             const active = group.items.some(isItemActive);
-            const isOpen = openGroups[group.id] ?? active;
+            const isOpen = active || (openGroups[group.id] ?? false);
             return (
               <div key={group.id} className="space-y-1">
                 <button
@@ -324,13 +353,13 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
     <div className="admin-mobile-shell admin-shell min-h-screen flex" data-admin-theme={theme}>
       {/* Desktop sidebar */}
       <aside className="admin-sidebar hidden lg:flex w-64 border-r flex-col sticky top-0 h-screen">
-        <SidebarBody />
+        {renderSidebarBody(undefined, desktopSidebarScrollRef)}
       </aside>
 
       {/* Mobile drawer */}
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent side="left" className="admin-sidebar p-0 w-72 flex flex-col" data-admin-theme={theme}>
-          <SidebarBody onNavigate={() => setMobileOpen(false)} />
+          {renderSidebarBody(() => setMobileOpen(false))}
         </SheetContent>
       </Sheet>
 
@@ -371,7 +400,9 @@ export const AdminLayout = ({ children }: { children?: ReactNode }) => {
 
         <div className={cn("admin-content w-full max-w-7xl mx-auto px-3 py-4 pb-28 sm:p-6", isPremium ? "lg:p-8" : "lg:p-10")}>
           <AdminQuickActionBar />
-          {children ?? <Outlet />}
+          <Suspense fallback={<AdminContentFallback />}>
+            {children ?? <Outlet />}
+          </Suspense>
         </div>
       </main>
 

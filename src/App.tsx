@@ -189,6 +189,7 @@ const AppRoutes = () => {
     .filter(Boolean);
 
   return (
+    <>
     <Suspense fallback={<RouteFallback />}>
     <Routes>
       <Route path="/agency/login" element={<AgencyLogin />} />
@@ -409,8 +410,9 @@ const AppRoutes = () => {
         </Route>
       </Route>
     </Routes>
-    <PWAInstallPrompt />
     </Suspense>
+    <PWAInstallPrompt />
+    </>
   );
 };
 
