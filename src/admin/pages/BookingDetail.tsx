@@ -53,6 +53,7 @@ import { publicHotelLabel, publicRoomLabel } from "@/lib/booking-options";
 import { bookingStatusLabel } from "@/admin/lib/booking-status";
 import { useOverlayHistory } from "@/hooks/useOverlayHistory";
 import { AdminOverlayCloseButton } from "@/admin/components/AdminOverlayCloseButton";
+import { displayableEmail } from "@/lib/contact-values";
 
 const FINANCIAL_DOCUMENT_TYPES = new Set(["quote", "receipt", "invoice", "payment", "financial"]);
 
@@ -1290,7 +1291,8 @@ export default function BookingDetail() {
   };
 
   const clientPortalInvitationMailto = () => {
-    if (!b?.contact_email) return toast.error("Email client absent.");
+    const contactEmail = displayableEmail(b?.contact_email);
+    if (!contactEmail) return toast.error("Email client absent.");
     const loginUrl = "https://www.lejapon.ma/espace-voyage/login";
     const subject = `Votre espace voyage LeJapon.ma est prêt`;
     const body = [
@@ -1308,12 +1310,12 @@ export default function BookingDetail() {
       "",
       "L'équipe LeJapon.ma",
     ].filter(Boolean).join("\n");
-    window.location.href = `mailto:${encodeURIComponent(b.contact_email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = `mailto:${encodeURIComponent(contactEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
 
   const sendClientPortalAccess = async () => {
     if (!b?.id) return toast.error("Réservation introuvable.");
-    if (!b?.contact_email) return toast.error("Email client absent.");
+    if (!displayableEmail(b?.contact_email)) return toast.error("Email client absent.");
     setBusy(true);
     try {
       const { data, error } = await supabase.functions.invoke("send-admin-notification", {
@@ -1472,7 +1474,8 @@ export default function BookingDetail() {
   const flightIsFinalized = ["reserved", "partially_ticketed", "ticketed", "delivered"].includes(flightStatus);
   const flightFieldsReadOnly = flightStatus === "delivered" && !flightEditMode;
   const flightInputDisabled = flightBusy || !canEdit || flightFieldsReadOnly;
-  const contactDetails = [b.contact_email, b.contact_phone].filter((value) => String(value ?? "").trim());
+  const contactDetails = [displayableEmail(b.contact_email), b.contact_phone]
+    .filter((value) => String(value ?? "").trim());
   const tripDateRange = formatTripDateRange(b.trips?.start_date, b.trips?.end_date);
   const openFlightPanel = () => {
     setFlightAdvancedOpen(false);

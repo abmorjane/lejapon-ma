@@ -33,14 +33,15 @@ export const resolveBookingTripUnitPrice = ({
   const stored = numberOrNull(metadata.trip_unit_price_per_person_mad);
   if (stored !== null && stored >= 0) return stored;
 
-  const catalogPrice = numberOrNull(trip?.base_price_mad);
-  if (catalogPrice !== null && catalogPrice >= 0) return catalogPrice;
-
   const pax = bookingPaxCount(booking);
-  if (pax > 0) {
-    const derived = (Number(booking?.total_amount_mad || 0) - bookingExtrasTotal(extras)) / pax;
+  const enteredTotal = numberOrNull(booking?.total_amount_mad);
+  if (pax > 0 && enteredTotal !== null && enteredTotal > 0) {
+    const derived = (enteredTotal - bookingExtrasTotal(extras)) / pax;
     if (Number.isFinite(derived) && derived >= 0) return derived;
   }
+
+  const catalogPrice = numberOrNull(trip?.base_price_mad);
+  if (catalogPrice !== null && catalogPrice >= 0) return catalogPrice;
 
   return 0;
 };

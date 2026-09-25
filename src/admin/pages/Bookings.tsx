@@ -50,6 +50,7 @@ import {
 } from "@/lib/quote-adjustments";
 import { downloadBytes, generateQuotePdf, generateReceiptPdf } from "@/lib/booking-pdfs";
 import { tripWorkspacePath } from "@/admin/lib/trip-workspace";
+import { displayableEmail } from "@/lib/contact-values";
 
 type DbClient = { from: (table: string) => any };
 const db = supabase as unknown as DbClient;
@@ -1229,7 +1230,7 @@ export default function Bookings() {
                   </div>
                 </div>
                 <div onClick={(event) => event.stopPropagation()}>
-                  <QuickActions phone={b.contact_phone} email={b.contact_email} compact className="mt-3" />
+                  <QuickActions phone={b.contact_phone} email={displayableEmail(b.contact_email)} compact className="mt-3" />
                 </div>
               </summary>
               <div className="grid grid-cols-2 gap-3 border-t border-border bg-muted/20 p-4 text-sm">
@@ -1367,7 +1368,7 @@ export default function Bookings() {
                       </div>
                     </td>
                     <td className="p-4">
-                      <p>{b.contact_email || "—"}</p>
+                      <p>{displayableEmail(b.contact_email) || "—"}</p>
                       <p className="text-xs text-muted-foreground">{b.contact_phone || "—"}</p>
                     </td>
                     <td className="p-4">{b.trips?.title ?? "—"}</td>

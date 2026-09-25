@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { fmtMAD } from "@/lib/format";
 import { PAYMENT_METHOD_OPTIONS, normalisePaymentMethod } from "@/lib/payment-methods";
-import { quoteAdjustmentsFromBooking, quoteTotalWithAdjustments } from "@/lib/quote-adjustments";
+import { calculateCommercialDocumentTotals } from "@/lib/commercial-documents";
 import { useOverlayHistory } from "@/hooks/useOverlayHistory";
 
 type Props = {
@@ -47,7 +47,7 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: P
   const loadBookings = async () => {
     let query = (supabase as any)
       .from("bookings")
-      .select("id,reference,contact_name,contact_email,contact_phone,client_id,total_amount_mad,paid_amount_mad,quote_adjustments,metadata,status,created_at,trips:trip_id(title,season,start_date)");
+      .select("id,reference,contact_name,contact_email,contact_phone,client_id,num_adults,num_children,total_amount_mad,paid_amount_mad,quote_adjustments,metadata,status,created_at,trips:trip_id(title,season,start_date,base_price_mad),booking_extras(name_snapshot,qty,unit_price_mad),payments(amount_mad,status)");
     query = bookingId
       ? query.eq("id", bookingId)
       : query.order("created_at", { ascending: false }).limit(250);
@@ -80,9 +80,14 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: P
   }, [bookings, query]);
 
   const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId) ?? null;
-  const selectedBookingTotal = selectedBooking
-    ? quoteTotalWithAdjustments(Number(selectedBooking.total_amount_mad || 0), quoteAdjustmentsFromBooking(selectedBooking))
-    : 0;
+  const selectedBookingTotals = selectedBooking
+    ? calculateCommercialDocumentTotals({
+      booking: selectedBooking,
+      trip: selectedBooking.trips,
+      extras: selectedBooking.booking_extras ?? [],
+      payments: selectedBooking.payments ?? [],
+    })
+    : null;
 
   const reset = () => {
     setQuery("");
@@ -187,11 +192,15 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: P
               </SelectTrigger>
               <SelectContent>
                 {filteredBookings.map((booking) => {
-                  const total = quoteTotalWithAdjustments(Number(booking.total_amount_mad || 0), quoteAdjustmentsFromBooking(booking));
-                  const remaining = total - Number(booking.paid_amount_mad || 0);
+                  const totals = calculateCommercialDocumentTotals({
+                    booking,
+                    trip: booking.trips,
+                    extras: booking.booking_extras ?? [],
+                    payments: booking.payments ?? [],
+                  });
                   return (
                     <SelectItem key={booking.id} value={booking.id}>
-                      {booking.reference} — {booking.contact_name} — {booking.trips?.title || "Voyage"} · reste {fmtMAD(Math.max(0, remaining))}
+                      {booking.reference} — {booking.contact_name} — {booking.trips?.title || "Voyage"} · reste {fmtMAD(totals.remainingAmount)}
                     </SelectItem>
                   );
                 })}
@@ -200,16 +209,16 @@ export function AdminPaymentDialog({ open, onOpenChange, onSaved, bookingId }: P
             {selectedBooking && (
               <div className="mt-2 rounded-lg bg-muted p-3 text-xs text-muted-foreground">
                 <p className="font-medium text-foreground">{selectedBooking.contact_name} · {selectedBooking.reference}</p>
-                <p>{selectedBooking.trips?.title || "Voyage non renseigné"} · payé {fmtMAD(selectedBooking.paid_amount_mad)} / {fmtMAD(selectedBooking.total_amount_mad)}</p>
+                <p>{selectedBooking.trips?.title || "Voyage non renseigné"} · payé {fmtMAD(selectedBookingTotals?.paidAmount)} / {fmtMAD(selectedBookingTotals?.totalTTC)}</p>
               </div>
             )}
           </div>}
 
-          {bookingId && selectedBooking && (
+          {bookingId && selectedBookingTotals && (
             <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-muted/30 p-3 text-sm">
-              <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">{fmtMAD(selectedBookingTotal)}</p></div>
-              <div><p className="text-xs text-muted-foreground">Déjà payé</p><p className="font-semibold text-emerald-700">{fmtMAD(selectedBooking.paid_amount_mad)}</p></div>
-              <div><p className="text-xs text-muted-foreground">Reste</p><p className="font-semibold text-orange-700">{fmtMAD(Math.max(0, selectedBookingTotal - Number(selectedBooking.paid_amount_mad || 0)))}</p></div>
+              <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">{fmtMAD(selectedBookingTotals.totalTTC)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Déjà payé</p><p className="font-semibold text-emerald-700">{fmtMAD(selectedBookingTotals.paidAmount)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Reste</p><p className="font-semibold text-orange-700">{fmtMAD(selectedBookingTotals.remainingAmount)}</p></div>
             </div>
           )}
 

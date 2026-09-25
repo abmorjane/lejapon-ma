@@ -62,13 +62,6 @@ const numberOrZero = (value: unknown) => {
   return Number.isFinite(next) ? next : 0;
 };
 
-const hasStoredTripUnitPrice = (booking: any) => {
-  const metadata = bookingMetadata(booking);
-  const direct = Number(booking?.trip_unit_price_per_person_mad);
-  const stored = Number(metadata.trip_unit_price_per_person_mad);
-  return Number.isFinite(direct) || Number.isFinite(stored);
-};
-
 const readDepositConfig = (booking: any, pax: number) => {
   const metadata = bookingMetadata(booking);
   const rawType = metadata.deposit_type ?? booking?.deposit_type;
@@ -159,12 +152,8 @@ export function calculateCommercialDocumentTotals({
   const pax = Math.max(bookingPaxCount(booking), 1);
   const extraRows = extras ?? [];
   const extrasTotal = bookingExtrasTotal(extraRows);
-  const explicitTripUnit = hasStoredTripUnitPrice(booking);
   const resolvedUnit = resolveBookingTripUnitPrice({ booking, trip, extras: extraRows });
-  const enteredTotal = numberOrZero(booking?.total_amount_mad);
-  const tripUnitPrice = explicitTripUnit
-    ? resolvedUnit
-    : (enteredTotal > 0 ? enteredTotal / pax : resolvedUnit);
+  const tripUnitPrice = resolvedUnit;
   const tripTotal = Math.max(0, Math.round(tripUnitPrice * pax));
 
   const baseLines: CommercialLine[] = [

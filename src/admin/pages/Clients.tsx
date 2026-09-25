@@ -32,6 +32,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { mergeClientBookingRelations } from "@/admin/lib/client-booking-relations";
 
 const empty = {
   full_name: "", email: "", phone: "", city: "", country: "Maroc", source: "",
@@ -450,7 +451,21 @@ export default function Clients() {
     ]);
     setNotes(n ?? []);
     setRewards((r as any) ?? []);
-    const bookingRows = (h as any) ?? [];
+    const ownerBookingRows = (h as any) ?? [];
+    const participantBookingIds = Array.from(new Set(
+      (participantResult.data ?? []).map((participant: any) => participant.booking_id).filter(Boolean)
+    ));
+    let participantBookingRows: any[] = [];
+    if (participantBookingIds.length) {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("id, reference, status, total_amount_mad, paid_amount_mad, created_at, trip_id, trips:trip_id(title, season, start_date, end_date), booking_extras(name_snapshot, qty)")
+        .in("id", participantBookingIds)
+        .order("created_at", { ascending: false });
+      if (error) toast.error(`Réservations voyageur indisponibles : ${error.message}`);
+      participantBookingRows = data ?? [];
+    }
+    const bookingRows = mergeClientBookingRelations(ownerBookingRows, participantBookingRows);
     setHistory(bookingRows);
     const bookingIds = bookingRows.map((booking: any) => booking.id);
     if (bookingIds.length) {
@@ -1173,7 +1188,12 @@ export default function Clients() {
                       <Link key={h.id} to={`/admin/bookings/${h.id}`} className="block rounded-lg bg-muted p-3 text-xs transition-colors hover:bg-muted/70">
                         <div className="flex items-center justify-between gap-2">
                           <p className="font-medium">{tripTitle}{start ? ` — ${start}` : ""}</p>
-                          <span className="text-[10px] uppercase text-muted-foreground">{h.status}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              {h.crm_relationship === "voyageur" ? "Voyageur" : "Responsable"}
+                            </span>
+                            <span className="text-[10px] uppercase text-muted-foreground">{h.status}</span>
+                          </div>
                         </div>
                         <p className="text-muted-foreground mt-1">
                           {fmtMAD(h.paid_amount_mad)} payés / {fmtMAD(h.total_amount_mad)}

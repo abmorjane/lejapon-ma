@@ -7,17 +7,31 @@ import { BookingQuickViewSheet } from "./BookingQuickViewSheet";
 
 const booking = {
   id: "booking-1",
-  reference: "LJ-TEST",
+  reference: "LJ-9927EE",
   contact_name: "Client Test",
   status: "confirmed",
   num_adults: 2,
   num_children: 0,
-  total_amount_mad: 30_000,
-  paid_amount_mad: 10_000,
+  total_amount_mad: 116_400,
+  paid_amount_mad: 40_000,
+  metadata: { trip_unit_price_per_person_mad: 58_200 },
+  quote_adjustments: [{
+    type: "discount",
+    label: "Carte SIM offerte",
+    amount: 800,
+    calculation_type: "fixed",
+    visible_on_quote: true,
+  }],
   formula: "modern_hotel",
   room_type: "double",
-  trips: { title: "Japon test" },
+  trips: { title: "Japon test", base_price_mad: 58_200 },
 };
+
+const extras = [
+  { id: "extra-1", name_snapshot: "Tokyo Teamlab Planet", qty: 2, unit_price_mad: 350 },
+  { id: "extra-2", name_snapshot: "Cérémonie de thé", qty: 2, unit_price_mad: 500 },
+  { id: "extra-3", name_snapshot: "Carte SIM", qty: 1, unit_price_mad: 700 },
+];
 
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
@@ -25,7 +39,14 @@ vi.mock("@/integrations/supabase/client", () => ({
       select: () => ({
         eq: () => table === "bookings"
           ? { maybeSingle: async () => ({ data: booking, error: null }) }
-          : Promise.resolve({ data: [], error: null }),
+          : Promise.resolve({
+            data: table === "booking_extras"
+              ? extras
+              : table === "payments"
+                ? [{ amount_mad: 40_000, status: "received" }]
+                : [],
+            error: null,
+          }),
       }),
     }),
   },
@@ -63,6 +84,14 @@ afterEach(() => {
 });
 
 describe("BookingQuickViewSheet", () => {
+  it("affiche le total commercial canonique avec extras et remise", async () => {
+    render(<BrowserRouter><Harness /></BrowserRouter>);
+
+    expect(await screen.findByText("118 000 MAD")).toBeInTheDocument();
+    expect(screen.getByText("40 000 MAD")).toBeInTheDocument();
+    expect(screen.getByText("78 000 MAD")).toBeInTheDocument();
+  });
+
   it("affiche une fermeture tactile et se ferme sur popstate sans quitter la liste", async () => {
     render(<BrowserRouter><Harness /></BrowserRouter>);
     const close = await screen.findByRole("button", { name: "Fermer" });

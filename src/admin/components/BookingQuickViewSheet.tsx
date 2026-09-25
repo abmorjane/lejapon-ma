@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { fmtMAD } from "@/lib/format";
 import { publicHotelLabel, publicRoomLabel } from "@/lib/booking-options";
-import { quoteAdjustmentsFromBooking, quoteTotalWithAdjustments } from "@/lib/quote-adjustments";
+import { calculateCommercialDocumentTotals } from "@/lib/commercial-documents";
 import { StatusBadge } from "./StatusBadge";
 import { EditBookingDialog } from "./EditBookingDialog";
 import { AdminPaymentDialog } from "./AdminPaymentDialog";
@@ -30,6 +30,7 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
   const navigate = useNavigate();
   const [detail, setDetail] = useState<any>(null);
   const [extras, setExtras] = useState<any[]>([]);
+  const [payments, setPayments] = useState<any[] | null>(null);
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -39,9 +40,10 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
   const load = async () => {
     if (!booking?.id) return;
     setLoading(true);
-    const [{ data: bookingRow, error }, { data: extraRows }] = await Promise.all([
-      supabase.from("bookings").select("*,trips(title,season,start_date,end_date)").eq("id", booking.id).maybeSingle(),
+    const [{ data: bookingRow, error }, { data: extraRows }, { data: paymentRows, error: paymentsError }] = await Promise.all([
+      supabase.from("bookings").select("*,trips(title,season,start_date,end_date,base_price_mad)").eq("id", booking.id).maybeSingle(),
       supabase.from("booking_extras").select("*").eq("booking_id", booking.id),
+      supabase.from("payments").select("amount_mad,status").eq("booking_id", booking.id),
     ]);
     if (error || !bookingRow) {
       toast.error(error?.message ?? "Impossible de charger la réservation.");
@@ -50,6 +52,7 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
     }
     setDetail(bookingRow);
     setExtras(extraRows ?? []);
+    setPayments(paymentsError ? null : (paymentRows ?? []));
 
     const { data: checklists } = await (supabase as any)
       .from("operation_checklists")
@@ -86,8 +89,12 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
 
   const current = detail ?? booking;
   const travelers = Number(current?.num_adults || 0) + Number(current?.num_children || 0);
-  const quoteTotal = current ? quoteTotalWithAdjustments(Number(current.total_amount_mad || 0), quoteAdjustmentsFromBooking(current)) : 0;
-  const remaining = Math.max(0, quoteTotal - Number(current?.paid_amount_mad || 0));
+  const commercialTotals = current ? calculateCommercialDocumentTotals({
+    booking: current,
+    trip: current.trips,
+    extras,
+    payments,
+  }) : null;
   const overdue = tasks.filter(overdueTask).length;
   const critical = tasks.filter((item) => activeTask(item) && item.priority === "critical").length;
   const hotel = current ? publicHotelLabel(current.formula) : "—";
@@ -133,9 +140,9 @@ export function BookingQuickViewSheet({ booking, open, onOpenChange, onChanged }
               </section>
 
               <section className="grid grid-cols-3 gap-2 rounded-2xl border border-border p-3 text-sm">
-                <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">{fmtMAD(quoteTotal)}</p></div>
-                <div><p className="text-xs text-muted-foreground">Payé</p><p className="font-semibold text-emerald-700">{fmtMAD(current?.paid_amount_mad)}</p></div>
-                <div><p className="text-xs text-muted-foreground">Reste</p><p className="font-semibold text-orange-700">{fmtMAD(remaining)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">{fmtMAD(commercialTotals?.totalTTC)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Payé</p><p className="font-semibold text-emerald-700">{fmtMAD(commercialTotals?.paidAmount)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Reste</p><p className="font-semibold text-orange-700">{fmtMAD(commercialTotals?.remainingAmount)}</p></div>
               </section>
 
               <section>
