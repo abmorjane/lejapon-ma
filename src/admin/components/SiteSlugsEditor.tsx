@@ -2,10 +2,15 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
-import { invalidateRouteSlugs, type RouteSlug } from "@/hooks/useRouteSlugs";
+import {
+  canonicalRouteSlug,
+  invalidateRouteSlugs,
+  isRouteSlugLocked,
+  normalizeRouteSlug,
+  type RouteSlug,
+} from "@/hooks/useRouteSlugs";
 
 const RESERVED = new Set(["admin", "supplier", "api", "auth", "blog", "lovable"]);
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -20,15 +25,19 @@ export function SiteSlugsEditor() {
       .from("route_slugs")
       .select("*")
       .order("sort_order");
-    setRows((data ?? []) as RouteSlug[]);
+    const normalized = ((data ?? []) as RouteSlug[]).map(normalizeRouteSlug);
+    setRows(normalized);
     const d: Record<string, string> = {};
-    (data ?? []).forEach((r: any) => { d[r.route_key] = r.slug; });
+    normalized.forEach((r) => { d[r.route_key] = r.slug; });
     setDrafts(d);
   };
 
   useEffect(() => { load(); }, []);
 
   const save = async (row: RouteSlug) => {
+    if (isRouteSlugLocked(row.route_key)) {
+      return toast.error(`L'URL /${canonicalRouteSlug(row.route_key)} est verrouillée pour le SEO.`);
+    }
     const next = (drafts[row.route_key] ?? "").trim().toLowerCase();
     if (!next) return toast.error("Le slug ne peut pas être vide.");
     if (!SLUG_RE.test(next)) return toast.error("Slug invalide (lettres minuscules, chiffres et tirets).");
@@ -58,7 +67,7 @@ export function SiteSlugsEditor() {
       <div className="p-4 border-b border-border">
         <h2 className="font-semibold text-base">Slugs des pages du site</h2>
         <p className="text-xs text-muted-foreground mt-1">
-          Modifiez l'URL publique de chaque page. Les anciennes URL sont automatiquement redirigées vers les nouvelles.
+          Les URL publiques canoniques sont verrouillées afin de rester cohérentes avec Apache, React et le sitemap.
         </p>
       </div>
       <table className="w-full text-sm">
@@ -72,6 +81,7 @@ export function SiteSlugsEditor() {
         </thead>
         <tbody className="divide-y divide-border">
           {rows.map((r) => {
+            const locked = isRouteSlugLocked(r.route_key);
             const draft = drafts[r.route_key] ?? r.slug;
             const dirty = draft !== r.slug;
             return (
@@ -83,12 +93,18 @@ export function SiteSlugsEditor() {
                       (par défaut : /{r.default_slug})
                     </span>
                   )}
+                  {locked && (
+                    <span className="ml-2 text-[10px] font-medium uppercase tracking-wide text-accent">
+                      URL SEO verrouillée
+                    </span>
+                  )}
                 </td>
                 <td className="p-4">
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">/</span>
                     <Input
                       value={draft}
+                      disabled={locked}
                       onChange={(e) =>
                         setDrafts((d) => ({ ...d, [r.route_key]: e.target.value }))
                       }
@@ -98,14 +114,14 @@ export function SiteSlugsEditor() {
                 </td>
                 <td className="p-4 font-mono text-xs text-muted-foreground">/{draft}</td>
                 <td className="p-4 text-right space-x-2">
-                  {draft !== r.default_slug && (
+                  {!locked && draft !== r.default_slug && (
                     <Button size="sm" variant="ghost" onClick={() => reset(r)} title="Réinitialiser au défaut">
                       <RotateCcw className="w-4 h-4" />
                     </Button>
                   )}
                   <Button
                     size="sm"
-                    disabled={!dirty || savingId === r.route_key}
+                    disabled={locked || !dirty || savingId === r.route_key}
                     onClick={() => save(r)}
                   >
                     <Save className="w-4 h-4" /> Enregistrer

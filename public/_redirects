@@ -1,24 +1,93 @@
-# Legacy WordPress taxonomy redirects with explicit SEO destinations.
-/tag/visa-japon/        /visa       301
-/tag/visa-japon         /visa       301
-/tag/voyage-japon/      /programme  301
-/tag/voyage-japon       /programme  301
-/tag/prix-japon/        /prix       301
-/tag/prix-japon         /prix       301
-/tag/blog/              /blog       301
-/tag/blog               /blog       301
-/tag/japon/             /blog       301
-/tag/japon              /blog       301
+# Legacy redirects (parity with Apache for non-Apache hosting)
+/prix                                      /reserver 301
+/inscription                               /reserver 301
+/paiement                                  /reserver 301
+/programme-2                               /voyages 301
+/extra-plans                               /experiences 301
+/extra-plans/*                             /experiences 301
+/hotels-avril                              /voyages 301
+/accueil-2                                 / 301
+/a2                                        /a-propos 301
+/accord-de-voyage                          /contact 301
+/accord-de-voyage-avril                    /contact 301
+/accord-de-voyage-2                        /contact 301
+/questionnaire-de-satisfaction             /contact 301
+/login-customizer                          /admin/login 301
+/demande-de-visa-pour-le-japon             /visa-japon-maroc 301
+/visa                                      /visa-japon-maroc 301
+/visa-japon                                /visa-japon-maroc 301
+/formulaire-visa                           /visa-japon-maroc 301
+/tag/visa-japon                            /visa-japon-maroc 301
+/tag/voyage-japon                          /programme 301
+/tag/prix-japon                            /reserver 301
+/tag/blog                                  /blog 301
+/tag/japon                                 /blog 301
+/culture-nippone                           /blog/culture-nipponne 301
+/les-meilleures-restaurant-a-faire-a-kyoto-au-japon /blog/les-meilleurs-restaurants-a-faire-a-kyoto-au-japon 301
+/top-activities-osaka                      /blog/top-activities-osaka 301
+/histoire-du-japon                         /blog/histoire-du-japon 301
+/apprendre-le-japonais                     /blog/apprendre-le-japonais 301
+/la-cuisine-japonaise-washoku              /blog/la-cuisine-japonaise-washoku 301
+/habiter-un-ryokan-a-kyoto                 /blog/habiter-un-ryokan-a-kyoto 301
+/quels-similitudes-entre-la-culture-japonaise-et-notre-culture-marocaine /blog/quels-similitudes-entre-la-culture-japonaise-et-notre-culture-marocaine 301
+/le-festival-des-bebes-sumos-en-pleurs-au-japon /blog/le-festival-des-bebes-sumos-en-pleurs-au-japon 301
+/decouvrez-lenchantement-de-kamakura-un-voyage-a-travers-le-temps-et-la-tranquillite /blog/decouvrez-lenchantement-de-kamakura-un-voyage-a-travers-le-temps-et-la-tranquillite 301
+/le-majestueux-mont-fuji-un-voyage-vers-le-pic-emblematique-du-japon /blog/le-majestueux-mont-fuji-un-voyage-vers-le-pic-emblematique-du-japon 301
+/plongez-dans-akihabara-le-pays-des-merveilles-electriques-de-tokyo /blog/plongez-dans-akihabara-le-pays-des-merveilles-electriques-de-tokyo 301
+/le-mystere-du-soleil-levant-une-aventure-de-casablanca-a-tokyo /blog/le-mystere-du-soleil-levant-une-aventure-de-casablanca-a-tokyo 301
+/les-japonais-se-tiennent-a-gauche-a-tokyo-et-a-droite-a-osaka-pourquoi-cette-difference /blog/les-japonais-se-tiennent-a-gauche-a-tokyo-et-a-droite-a-osaka-pourquoi-cette-difference 301
+/vabonun/2024/09/Programme.pdf.pdf          /programme 301
+/vabonun/2024/10/Programme-du-voyage-Novembre-2024-10_26-.pdf /programme 301
+/vabonun/2024/11/Programme-du-voyage-Avril-25.pdf /programme 301
+/vabonun/2025/04/Brochure_Programme_Juillet2025.pdf /programme 301
 
-# Old WordPress system/taxonomy URLs that should not resolve to the homepage.
-/wp-content/*           /410.html   410
-/wp-json/*              /410.html   410
-/feed/                  /410.html   410
-/feed                   /410.html   410
-/category/*             /410.html   410
-/author/*               /410.html   410
-/tag/*                  /410.html   410
+# Removed WordPress/system content
+/politique-de-confidentialite               /index.html 404
+/le-japon-abaisse-le-statut-du-covid-19-a-celui-dune-la-grippe-saisonniere /410.html 410
+/le-japon-des-restrictions-encore-plus-strictes-aux-frontieres-jusqua-fin-fevrier /410.html 410
+/cest-officiel-le-japon-rouvrira-ses-portes-le-10-juin-pour-98-pays-et-regions /410.html 410
+/wp-content/*                               /410.html 410
+/wp-json/*                                  /410.html 410
+/feed                                      /410.html 410
+/feed/*                                    /410.html 410
+/category/*                                /410.html 410
+/author/*                                  /410.html 410
+/tag/*                                     /410.html 410
+/vabonun/*                                 /410.html 410
 
-# React Router fallback.
-/accord-voyage/*       /index.html 200
-/*                       /index.html 200
+# Private React families
+/admin/*                                   /index.html 200
+/agency/*                                  /index.html 200
+/supplier/*                                /index.html 200
+/client/*                                  /index.html 200
+/espace-voyage/*                           /index.html 200
+/sales/*                                   /index.html 200
+/devis-fit/*                               /index.html 200
+/accord-voyage/*                           /index.html 200
+/unsubscribe/*                             /index.html 200
+/formulaire-visa/*                         /index.html 200
+
+# Public React routes
+/                                         /index.html 200
+/voyages                                  /index.html 200
+/reserver                                 /index.html 200
+/programme                                /index.html 200
+/visa-japon-maroc                         /index.html 200
+/experiences                              /index.html 200
+/hotels                                   /index.html 200
+/hotels/*                                 /index.html 200
+/a-propos                                 /index.html 200
+/blog                                     /index.html 200
+/blog/*                                   /index.html 200
+/en/blog                                  /index.html 200
+/en/blog/*                                /index.html 200
+/ar/blog                                  /index.html 200
+/ar/blog/*                                /index.html 200
+/contact                                  /index.html 200
+/devenir-partenaire                       /index.html 200
+/mon-voyage-questions-reponses            /index.html 200
+/en/faq                                   /index.html 200
+/ar/faq                                   /index.html 200
+
+# Unknown paths must not become soft 404s.
+/*                                         /index.html 404

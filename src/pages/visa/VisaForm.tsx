@@ -480,7 +480,7 @@ export default function VisaForm() {
 
   return (
     <div className="container-app py-10 max-w-5xl" data-clarity-mask="true">
-      <Seo title={`Demande de visa ${app.reference} — lejapon.ma`} description="Préparez votre formulaire de visa Japon." canonical={`${visaBase}/formulaire/${app.id}`} />
+      <Seo title={`Demande de visa ${app.reference} — lejapon.ma`} description="Préparez votre formulaire de visa Japon." canonical={`${visaBase}/formulaire/${app.id}`} noindex />
       <button onClick={() => nav(`${visaBase}/applications`)} className="text-sm text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1">
         <ArrowLeft className="w-4 h-4" /> Mes demandes
       </button>

@@ -15,7 +15,7 @@ import { setLang } from "@/i18n";
 import { AgencyProvider } from "@/agency/useAgencyContext";
 import { RequireActiveAgencyMember, RequireAgencyMember, RequireAgencyOnboarding } from "@/agency/components/AgencyGuards";
 import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from "@/components/LegacyRedirects";
-import { useRouteSlugs, DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
+import { DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
 import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
 import { initAnalytics, trackPageView } from "@/lib/analytics";
 import { installWebViewGuards } from "@/lib/webview-guards";
@@ -136,8 +136,9 @@ const RouteFallback = () => (
 );
 
 const VISA_CANONICAL_PATH = "/visa-japon-maroc";
+const routePath = (key: RouteKey) => `/${DEFAULT_SLUGS[key].slug}`;
 
-/** Redirect that preserves search params + hash so deep links like /reserver?trip=xxx work after route renames. */
+/** Client-side fallback for legacy aliases; Apache performs the canonical 301 in production. */
 const PreservingRedirect = ({ to }: { to: string }) => {
   const { search, hash } = useLocation();
   return <Navigate to={`${to}${search}${hash}`} replace />;
@@ -168,26 +169,6 @@ const AnalyticsRouteTracker = () => {
 };
 
 const AppRoutes = () => {
-  const slugs = useRouteSlugs();
-  const get = (k: RouteKey) => slugs?.[k]?.slug ?? DEFAULT_SLUGS[k].slug;
-
-  // Auto-redirect default slugs → current renamed slug (preserves SEO).
-  const renamedRedirects = (Object.keys(DEFAULT_SLUGS) as RouteKey[])
-    .filter((k) => k !== "visa")
-    .map((k) => {
-      const current = get(k);
-      const def = DEFAULT_SLUGS[k].slug;
-      if (current === def) return null;
-      return (
-        <Route
-          key={`renamed-${k}`}
-          path={`/${def}`}
-          element={<PreservingRedirect to={`/${current}`} />}
-        />
-      );
-    })
-    .filter(Boolean);
-
   return (
     <>
     <Suspense fallback={<RouteFallback />}>
@@ -241,21 +222,21 @@ const AppRoutes = () => {
       <Route path="/devis-fit/:token" element={<FitQuotePublic />} />
       <Route element={<SiteLayout />}>
         <Route path="/" element={<Index />} />
-        <Route path={`/${get("trips")}`} element={<Trips />} />
+        <Route path={routePath("trips")} element={<Trips />} />
         <Route path="/hotels" element={<Hotels />} />
         <Route path="/hotels/:slug" element={<Hotels />} />
-        <Route path={`/${get("experiences")}`} element={<Experiences />} />
-        <Route path={`/${get("about")}`} element={<About />} />
-        <Route path={`/${get("blog")}`} element={<Blog />} />
+        <Route path={routePath("experiences")} element={<Experiences />} />
+        <Route path={routePath("about")} element={<About />} />
+        <Route path={routePath("blog")} element={<Blog />} />
         <Route path="/blog/:slug" element={<BlogPost />} />
         <Route path="/en/blog" element={<LocalizedRoute lang="en"><Blog /></LocalizedRoute>} />
         <Route path="/en/blog/:slug" element={<LocalizedRoute lang="en"><BlogPost /></LocalizedRoute>} />
         <Route path="/ar/blog" element={<LocalizedRoute lang="ar"><Blog /></LocalizedRoute>} />
         <Route path="/ar/blog/:slug" element={<LocalizedRoute lang="ar"><BlogPost /></LocalizedRoute>} />
-        <Route path={`/${get("contact")}`} element={<Contact />} />
-        <Route path={`/${get("booking")}`} element={<Booking />} />
+        <Route path={routePath("contact")} element={<Contact />} />
+        <Route path={routePath("booking")} element={<Booking />} />
         <Route path="/accord-voyage/:token" element={<TravelAgreementPublic />} />
-        <Route path={`/${get("programme")}`} element={<ProgrammePage />} />
+        <Route path={routePath("programme")} element={<ProgrammePage />} />
         <Route path="/devenir-partenaire" element={<PartnerAcquisition />} />
         <Route path="/visa-japon-maroc" element={<VisaLogin />} />
         <Route path="/visa" element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
@@ -263,10 +244,10 @@ const AppRoutes = () => {
 
         {/* Legacy WordPress taxonomy/system URLs */}
         <Route path="/tag/visa-japon" element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
-        <Route path="/tag/voyage-japon" element={<PreservingRedirect to={`/${get("programme")}`} />} />
-        <Route path="/tag/prix-japon" element={<PreservingRedirect to="/prix" />} />
-        <Route path="/tag/blog" element={<PreservingRedirect to={`/${get("blog")}`} />} />
-        <Route path="/tag/japon" element={<PreservingRedirect to={`/${get("blog")}`} />} />
+        <Route path="/tag/voyage-japon" element={<PreservingRedirect to={routePath("programme")} />} />
+        <Route path="/tag/prix-japon" element={<PreservingRedirect to={routePath("booking")} />} />
+        <Route path="/tag/blog" element={<PreservingRedirect to={routePath("blog")} />} />
+        <Route path="/tag/japon" element={<PreservingRedirect to={routePath("blog")} />} />
         <Route path="/tag" element={<NotFound />} />
         <Route path="/tag/*" element={<NotFound />} />
         <Route path="/category" element={<NotFound />} />
@@ -285,17 +266,13 @@ const AppRoutes = () => {
         <Route path="/en/faq" element={<FaqPage lang="en" />} />
         <Route path="/ar/faq" element={<FaqPage lang="ar" />} />
 
-        {renamedRedirects}
-
         {/* Visa Japan module */}
-        {get("visa") !== "visa-japon-maroc" && (
-          <Route path={`/${get("visa")}`} element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
-        )}
-        <Route path={`/${get("visa")}/login`} element={<VisaLogin />} />
-        <Route path={`/${get("visa")}/applications`} element={<VisaList />} />
-        <Route path={`/${get("visa")}/formulaire`} element={<PreservingRedirect to={`/${get("visa")}/applications`} />} />
-        <Route path={`/${get("visa")}/formulaire/:id`} element={<VisaForm />} />
-        <Route path={`/${get("visa")}/:id`} element={<VisaForm />} />
+        <Route path={routePath("visa")} element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
+        <Route path={`${routePath("visa")}/login`} element={<VisaLogin />} />
+        <Route path={`${routePath("visa")}/applications`} element={<VisaList />} />
+        <Route path={`${routePath("visa")}/formulaire`} element={<PreservingRedirect to={`${routePath("visa")}/applications`} />} />
+        <Route path={`${routePath("visa")}/formulaire/:id`} element={<VisaForm />} />
+        <Route path={`${routePath("visa")}/:id`} element={<VisaForm />} />
 
         {/* Legacy WordPress URLs — preserve SEO equity */}
         <Route path="/programme-2" element={<LegacyStaticRedirect />} />
@@ -312,7 +289,6 @@ const AppRoutes = () => {
         <Route path="/accord-de-voyage-avril" element={<LegacyStaticRedirect />} />
         <Route path="/accord-de-voyage-2" element={<LegacyStaticRedirect />} />
         <Route path="/questionnaire-de-satisfaction" element={<LegacyStaticRedirect />} />
-        <Route path="/politique-de-confidentialite" element={<LegacyStaticRedirect />} />
 
         {/* Legacy article slugs → Journal */}
         <Route path="/culture-nippone" element={<LegacyArticleRedirect />} />
@@ -333,8 +309,6 @@ const AppRoutes = () => {
         <Route path="/le-japon-des-restrictions-encore-plus-strictes-aux-frontieres-jusqua-fin-fevrier" element={<LegacyArticleRedirect />} />
         <Route path="/cest-officiel-le-japon-rouvrira-ses-portes-le-10-juin-pour-98-pays-et-regions" element={<LegacyArticleRedirect />} />
 
-        {/* Article detail at root: /<slug> — must stay LAST inside SiteLayout */}
-        <Route path="/:slug" element={<BlogPost />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="/admin/login" element={<AdminLogin />} />

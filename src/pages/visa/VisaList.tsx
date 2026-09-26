@@ -92,7 +92,7 @@ export default function VisaList() {
 
   return (
     <div className="container-app py-12 max-w-4xl">
-      <Seo title="Demande de visa Japon — lejapon.ma" description="Préparez votre dossier de visa Japon en ligne. Formulaire numérique, génération PDF officielle et suivi par notre équipe." canonical={visaApplicationsPath} />
+      <Seo title="Demande de visa Japon — lejapon.ma" description="Préparez votre dossier de visa Japon en ligne. Formulaire numérique, génération PDF officielle et suivi par notre équipe." canonical={visaApplicationsPath} noindex />
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="font-display text-3xl md:text-4xl mb-2">Mes demandes de visa Japon</h1>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Seo } from "@/components/Seo";
 import NotFound from "./NotFound";
@@ -52,7 +52,9 @@ const parseCategories = (value: string | null): string[] =>
 
 const BlogPost = () => {
   const { t } = useTranslation();
+  const location = useLocation();
   const { slug } = useParams();
+  const isUntranslatedLocale = /^\/(?:en|ar)\/blog\//.test(location.pathname);
   const [post, setPost] = useState<Article | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -150,6 +152,7 @@ const BlogPost = () => {
         imageAlt={seoImageAlt}
         type="article"
         jsonLd={articleJsonLd}
+        robots={isUntranslatedLocale ? "noindex,follow" : "index,follow"}
       />
 
       {/* Hero */}

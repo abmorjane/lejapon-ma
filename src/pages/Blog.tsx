@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslatedTable } from "@/hooks/useTranslated";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Seo } from "@/components/Seo";
 import { supabase } from "@/integrations/supabase/client";
@@ -37,6 +37,8 @@ const parseCategories = (value: string | null): string[] =>
 
 const Blog = () => {
   const { t } = useTranslation();
+  const location = useLocation();
+  const isUntranslatedLocale = /^\/(?:en|ar)\/blog\/?$/.test(location.pathname);
   const [posts, setPosts] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -67,6 +69,7 @@ const Blog = () => {
         title={t("blog.seoTitle")}
         description={t("blog.seoDescription")}
         canonical="/blog"
+        robots={isUntranslatedLocale ? "noindex,follow" : "index,follow"}
       />
       <p className="eyebrow mb-4">{t("blog.eyebrow")}</p>
       <h1 className="font-display text-5xl md:text-7xl mb-16">{t("blog.title")}</h1>

@@ -1,4 +1,4 @@
-import { Navigate, useLocation, useParams } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 
 /**
  * Maps legacy WordPress URLs from lejapon.ma (pre-rebuild) to the new
@@ -8,13 +8,11 @@ import { Navigate, useLocation, useParams } from "react-router-dom";
 
 // Static one-to-one mappings
 const STATIC_MAP: Record<string, string> = {
-  "/programme": "/voyages",
   "/programme-2": "/voyages",
   "/prix": "/reserver",
   "/paiement": "/reserver",
   "/inscription": "/reserver",
   "/extra-plans": "/experiences",
-  "/hotels": "/voyages",
   "/hotels-avril": "/voyages",
   "/accueil-2": "/",
   "/a2": "/a-propos",
@@ -23,8 +21,12 @@ const STATIC_MAP: Record<string, string> = {
   "/accord-de-voyage-avril": "/contact",
   "/accord-de-voyage-2": "/contact",
   "/questionnaire-de-satisfaction": "/contact",
-  "/politique-de-confidentialite": "/a-propos",
   "/login-customizer": "/admin/login",
+};
+
+const LEGACY_ARTICLE_MAP: Record<string, string> = {
+  "culture-nippone": "culture-nipponne",
+  "les-meilleures-restaurant-a-faire-a-kyoto-au-japon": "les-meilleurs-restaurants-a-faire-a-kyoto-au-japon",
 };
 
 export const LegacyStaticRedirect = () => {
@@ -43,5 +45,6 @@ export const LegacyExtraRedirect = () => {
 export const LegacyArticleRedirect = () => {
   const { pathname } = useLocation();
   const slug = pathname.replace(/^\/+/, "").replace(/\/+$/, "");
-  return <Navigate to={slug ? `/blog/${slug}` : "/blog"} replace />;
+  const articleSlug = LEGACY_ARTICLE_MAP[slug] ?? slug;
+  return <Navigate to={articleSlug ? `/blog/${articleSlug}` : "/blog"} replace />;
 };

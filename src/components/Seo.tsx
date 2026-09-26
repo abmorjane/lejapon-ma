@@ -3,6 +3,16 @@ import { useLocation } from "react-router-dom";
 
 const SITE = "https://www.lejapon.ma";
 const DEFAULT_OG = "https://www.lejapon.ma/og-default.jpg";
+const CANONICAL_ALIASES: Record<string, string> = {
+  "/prix": "/reserver",
+  "/inscription": "/reserver",
+  "/paiement": "/reserver",
+  "/visa": "/visa-japon-maroc",
+  "/visa-japon": "/visa-japon-maroc",
+  "/formulaire-visa": "/visa-japon-maroc",
+};
+
+export type RobotsDirective = "index,follow" | "noindex,follow" | "noindex,nofollow";
 
 type SeoProps = {
   title: string;
@@ -18,6 +28,8 @@ type SeoProps = {
   jsonLd?: Record<string, unknown> | Record<string, unknown>[];
   /** noindex flag for utility pages */
   noindex?: boolean;
+  /** Explicit robots directive. Takes precedence over the legacy noindex flag. */
+  robots?: RobotsDirective;
 };
 
 const absoluteUrl = (value?: string | null) => {
@@ -27,6 +39,15 @@ const absoluteUrl = (value?: string | null) => {
   } catch {
     return DEFAULT_OG;
   }
+};
+
+const canonicalUrl = (value: string) => {
+  const url = new URL(value, SITE);
+  url.search = "";
+  url.hash = "";
+  const normalizedPath = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
+  url.pathname = CANONICAL_ALIASES[normalizedPath] ?? normalizedPath;
+  return url.toString();
 };
 
 const upsertMeta = (selector: string, attr: "name" | "property", key: string, content: string) => {
@@ -64,16 +85,18 @@ export const Seo = ({
   imageHeight = 630,
   jsonLd,
   noindex,
+  robots,
 }: SeoProps) => {
   const location = useLocation();
   const path = canonical ?? location.pathname;
-  const url = useMemo(() => absoluteUrl(path === "/" ? "/" : path), [path]);
+  const url = useMemo(() => canonicalUrl(path === "/" ? "/" : path), [path]);
   const absoluteImage = useMemo(() => absoluteUrl(image), [image]);
+  const robotsContent = robots ?? (noindex ? "noindex,nofollow" : "index,follow");
 
   useEffect(() => {
     document.title = title;
     upsertMeta('meta[name="description"]', "name", "description", description);
-    upsertMeta('meta[name="robots"]', "name", "robots", noindex ? "noindex,nofollow" : "index,follow");
+    upsertMeta('meta[name="robots"]', "name", "robots", robotsContent);
     upsertLink("canonical", url);
 
     upsertMeta('meta[property="og:title"]', "property", "og:title", title);
@@ -106,7 +129,7 @@ export const Seo = ({
         document.head.appendChild(s);
       });
     }
-  }, [title, description, url, absoluteImage, type, imageAlt, imageWidth, imageHeight, noindex, jsonLd]);
+  }, [title, description, url, absoluteImage, type, imageAlt, imageWidth, imageHeight, robotsContent, jsonLd]);
 
   return null;
 };

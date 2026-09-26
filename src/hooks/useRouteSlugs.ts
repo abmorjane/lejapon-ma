@@ -25,6 +25,24 @@ export const DEFAULT_SLUGS: Record<RouteKey, { label: string; slug: string }> = 
   visa:        { label: "Visa Japon",  slug: "formulaire-visa" },
 };
 
+/**
+ * Public SEO routes and the private visa base are intentionally immutable.
+ * Values stored in route_slugs are kept for backwards-compatible admin data,
+ * but they must never change a canonical URL at runtime.
+ */
+const LOCKED_ROUTE_KEYS = new Set<RouteKey>(Object.keys(DEFAULT_SLUGS) as RouteKey[]);
+
+export const isRouteSlugLocked = (key: string): key is RouteKey =>
+  LOCKED_ROUTE_KEYS.has(key as RouteKey);
+
+export const canonicalRouteSlug = (key: RouteKey): string => DEFAULT_SLUGS[key].slug;
+
+export const normalizeRouteSlug = (row: RouteSlug): RouteSlug => {
+  if (!isRouteSlugLocked(row.route_key)) return row;
+  const slug = canonicalRouteSlug(row.route_key);
+  return { ...row, slug, default_slug: slug, is_editable: false };
+};
+
 let cache: Record<RouteKey, RouteSlug> | null = null;
 let pending: Promise<Record<RouteKey, RouteSlug>> | null = null;
 const subscribers = new Set<(v: Record<RouteKey, RouteSlug>) => void>();
@@ -38,7 +56,7 @@ function makeFallback(): Record<RouteKey, RouteSlug> {
       label: DEFAULT_SLUGS[k].label,
       slug: DEFAULT_SLUGS[k].slug,
       default_slug: DEFAULT_SLUGS[k].slug,
-      is_editable: true,
+      is_editable: false,
       sort_order: ++i,
     };
   }
@@ -51,8 +69,9 @@ async function load(): Promise<Record<RouteKey, RouteSlug>> {
   pending = (async () => {
     const { data } = await supabase.from("route_slugs").select("*").order("sort_order");
     const map = makeFallback();
-    (data ?? []).forEach((r: any) => {
-      if (r.route_key in map) map[r.route_key as RouteKey] = r as RouteSlug;
+    (data ?? []).forEach((value) => {
+      const row = value as RouteSlug;
+      if (row.route_key in map) map[row.route_key as RouteKey] = normalizeRouteSlug(row);
     });
     cache = map;
     pending = null;
@@ -79,5 +98,6 @@ export function useRouteSlugs() {
 }
 
 export function pathFor(slugs: Record<RouteKey, RouteSlug> | null, key: RouteKey): string {
+  if (isRouteSlugLocked(key)) return "/" + canonicalRouteSlug(key);
   return "/" + (slugs?.[key]?.slug ?? DEFAULT_SLUGS[key].slug);
 }

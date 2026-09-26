@@ -83,7 +83,7 @@ export const Header = () => {
     { to: pathFor(slugs, "trips"), label: t("nav.price") },
     { to: pathFor(slugs, "programme"), label: t("nav.programme") },
     { to: pathFor(slugs, "blog"), label: t("nav.blog") },
-    { to: pathFor(slugs, "visa"), label: "Visa" },
+    { to: "/visa-japon-maroc", label: "Visa" },
     { to: pathFor(slugs, "contact"), label: t("nav.contact") },
   ];
 

@@ -1,40 +1,113 @@
 RewriteEngine On
 
-# Canonical production origin: HTTPS + www.
+ErrorDocument 404 /index.html
+ErrorDocument 410 /410.html
+
+# 1. Canonical production origin: HTTPS + www.
 RewriteCond %{HTTPS} !=on [OR]
 RewriteCond %{HTTP_HOST} !^www\.lejapon\.ma$ [NC]
 RewriteRule ^ https://www.lejapon.ma%{REQUEST_URI} [R=301,L]
 
-# Social crawlers do not reliably execute the React app before reading Open Graph tags.
-# Serve a lightweight HTML preview with article-specific meta tags, while keeping the
-# canonical URL on /blog/:slug and the normal SPA route for human visitors.
-RewriteCond %{HTTP_USER_AGENT} "(facebookexternalhit|Facebot|WhatsApp|Twitterbot|LinkedInBot|Slackbot|TelegramBot|Discordbot|Pinterest|SkypeUriPreview)" [NC]
-RewriteRule ^blog/([^/]+)/?$ https://nkovgpzspprmmhorwaxl.supabase.co/functions/v1/blog-social-preview?slug=$1 [R=302,L,NE]
-
-# Legacy WordPress taxonomy redirects with explicit SEO destinations.
-RewriteRule ^tag/visa-japon/?$ /visa-japon-maroc [R=301,L]
-RewriteRule ^tag/voyage-japon/?$ /programme [R=301,L]
-RewriteRule ^tag/prix-japon/?$ /prix [R=301,L]
-RewriteRule ^tag/blog/?$ /blog [R=301,L]
-RewriteRule ^tag/japon/?$ /blog [R=301,L]
-
-# Legacy commercial URLs should redirect before the SPA boots.
+# 2. Permanent legacy redirects. Keep these before physical-directory checks.
+# Repository history confirms that /prix was a booking URL.
 RewriteRule ^prix/?$ /reserver [R=301,L]
 RewriteRule ^inscription/?$ /reserver [R=301,L]
 RewriteRule ^paiement/?$ /reserver [R=301,L]
+RewriteRule ^programme-2/?$ /voyages [R=301,L]
+RewriteRule ^extra-plans(?:/[^/]+)?/?$ /experiences [R=301,L]
+RewriteRule ^hotels-avril/?$ /voyages [R=301,L]
+RewriteRule ^accueil-2/?$ / [R=301,L]
+RewriteRule ^a2/?$ /a-propos [R=301,L]
+RewriteRule ^accord-de-voyage(?:-avril|-2)?/?$ /contact [R=301,L]
+RewriteRule ^questionnaire-de-satisfaction/?$ /contact [R=301,L]
+RewriteRule ^login-customizer/?$ /admin/login [R=301,L]
 
-# Secure travel agreement links are handled by React Router.
-RewriteRule ^accord-voyage/[^/]+/?$ /index.html [L]
+# Visa aliases must run before Apache sees the physical /visa directory.
+RewriteRule ^visa/?$ /visa-japon-maroc [R=301,L]
+RewriteRule ^visa-japon/?$ /visa-japon-maroc [R=301,L]
+RewriteRule ^formulaire-visa/?$ /visa-japon-maroc [R=301,L]
+RewriteRule ^demande-de-visa-pour-le-japon/?$ /visa-japon-maroc [R=301,L]
 
-# Old WordPress system/taxonomy URLs that should not resolve to the homepage.
-RewriteRule ^wp-content/ - [G,L]
-RewriteRule ^wp-json/ - [G,L]
-RewriteRule ^feed/?$ - [G,L]
-RewriteRule ^category/ - [G,L]
-RewriteRule ^author/ - [G,L]
-RewriteRule ^tag/ - [G,L]
+# WordPress taxonomy URLs with a useful replacement.
+RewriteRule ^tag/visa-japon/?$ /visa-japon-maroc [R=301,L]
+RewriteRule ^tag/voyage-japon/?$ /programme [R=301,L]
+RewriteRule ^tag/prix-japon/?$ /reserver [R=301,L]
+RewriteRule ^tag/blog/?$ /blog [R=301,L]
+RewriteRule ^tag/japon/?$ /blog [R=301,L]
 
-# React Router fallback.
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ /index.html [L]
+# Legacy root article URLs. Two historical slugs require corrected targets.
+RewriteRule ^culture-nippone/?$ /blog/culture-nipponne [R=301,L]
+RewriteRule ^les-meilleures-restaurant-a-faire-a-kyoto-au-japon/?$ /blog/les-meilleurs-restaurants-a-faire-a-kyoto-au-japon [R=301,L]
+RewriteRule ^top-activities-osaka/?$ /blog/top-activities-osaka [R=301,L]
+RewriteRule ^histoire-du-japon/?$ /blog/histoire-du-japon [R=301,L]
+RewriteRule ^apprendre-le-japonais/?$ /blog/apprendre-le-japonais [R=301,L]
+RewriteRule ^la-cuisine-japonaise-washoku/?$ /blog/la-cuisine-japonaise-washoku [R=301,L]
+RewriteRule ^habiter-un-ryokan-a-kyoto/?$ /blog/habiter-un-ryokan-a-kyoto [R=301,L]
+RewriteRule ^quels-similitudes-entre-la-culture-japonaise-et-notre-culture-marocaine/?$ /blog/quels-similitudes-entre-la-culture-japonaise-et-notre-culture-marocaine [R=301,L]
+RewriteRule ^le-festival-des-bebes-sumos-en-pleurs-au-japon/?$ /blog/le-festival-des-bebes-sumos-en-pleurs-au-japon [R=301,L]
+RewriteRule ^decouvrez-lenchantement-de-kamakura-un-voyage-a-travers-le-temps-et-la-tranquillite/?$ /blog/decouvrez-lenchantement-de-kamakura-un-voyage-a-travers-le-temps-et-la-tranquillite [R=301,L]
+RewriteRule ^le-majestueux-mont-fuji-un-voyage-vers-le-pic-emblematique-du-japon/?$ /blog/le-majestueux-mont-fuji-un-voyage-vers-le-pic-emblematique-du-japon [R=301,L]
+RewriteRule ^plongez-dans-akihabara-le-pays-des-merveilles-electriques-de-tokyo/?$ /blog/plongez-dans-akihabara-le-pays-des-merveilles-electriques-de-tokyo [R=301,L]
+RewriteRule ^le-mystere-du-soleil-levant-une-aventure-de-casablanca-a-tokyo/?$ /blog/le-mystere-du-soleil-levant-une-aventure-de-casablanca-a-tokyo [R=301,L]
+RewriteRule ^les-japonais-se-tiennent-a-gauche-a-tokyo-et-a-droite-a-osaka-pourquoi-cette-difference/?$ /blog/les-japonais-se-tiennent-a-gauche-a-tokyo-et-a-droite-a-osaka-pourquoi-cette-difference [R=301,L]
+
+# Historical brochures were indexed and may have backlinks: consolidate them on /programme.
+RewriteRule ^vabonun/2024/09/Programme\.pdf\.pdf$ /programme [R=301,L,NC]
+RewriteRule ^vabonun/2024/10/Programme-du-voyage-Novembre-2024-10_26-\.pdf$ /programme [R=301,L,NC]
+RewriteRule ^vabonun/2024/11/Programme-du-voyage-Avril-25\.pdf$ /programme [R=301,L,NC]
+RewriteRule ^vabonun/2025/04/Brochure_Programme_Juillet2025\.pdf$ /programme [R=301,L,NC]
+
+# Social crawlers need article-specific Open Graph tags until public prerendering exists.
+RewriteCond %{HTTP_USER_AGENT} "(facebookexternalhit|Facebot|WhatsApp|Twitterbot|LinkedInBot|Slackbot|TelegramBot|Discordbot|Pinterest|SkypeUriPreview)" [NC]
+RewriteRule ^blog/([^/]+)/?$ https://nkovgpzspprmmhorwaxl.supabase.co/functions/v1/blog-social-preview?slug=$1 [R=302,L,NE]
+
+# 3. Server-side indexation policy for private routes, untranslated blogs and PDFs.
+<IfModule mod_setenvif.c>
+  SetEnvIfNoCase Request_URI "^/(admin|agency|supplier|client|espace-voyage|sales)(/|$)" seo_private=1
+  SetEnvIfNoCase Request_URI "^/(devis-fit|accord-voyage|unsubscribe)(/|$)" seo_private=1
+  SetEnvIfNoCase Request_URI "^/formulaire-visa/.+" seo_private=1
+  SetEnvIfNoCase Request_URI "^/(en|ar)/blog(/|$)" seo_locale_noindex=1
+  SetEnvIfNoCase Request_URI "^/visa/[^?]+\.pdf($|\?)" seo_pdf_noindex=1
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set X-Robots-Tag "noindex, nofollow" env=seo_private
+  Header always set X-Robots-Tag "noindex, nofollow" env=REDIRECT_seo_private
+  Header always set X-Robots-Tag "noindex, follow" env=seo_locale_noindex
+  Header always set X-Robots-Tag "noindex, follow" env=REDIRECT_seo_locale_noindex
+  Header always set X-Robots-Tag "noindex, nofollow" env=seo_pdf_noindex
+</IfModule>
+
+# Removed content and WordPress system URLs.
+RewriteRule ^politique-de-confidentialite/?$ - [R=404,L]
+RewriteRule ^le-japon-abaisse-le-statut-du-covid-19-a-celui-dune-la-grippe-saisonniere/?$ - [G,L]
+RewriteRule ^le-japon-des-restrictions-encore-plus-strictes-aux-frontieres-jusqua-fin-fevrier/?$ - [G,L]
+RewriteRule ^cest-officiel-le-japon-rouvrira-ses-portes-le-10-juin-pour-98-pays-et-regions/?$ - [G,L]
+RewriteRule ^vabonun(?:/|$) - [G,L,NC]
+RewriteRule ^wp-content(?:/|$) - [G,L,NC]
+RewriteRule ^wp-json(?:/|$) - [G,L,NC]
+RewriteRule ^feed/?$ - [G,L,NC]
+RewriteRule ^category(?:/|$) - [G,L,NC]
+RewriteRule ^author(?:/|$) - [G,L,NC]
+RewriteRule ^tag(?:/|$) - [G,L,NC]
+
+# 4. Existing physical assets and files are served normally.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# 5. Explicit private React route families. Headers above keep them out of search.
+RewriteRule ^(?:admin|agency|supplier|client|espace-voyage|sales)(?:/.*)?$ /index.html [L]
+RewriteRule ^(?:devis-fit|accord-voyage|unsubscribe)/[^/]+/?$ /index.html [L]
+RewriteRule ^formulaire-visa/.+/?$ /index.html [L]
+
+# 6. Explicit public React routes.
+RewriteRule ^$ /index.html [L]
+RewriteRule ^(?:voyages|reserver|programme|visa-japon-maroc|experiences|hotels|a-propos|blog|contact|devenir-partenaire|mon-voyage-questions-reponses)/?$ /index.html [L]
+RewriteRule ^(?:en|ar)/faq/?$ /index.html [L]
+RewriteRule ^hotels/[^/]+/?$ /index.html [L]
+RewriteRule ^blog/[^/]+/?$ /index.html [L]
+RewriteRule ^(?:en|ar)/blog(?:/[^/]+)?/?$ /index.html [L]
+
+# 7. Anything outside the whitelist is a genuine 404, not a SPA soft 404.
+RewriteRule ^ - [R=404,L]
