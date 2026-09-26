@@ -85,6 +85,7 @@ const pickA = (row: FaqRow, lang: Lang) =>
 const FaqPage = ({ lang }: Props) => {
   const { i18n } = useTranslation();
   const [rows, setRows] = useState<FaqRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<Category | "all">("all");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -98,14 +99,20 @@ const FaqPage = ({ lang }: Props) => {
   }, [lang, i18n]);
 
   useEffect(() => {
+    let active = true;
     (async () => {
-      const { data } = await supabase
-        .from("faqs")
-        .select("id,category,question_fr,answer_fr,question_en,answer_en,question_ar,answer_ar,sort_order")
-        .eq("is_published", true)
-        .order("sort_order", { ascending: true });
-      setRows((data ?? []) as FaqRow[]);
+      try {
+        const { data } = await supabase
+          .from("faqs")
+          .select("id,category,question_fr,answer_fr,question_en,answer_en,question_ar,answer_ar,sort_order")
+          .eq("is_published", true)
+          .order("sort_order", { ascending: true });
+        if (active) setRows((data ?? []) as FaqRow[]);
+      } finally {
+        if (active) setLoading(false);
+      }
     })();
+    return () => { active = false; };
   }, []);
 
   const copy = PAGE_COPY[lang];
@@ -170,6 +177,8 @@ const FaqPage = ({ lang }: Props) => {
         description={copy.seoDescription}
         canonical={URLS[lang]}
         jsonLd={faqJsonLd}
+        language={lang}
+        prerenderReady={!loading}
       />
 
       {/* Hero */}

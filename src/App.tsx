@@ -16,6 +16,7 @@ import { AgencyProvider } from "@/agency/useAgencyContext";
 import { RequireActiveAgencyMember, RequireAgencyMember, RequireAgencyOnboarding } from "@/agency/components/AgencyGuards";
 import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from "@/components/LegacyRedirects";
 import { DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
+import { publicPath, type PublicRouteId } from "@/config/publicRoutes";
 import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
 import { initAnalytics, trackPageView } from "@/lib/analytics";
 import { installWebViewGuards } from "@/lib/webview-guards";
@@ -135,8 +136,20 @@ const RouteFallback = () => (
   </div>
 );
 
-const VISA_CANONICAL_PATH = "/visa-japon-maroc";
-const routePath = (key: RouteKey) => `/${DEFAULT_SLUGS[key].slug}`;
+const VISA_CANONICAL_PATH = publicPath("visa");
+const ROUTE_KEY_TO_PUBLIC_ID: Partial<Record<RouteKey, PublicRouteId>> = {
+  trips: "trips",
+  booking: "booking",
+  programme: "programme",
+  experiences: "experiences",
+  about: "about",
+  blog: "blog",
+  contact: "contact",
+};
+const routePath = (key: RouteKey) => {
+  const publicRouteId = ROUTE_KEY_TO_PUBLIC_ID[key];
+  return publicRouteId ? publicPath(publicRouteId) : `/${DEFAULT_SLUGS[key].slug}`;
+};
 
 /** Client-side fallback for legacy aliases; Apache performs the canonical 301 in production. */
 const PreservingRedirect = ({ to }: { to: string }) => {
@@ -221,9 +234,9 @@ const AppRoutes = () => {
       {/* Private-token quote: deliberately outside every authenticated/layout guard. */}
       <Route path="/devis-fit/:token" element={<FitQuotePublic />} />
       <Route element={<SiteLayout />}>
-        <Route path="/" element={<Index />} />
+        <Route path={publicPath("home")} element={<Index />} />
         <Route path={routePath("trips")} element={<Trips />} />
-        <Route path="/hotels" element={<Hotels />} />
+        <Route path={publicPath("hotels")} element={<Hotels />} />
         <Route path="/hotels/:slug" element={<Hotels />} />
         <Route path={routePath("experiences")} element={<Experiences />} />
         <Route path={routePath("about")} element={<About />} />
@@ -237,8 +250,8 @@ const AppRoutes = () => {
         <Route path={routePath("booking")} element={<Booking />} />
         <Route path="/accord-voyage/:token" element={<TravelAgreementPublic />} />
         <Route path={routePath("programme")} element={<ProgrammePage />} />
-        <Route path="/devenir-partenaire" element={<PartnerAcquisition />} />
-        <Route path="/visa-japon-maroc" element={<VisaLogin />} />
+        <Route path={publicPath("partner")} element={<PartnerAcquisition />} />
+        <Route path={publicPath("visa")} element={<VisaLogin />} />
         <Route path="/visa" element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
         <Route path="/visa-japon" element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />
 
@@ -262,9 +275,9 @@ const AppRoutes = () => {
         <Route path="/feed/*" element={<NotFound />} />
 
         {/* FAQ — multilingue, l'URL FR conserve l'ancien slug WordPress pour le SEO */}
-        <Route path="/mon-voyage-questions-reponses" element={<FaqPage lang="fr" />} />
-        <Route path="/en/faq" element={<FaqPage lang="en" />} />
-        <Route path="/ar/faq" element={<FaqPage lang="ar" />} />
+        <Route path={publicPath("faqFr")} element={<FaqPage lang="fr" />} />
+        <Route path={publicPath("faqEn")} element={<FaqPage lang="en" />} />
+        <Route path={publicPath("faqAr")} element={<FaqPage lang="ar" />} />
 
         {/* Visa Japan module */}
         <Route path={routePath("visa")} element={<PreservingRedirect to={VISA_CANONICAL_PATH} />} />

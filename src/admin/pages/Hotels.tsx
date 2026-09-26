@@ -15,6 +15,7 @@ import {
   hotelCatalogColumns,
   listFromTextarea,
   makeHotelSlug,
+  normalizeHotelSlugForSave,
   textareaFromList,
 } from "@/lib/hotel-catalog";
 
@@ -188,8 +189,10 @@ export default function AdminHotels() {
       return;
     }
 
+    const existingHotel = form.id ? hotels.find((hotel) => hotel.id === form.id) : undefined;
+    const requestedSlug = form.slug.trim() || makeHotelSlug({ city: form.city.trim(), name: form.name.trim() });
     const payload = {
-      slug: form.slug.trim() || makeHotelSlug({ city: form.city.trim(), name: form.name.trim() }),
+      slug: normalizeHotelSlugForSave(requestedSlug, existingHotel?.slug),
       name: form.name.trim(),
       city: form.city.trim(),
       category: form.category || null,

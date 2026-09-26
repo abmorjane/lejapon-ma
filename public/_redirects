@@ -67,27 +67,13 @@
 /unsubscribe/*                             /index.html 200
 /formulaire-visa/*                         /index.html 200
 
-# Public React routes
-/                                         /index.html 200
-/voyages                                  /index.html 200
+# Public routes intentionally kept as SPA-only. Indexable SEO routes are
+# physical prerendered files and therefore do not need fallback rules.
 /reserver                                 /index.html 200
-/programme                                /index.html 200
-/visa-japon-maroc                         /index.html 200
-/experiences                              /index.html 200
-/hotels                                   /index.html 200
-/hotels/*                                 /index.html 200
-/a-propos                                 /index.html 200
-/blog                                     /index.html 200
-/blog/*                                   /index.html 200
 /en/blog                                  /index.html 200
 /en/blog/*                                /index.html 200
 /ar/blog                                  /index.html 200
 /ar/blog/*                                /index.html 200
-/contact                                  /index.html 200
-/devenir-partenaire                       /index.html 200
-/mon-voyage-questions-reponses            /index.html 200
-/en/faq                                   /index.html 200
-/ar/faq                                   /index.html 200
 
 # Unknown paths must not become soft 404s.
 /*                                         /index.html 404

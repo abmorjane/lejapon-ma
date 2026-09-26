@@ -238,6 +238,7 @@ export default function VisaLogin() {
         title={VISA_SEO_TITLE}
         description={VISA_SEO_DESCRIPTION}
         canonical={VISA_CANONICAL_PATH}
+        prerenderReady={!loading && !checklistsLoading}
         jsonLd={faqJsonLd}
       />
 

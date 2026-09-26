@@ -1,5 +1,11 @@
 RewriteEngine On
 
+# Canonical public URLs have no trailing slash. Prevent mod_dir from issuing a
+# slash redirect before the generated route index can be served internally.
+<IfModule mod_dir.c>
+  DirectorySlash Off
+</IfModule>
+
 ErrorDocument 404 /index.html
 ErrorDocument 410 /410.html
 
@@ -91,7 +97,18 @@ RewriteRule ^category(?:/|$) - [G,L,NC]
 RewriteRule ^author(?:/|$) - [G,L,NC]
 RewriteRule ^tag(?:/|$) - [G,L,NC]
 
-# 4. Existing physical assets and files are served normally.
+# Canonical route form: no trailing slash (the root URL is the only exception).
+RewriteCond %{REQUEST_URI} !^/$
+RewriteCond %{REQUEST_URI} /+$
+RewriteRule ^(.+?)/+$ /$1 [R=301,L]
+
+# 4. Prerendered route directories are served at their canonical URL without
+# a DirectorySlash redirect. Their physical index.html is the generated slug
+# manifest: valid blog/hotel slugs exist; unknown ones continue to the 404 rule.
+RewriteCond %{DOCUMENT_ROOT}%{REQUEST_URI}/index.html -f
+RewriteRule ^(.+?)/?$ $1/index.html [END]
+
+# Existing physical assets and files are served normally.
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
@@ -101,13 +118,14 @@ RewriteRule ^(?:admin|agency|supplier|client|espace-voyage|sales)(?:/.*)?$ /inde
 RewriteRule ^(?:devis-fit|accord-voyage|unsubscribe)/[^/]+/?$ /index.html [L]
 RewriteRule ^formulaire-visa/.+/?$ /index.html [L]
 
-# 6. Explicit public React routes.
+# 6. Public routes intentionally kept as SPA-only.
 RewriteRule ^$ /index.html [L]
-RewriteRule ^(?:voyages|reserver|programme|visa-japon-maroc|experiences|hotels|a-propos|blog|contact|devenir-partenaire|mon-voyage-questions-reponses)/?$ /index.html [L]
-RewriteRule ^(?:en|ar)/faq/?$ /index.html [L]
-RewriteRule ^hotels/[^/]+/?$ /index.html [L]
-RewriteRule ^blog/[^/]+/?$ /index.html [L]
+RewriteRule ^reserver/?$ /index.html [L]
 RewriteRule ^(?:en|ar)/blog(?:/[^/]+)?/?$ /index.html [L]
+
+# Indexable SEO routes are generated as physical HTML above. A missing dynamic
+# page is therefore a genuine 404 rather than the homepage SPA shell.
+RewriteRule ^(?:blog|hotels)/[^/]+/?$ - [R=404,L]
 
 # 7. Anything outside the whitelist is a genuine 404, not a SPA soft 404.
 RewriteRule ^ - [R=404,L]

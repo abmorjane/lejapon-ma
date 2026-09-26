@@ -13,6 +13,13 @@ const CANONICAL_ALIASES: Record<string, string> = {
 };
 
 export type RobotsDirective = "index,follow" | "noindex,follow" | "noindex,nofollow";
+export type SeoLanguage = "fr" | "en" | "ar";
+
+const OG_LOCALES: Record<SeoLanguage, string> = {
+  fr: "fr_FR",
+  en: "en_GB",
+  ar: "ar_MA",
+};
 
 type SeoProps = {
   title: string;
@@ -30,6 +37,10 @@ type SeoProps = {
   noindex?: boolean;
   /** Explicit robots directive. Takes precedence over the legacy noindex flag. */
   robots?: RobotsDirective;
+  /** Page language used for html lang/dir and og:locale. Defaults from the URL. */
+  language?: SeoLanguage;
+  /** Build-time signal: dynamic pages set this only after their real content is loaded. */
+  prerenderReady?: boolean;
 };
 
 const absoluteUrl = (value?: string | null) => {
@@ -86,14 +97,20 @@ export const Seo = ({
   jsonLd,
   noindex,
   robots,
+  language,
+  prerenderReady = true,
 }: SeoProps) => {
   const location = useLocation();
   const path = canonical ?? location.pathname;
   const url = useMemo(() => canonicalUrl(path === "/" ? "/" : path), [path]);
   const absoluteImage = useMemo(() => absoluteUrl(image), [image]);
   const robotsContent = robots ?? (noindex ? "noindex,nofollow" : "index,follow");
+  const pageLanguage: SeoLanguage = language ?? (location.pathname.startsWith("/en/") ? "en" : location.pathname.startsWith("/ar/") ? "ar" : "fr");
 
   useEffect(() => {
+    delete document.documentElement.dataset.prerenderReady;
+    document.documentElement.lang = pageLanguage;
+    document.documentElement.dir = pageLanguage === "ar" ? "rtl" : "ltr";
     document.title = title;
     upsertMeta('meta[name="description"]', "name", "description", description);
     upsertMeta('meta[name="robots"]', "name", "robots", robotsContent);
@@ -109,7 +126,7 @@ export const Seo = ({
     upsertMeta('meta[property="og:image:alt"]', "property", "og:image:alt", imageAlt || title);
     upsertMeta('meta[property="og:image:width"]', "property", "og:image:width", String(imageWidth));
     upsertMeta('meta[property="og:image:height"]', "property", "og:image:height", String(imageHeight));
-    upsertMeta('meta[property="og:locale"]', "property", "og:locale", "fr_FR");
+    upsertMeta('meta[property="og:locale"]', "property", "og:locale", OG_LOCALES[pageLanguage]);
 
     upsertMeta('meta[name="twitter:card"]', "name", "twitter:card", "summary_large_image");
     upsertMeta('meta[name="twitter:title"]', "name", "twitter:title", title);
@@ -129,7 +146,9 @@ export const Seo = ({
         document.head.appendChild(s);
       });
     }
-  }, [title, description, url, absoluteImage, type, imageAlt, imageWidth, imageHeight, robotsContent, jsonLd]);
+
+    if (prerenderReady) document.documentElement.dataset.prerenderReady = "true";
+  }, [title, description, url, absoluteImage, type, imageAlt, imageWidth, imageHeight, robotsContent, jsonLd, pageLanguage, prerenderReady]);
 
   return null;
 };

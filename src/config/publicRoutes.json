@@ -1,0 +1,57 @@
+{
+  "siteOrigin": "https://www.lejapon.ma",
+  "staticRoutes": [
+    { "id": "home", "path": "/", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "trips", "path": "/voyages", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "booking", "path": "/reserver", "classification": "indexable", "group": "static", "sitemap": true, "prerender": false, "seoPriority": false },
+    { "id": "programme", "path": "/programme", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "visa", "path": "/visa-japon-maroc", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "experiences", "path": "/experiences", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "hotels", "path": "/hotels", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "about", "path": "/a-propos", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "blog", "path": "/blog", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "contact", "path": "/contact", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "partner", "path": "/devenir-partenaire", "classification": "indexable", "group": "static", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "faqFr", "path": "/mon-voyage-questions-reponses", "classification": "indexable", "group": "faq", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "faqEn", "path": "/en/faq", "classification": "indexable", "group": "faq", "sitemap": true, "prerender": true, "seoPriority": true },
+    { "id": "faqAr", "path": "/ar/faq", "classification": "indexable", "group": "faq", "sitemap": true, "prerender": true, "seoPriority": true }
+  ],
+  "dynamicRoutes": [
+    { "pattern": "/blog/:slug", "classification": "dynamic", "contentType": "article", "indexable": true, "sitemap": true, "prerender": true },
+    { "pattern": "/hotels/:slug", "classification": "dynamic", "contentType": "hotel", "indexable": true, "sitemap": true, "prerender": true }
+  ],
+  "excludedFamilies": [
+    { "path": "/admin", "classification": "private", "match": "prefix" },
+    { "path": "/agency", "classification": "private", "match": "prefix" },
+    { "path": "/supplier", "classification": "private", "match": "prefix" },
+    { "path": "/client", "classification": "private", "match": "prefix" },
+    { "path": "/espace-voyage", "classification": "private", "match": "prefix" },
+    { "path": "/sales", "classification": "private", "match": "prefix" },
+    { "path": "/devis-fit", "classification": "private", "match": "prefix" },
+    { "path": "/accord-voyage", "classification": "private", "match": "prefix" },
+    { "path": "/unsubscribe", "classification": "private", "match": "prefix" },
+    { "path": "/formulaire-visa", "classification": "private", "match": "prefix" },
+    { "path": "/en/blog", "classification": "noindex", "match": "prefix" },
+    { "path": "/ar/blog", "classification": "noindex", "match": "prefix" }
+  ],
+  "legacyRedirects": [
+    { "path": "/prix", "target": "/reserver" },
+    { "path": "/inscription", "target": "/reserver" },
+    { "path": "/paiement", "target": "/reserver" },
+    { "path": "/programme-2", "target": "/voyages" },
+    { "path": "/visa", "target": "/visa-japon-maroc" },
+    { "path": "/visa-japon", "target": "/visa-japon-maroc" },
+    { "path": "/formulaire-visa", "target": "/visa-japon-maroc" },
+    { "path": "/culture-nippone", "target": "/blog/culture-nipponne" },
+    { "path": "/les-meilleures-restaurant-a-faire-a-kyoto-au-japon", "target": "/blog/les-meilleurs-restaurants-a-faire-a-kyoto-au-japon" }
+  ],
+  "removedFamilies": [
+    "/wp-content",
+    "/wp-json",
+    "/feed",
+    "/category",
+    "/author",
+    "/tag",
+    "/vabonun"
+  ]
+}

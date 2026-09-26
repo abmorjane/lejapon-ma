@@ -62,7 +62,7 @@ export default function HotelsPage() {
 
     return (
       <main className="min-h-screen bg-background">
-        <Seo title={`${activeHotel.name} | Hôtels au Japon`} description={shortText || activeHotel.address || undefined} />
+        <Seo title={`${activeHotel.name} | Hôtels au Japon`} description={shortText || activeHotel.address || undefined} prerenderReady={!loading} />
         <section className="container pt-10 pb-16">
           <Button asChild variant="ghost" className="mb-6">
             <Link to="/hotels">
@@ -140,6 +140,8 @@ export default function HotelsPage() {
       <Seo
         title="Notre sélection d’hôtels par ville au Japon"
         description="Découvrez les hôtels recommandés par LeJapon.ma à Tokyo, Kyoto, Osaka et dans les principales villes du Japon."
+        canonical="/hotels"
+        prerenderReady={!loading}
       />
       <section className="container py-14">
         <div className="max-w-3xl">

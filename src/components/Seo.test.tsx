@@ -8,6 +8,9 @@ const robots = () => document.head.querySelector<HTMLMetaElement>('meta[name="ro
 
 afterEach(() => {
   document.head.querySelectorAll('link[rel="canonical"], meta[name="robots"]').forEach((node) => node.remove());
+  delete document.documentElement.dataset.prerenderReady;
+  document.documentElement.lang = "fr";
+  document.documentElement.dir = "ltr";
 });
 
 describe("SEO routing safeguards", () => {
@@ -39,5 +42,33 @@ describe("SEO routing safeguards", () => {
     );
 
     await waitFor(() => expect(robots()).toBe("noindex,follow"));
+  });
+
+  it("sets localized html and OpenGraph metadata", async () => {
+    render(
+      <MemoryRouter initialEntries={["/ar/faq"]}>
+        <Seo title="الأسئلة الشائعة" description="أسئلة السفر" />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(document.documentElement.lang).toBe("ar"));
+    expect(document.documentElement.dir).toBe("rtl");
+    expect(document.head.querySelector<HTMLMetaElement>('meta[property="og:locale"]')?.content).toBe("ar_MA");
+  });
+
+  it("exposes the prerender readiness signal only after dynamic content is ready", async () => {
+    const { rerender } = render(
+      <MemoryRouter initialEntries={["/blog"]}>
+        <Seo title="Blog" description="Journal" prerenderReady={false} />
+      </MemoryRouter>,
+    );
+    expect(document.documentElement.dataset.prerenderReady).toBeUndefined();
+
+    rerender(
+      <MemoryRouter initialEntries={["/blog"]}>
+        <Seo title="Blog" description="Journal" prerenderReady />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(document.documentElement.dataset.prerenderReady).toBe("true"));
   });
 });

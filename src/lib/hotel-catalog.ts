@@ -59,6 +59,13 @@ export const hotelCatalogColumns = [
 export const makeHotelSlug = (hotel: Pick<HotelCatalogItem, "city" | "name">) =>
   slugify([hotel.city, hotel.name].filter(Boolean).join(" "));
 
+/** Keep an unchanged historical mixed-case URL, but normalize every new slug. */
+export const normalizeHotelSlugForSave = (candidate: string, existingSlug?: string | null) => {
+  const trimmed = candidate.trim();
+  if (existingSlug && trimmed === existingSlug) return existingSlug;
+  return slugify(trimmed);
+};
+
 export const listFromTextarea = (value: string) =>
   value
     .split("\n")

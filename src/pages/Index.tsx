@@ -279,6 +279,7 @@ const Index = () => {
         title="lejapon.ma — Voyages d'immersion au Japon depuis Casablanca"
         description="LeJapon.ma organise deux voyages par an au Japon depuis Casablanca : programme complet de 14 jours, vols, hôtels, transports JR, guide bilingue et prix tout inclus."
         canonical="/"
+        prerenderReady={!tripsLoading && !extrasLoading}
         jsonLd={{
           "@context": "https://schema.org",
           "@type": "TravelAgency",

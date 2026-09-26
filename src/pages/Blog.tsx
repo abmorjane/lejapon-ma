@@ -70,6 +70,7 @@ const Blog = () => {
         description={t("blog.seoDescription")}
         canonical="/blog"
         robots={isUntranslatedLocale ? "noindex,follow" : "index,follow"}
+        prerenderReady={!loading}
       />
       <p className="eyebrow mb-4">{t("blog.eyebrow")}</p>
       <h1 className="font-display text-5xl md:text-7xl mb-16">{t("blog.title")}</h1>

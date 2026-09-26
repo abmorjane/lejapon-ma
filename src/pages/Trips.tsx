@@ -63,6 +63,7 @@ const Trips = () => {
         title="Nos voyages au Japon depuis Casablanca — lejapon.ma"
         description="Découvrez nos voyages organisés au Japon depuis Casablanca. Quatre saisons magnifiques, plusieurs départs inoubliables. Vols, hôtels et guides bilingues inclus."
         canonical="/voyages"
+        prerenderReady={!loading}
       />
       <p className="eyebrow mb-4">{t("nav.trips")}</p>
       <h1 className="font-display text-5xl md:text-7xl mb-6 max-w-4xl">

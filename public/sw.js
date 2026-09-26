@@ -1,7 +1,6 @@
-const CACHE_NAME = "lejapon-admin-shell-v4";
+const CACHE_NAME = "lejapon-admin-shell-v5";
 const CACHE_PREFIX = "lejapon-admin-shell-";
 const APP_SHELL = [
-  "/",
   "/admin",
   "/admin/login",
   "/offline.html",

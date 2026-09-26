@@ -35,6 +35,7 @@ const Experiences = () => {
         title="Extra plans & expériences au Japon — lejapon.ma"
         description="Tokyo Disneyland, teamLab Planets, Universal Studios, soirée geisha, cérémonie du thé, geisha make-up : ajoutez des expériences uniques à votre voyage au Japon."
         canonical="/experiences"
+        prerenderReady={!loading}
       />
       <p className="eyebrow mb-4">{t("experiences.eyebrow")}</p>
       <h1 className="font-display text-5xl md:text-7xl mb-6 max-w-3xl">{t("experiences.title")}</h1>

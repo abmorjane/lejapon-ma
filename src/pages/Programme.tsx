@@ -103,6 +103,7 @@ export default function ProgrammePage() {
         title={active ? `${active.title} — lejapon.ma` : "Programme — Voyages Japon | lejapon.ma"}
         description={active?.meta_description || active?.introduction || "Découvrez nos programmes de voyage au Japon : itinéraires détaillés, villes traversées et PDF téléchargeable."}
         canonical="/programme"
+        prerenderReady={!loading}
       />
 
       <div className="programme-page w-full max-w-full overflow-x-hidden">
