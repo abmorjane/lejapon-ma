@@ -45,6 +45,14 @@ function formatDates(s?: string | null, e?: string | null) {
   return fmtDate((s ?? e) as string);
 }
 
+const programmeHrefFor = (trip: Pick<TripCardData, "program_link" | "slug">) => {
+  const configured = trip.program_link?.trim();
+  if (!configured || ["/prix", "/programme-2"].includes(configured.replace(/\/+$/, ""))) {
+    return `/programme?trip=${encodeURIComponent(trip.slug)}`;
+  }
+  return configured;
+};
+
 export function TripCardSkeleton() {
   return (
     <div className="h-full min-h-[650px] overflow-hidden rounded-[20px] border border-border bg-background shadow-soft sm:min-h-[700px]">
@@ -72,7 +80,7 @@ export function TripCardSkeleton() {
 
 export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardData; index?: number; fallbackImage?: string }) {
   const bookingHref = `/reserver?trip=${encodeURIComponent(trip.slug)}`;
-  const programmeHref = trip.program_link || `/programme?trip=${trip.slug}`;
+  const programmeHref = programmeHrefFor(trip);
   const cover = trip.cover_url || fallbackImage;
   const dests = (trip.destinations && trip.destinations.length > 0 ? trip.destinations : trip.highlights) ?? [];
   const badgeKey = (trip.badge_type || "").toLowerCase();

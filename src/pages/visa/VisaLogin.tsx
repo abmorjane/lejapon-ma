@@ -33,8 +33,8 @@ const PROCESS_STEPS = [
     text: "Notre équipe vérifie la cohérence du dossier avant dépôt.",
   },
   {
-    title: "Dépôt et suivi",
-    text: "Nous vous informons de l’avancement et des prochaines étapes.",
+    title: "Dépôt selon les règles officielles",
+    text: "Vous suivez les modalités de dépôt indiquées par l’ambassade du Japon, puis notre équipe vous aide à comprendre les prochaines étapes.",
   },
 ];
 
@@ -45,25 +45,27 @@ const REASSURANCE_POINTS = [
 ];
 
 const VISA_CANONICAL_PATH = "/visa-japon-maroc";
-const VISA_SEO_TITLE = "Visa Japon Maroc | Documents, formulaire et accompagnement - LeJapon.ma";
-const VISA_SEO_DESCRIPTION = "Besoin d'un visa pour le Japon depuis le Maroc ? Découvrez les documents nécessaires selon votre profil et bénéficiez d'un accompagnement personnalisé pour préparer votre dossier.";
+const VISA_SEO_TITLE = "Visa Japon Maroc : documents et demande | LeJapon.ma";
+const VISA_SEO_DESCRIPTION = "Préparez votre demande de visa Japon au Maroc : documents selon votre profil, règles officielles et accompagnement des voyageurs LeJapon.ma.";
+const VISA_OFFICIAL_URL = "https://www.ma.emb-japan.go.jp/itpr_fr/11_000001_00102.html";
+const VISA_VERIFIED_DATE = "26 septembre 2026";
 
 const VISA_FAQ = [
   {
     question: "Comment obtenir un visa Japon au Maroc ?",
-    answer: "Vous devez préparer le formulaire, les justificatifs demandés selon votre profil, puis déposer un dossier complet auprès de l’ambassade du Japon. LeJapon.ma accompagne les participants de ses voyages dans la préparation et la vérification du dossier.",
+    answer: "Vous devez consulter les règles de l’ambassade du Japon au Maroc, préparer le formulaire et les justificatifs correspondant à votre situation, puis suivre les modalités officielles de dépôt. LeJapon.ma accompagne les participants de ses voyages dans la préparation et la vérification du dossier.",
   },
   {
     question: "Quels documents sont nécessaires pour un visa Japon ?",
-    answer: "La liste dépend de votre situation professionnelle : salarié, fonctionnaire, étudiant, retraité, entrepreneur ou autre profil. La page affiche les documents configurés dans notre backoffice, et la liste exacte peut être ajustée selon votre dossier.",
+    answer: "La liste dépend du motif du séjour et de votre situation professionnelle. Les checklists LeJapon.ma servent à préparer le dossier, mais la liste publiée par l’ambassade du Japon au Maroc et ses éventuelles demandes complémentaires restent la référence officielle.",
   },
   {
-    question: "Combien coûte le visa Japon ?",
-    answer: "L’accompagnement LeJapon.ma est inclus pour les participants de nos voyages. Les frais officiels de l’ambassade sont réglés directement à l’ambassade du Japon uniquement en cas de réponse favorable.",
+    question: "Quel est le prix du visa Japon au Maroc ?",
+    answer: "Au 26 septembre 2026, l’ambassade du Japon au Maroc affiche des frais de 940 MAD au moment de la délivrance, pour un tarif annoncé comme valable jusqu’au 31 mars 2027. Vérifiez toujours le montant en vigueur sur le site officiel. L’accompagnement LeJapon.ma est inclus pour les participants de ses voyages.",
   },
   {
-    question: "Combien de temps prend la réponse ?",
-    answer: "Le délai dépend de l’ambassade du Japon et de la période de dépôt. Notre équipe vous informe des étapes et du suivi dès que votre dossier avance.",
+    question: "Quel délai prévoir pour une demande de visa Japon ?",
+    answer: "L’ambassade recommande de commencer la procédure au moins deux semaines à l’avance. Ce repère ne garantit pas une date de réponse : le délai réel dépend de l’examen du dossier et d’éventuelles pièces complémentaires.",
   },
   {
     question: "Est-ce que LeJapon.ma garantit l’obtention du visa ?",
@@ -247,10 +249,10 @@ export default function VisaLogin() {
           <div className="max-w-3xl">
             <Badge className="mb-5 bg-sky-100 text-sky-950 hover:bg-sky-100">Espace visa LeJapon.ma</Badge>
             <h1 className="font-display text-4xl leading-tight text-foreground sm:text-5xl lg:text-6xl">
-              Votre demande de visa Japon, accompagnée de A à Z
+              Visa Japon au Maroc&nbsp;: préparer votre demande sereinement
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-8 text-muted-foreground sm:text-lg">
-              Ce service est inclus gratuitement pour les participants de nos voyages LeJapon.ma. Vous préparez vos documents, nous vérifions votre dossier et nous vous accompagnons jusqu’au dépôt.
+              LeJapon.ma accompagne les participants de ses voyages dans la préparation et la vérification de leur dossier. L’ambassade du Japon reste la seule autorité compétente pour fixer les règles, examiner la demande et décider de la délivrance du visa.
             </p>
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
               <Button size="lg" className="min-h-12 cursor-pointer gap-2" onClick={() => scrollToAuth("signup", "hero")}>
@@ -263,6 +265,20 @@ export default function VisaLogin() {
               </Button>
             </div>
           </div>
+
+          <section aria-labelledby="visa-official-title" className="rounded-lg border border-sky-200 bg-sky-50 p-5 text-sky-950 shadow-sm">
+            <h2 id="visa-official-title" className="font-display text-2xl">Règles officielles du visa Japon pour les résidents au Maroc</h2>
+            <p className="mt-3 text-sm leading-7">
+              Au {VISA_VERIFIED_DATE}, l’ambassade indique qu’un visa est nécessaire pour les ressortissants marocains, que les pièces varient selon le voyage et la profession, et recommande de commencer la procédure au moins deux semaines avant le départ.
+            </p>
+            <p className="mt-2 text-sm leading-7">
+              Le tarif officiel affiché est de 940 MAD lors de la délivrance, avec une validité annoncée du 1<sup>er</sup> juillet 2026 au 31 mars 2027. Ces informations peuvent changer : la page de l’ambassade prévaut toujours sur nos indications.
+            </p>
+            <a href={VISA_OFFICIAL_URL} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex font-semibold text-accent underline underline-offset-4">
+              Consulter les règles officielles de l’Ambassade du Japon au Maroc
+            </a>
+            <p className="mt-3 text-xs text-sky-900/75">Informations vérifiées le {VISA_VERIFIED_DATE} auprès de l’Ambassade du Japon au Maroc.</p>
+          </section>
 
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-emerald-950 shadow-sm">
             <div className="flex gap-3">
@@ -313,7 +329,7 @@ export default function VisaLogin() {
                   <h2 id="visa-documents-title" className="font-display text-2xl">Documents à préparer selon votre situation</h2>
                 </div>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Ces listes viennent de la configuration documents visa du backoffice. La liste exacte peut être ajustée selon votre profil et votre dossier.
+                  Ces listes viennent de la configuration documents visa LeJapon.ma et facilitent la préparation selon votre profil. La liste officielle de l’ambassade et toute demande complémentaire restent prioritaires.
                 </p>
               </div>
               {checklists.length > 0 && (
@@ -429,6 +445,18 @@ export default function VisaLogin() {
                 </div>
               ))}
             </div>
+          </section>
+
+          <section aria-labelledby="visa-trip-title" className="rounded-lg border border-border bg-white p-5 shadow-sm">
+            <h2 id="visa-trip-title" className="font-display text-2xl">Préparer le visa dans le cadre de votre voyage au Japon</h2>
+            <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              L’accompagnement visa est intégré au parcours des participants LeJapon.ma. Commencez par choisir un départ, puis utilisez l’espace visa pour préparer les éléments demandés sans confondre notre assistance avec la décision consulaire.
+            </p>
+            <nav aria-label="Liens utiles pour préparer le voyage et le visa" className="mt-5 flex flex-wrap gap-x-5 gap-y-3 text-sm font-semibold">
+              <Link to="/voyages" className="text-accent hover:underline underline-offset-4">Voir les voyages au Japon depuis le Maroc</Link>
+              <Link to="/reserver" className="text-accent hover:underline underline-offset-4">Réserver un départ</Link>
+              <Link to="/mon-voyage-questions-reponses" className="text-accent hover:underline underline-offset-4">Consulter la FAQ voyage LeJapon.ma</Link>
+            </nav>
           </section>
 
           <section aria-labelledby="visa-faq-title" className="rounded-lg border border-border bg-white p-5 shadow-sm">

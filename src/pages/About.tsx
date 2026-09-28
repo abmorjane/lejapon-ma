@@ -13,20 +13,22 @@ const DEFAULTS = {
   hero_title_main: "Le Japon, raconté",
   hero_title_accent: "de l'intérieur.",
   hero_intro: "LeJapon.ma est une agence spécialisée dans les voyages au Japon, offrant des expériences immersives uniques.",
-  hero_card_label: "Depuis Casablanca",
-  hero_card_text: "Une équipe maroco-japonaise à votre service.",
   story_eyebrow: "Notre histoire",
   story_title_main: "Une aventure née d'une",
   story_title_accent: "passion sincère.",
   story_p1: "Tout a commencé par l'amour profond du Japon. Créée par des passionnés, lejapon.ma est née d'une envie simple : faire vivre aux voyageurs marocains la magie d'un pays façonné par mille ans de raffinement.",
   story_p2: "Au fil des années, nous avons construit une expertise terrain rare, tissée de partenariats locaux, d'amitiés japonaises, et d'une connaissance intime des lieux qui valent le voyage.",
   story_p3: "Aujourd'hui, nous organisons des voyages de groupe depuis plusieurs années, et chaque départ porte cette même intention : offrir bien plus qu'un circuit — une rencontre.",
-  stat1_value: "+30", stat1_label: "Voyages",
-  stat2_value: "+500", stat2_label: "Voyageurs",
-  stat3_value: "10 ans", stat3_label: "D'expertise",
   omotenashi_quote: "Nous appliquons le principe japonais d'Omotenashi, une hospitalité sincère, où chaque détail est anticipé pour offrir une expérience fluide et exceptionnelle.",
   omotenashi_subtitle: "C'est l'art japonais de servir sans rien attendre en retour. C'est notre boussole.",
   conclusion_quote: "Notre mission est simple : vous faire vivre le Japon comme si vous y étiez chez vous.",
+};
+
+const CONTACT_DEFAULTS = {
+  email: "info@lejapon.ma",
+  // Never infer an agency address from a departure city. Addresses are shown
+  // only when they are supplied by the public site:contact content.
+  addresses: [] as Array<{ city: string; line: string }>,
 };
 
 const fade = (delay = 0) => ({
@@ -38,11 +40,12 @@ const fade = (delay = 0) => ({
 
 const About = () => {
   const c = useSiteContent("site:about", DEFAULTS);
+  const contact = useSiteContent("site:contact", CONTACT_DEFAULTS);
   return (
     <>
       <Seo
-        title="À propos — lejapon.ma · Agence de voyage spécialisée Japon"
-        description="LeJapon.ma est une agence spécialisée dans les voyages au Japon. Découvrez notre histoire, notre méthode Omotenashi et notre équipe de passionnés."
+        title="Agence de voyage Japon au Maroc | À propos — LeJapon.ma"
+        description="Découvrez LeJapon.ma, marque spécialisée Japon de Moroccan Express Travel & Events : agence marocaine, expertise terrain et accompagnement humain."
         canonical="/a-propos"
       />
 
@@ -55,7 +58,7 @@ const About = () => {
               <Sparkles className="w-3 h-3" /> {c.hero_eyebrow}
             </span>
             <h1 className="font-display text-4xl md:text-6xl lg:text-7xl leading-[1.05] text-balance">
-              {c.hero_title_main} <span className="italic text-accent">{c.hero_title_accent}</span>
+              Une agence marocaine spécialisée dans <span className="italic text-accent">les voyages au Japon.</span>
             </h1>
             <p className="mt-8 text-lg md:text-xl text-muted-foreground leading-relaxed max-w-2xl">
               {c.hero_intro}
@@ -69,9 +72,9 @@ const About = () => {
               <div className="absolute -bottom-6 -left-6 hidden md:block bg-background border border-border rounded-2xl p-5 shadow-card max-w-[220px]">
                 <div className="flex items-center gap-2 text-accent mb-1">
                   <Heart className="w-4 h-4 fill-accent" />
-                  <span className="text-xs font-semibold uppercase tracking-wider">{c.hero_card_label}</span>
+                  <span className="text-xs font-semibold uppercase tracking-wider">LeJapon.ma</span>
                 </div>
-                <p className="text-sm text-muted-foreground">{c.hero_card_text}</p>
+                <p className="text-sm text-muted-foreground">La marque spécialisée Japon de Moroccan Express Travel &amp; Events.</p>
               </div>
             </div>
           </motion.div>
@@ -89,20 +92,12 @@ const About = () => {
           <motion.div {...fade(0.1)} className="lg:col-span-7 order-1 lg:order-2">
             <p className="eyebrow mb-4">{c.story_eyebrow}</p>
             <h2 className="font-display text-4xl md:text-5xl leading-tight mb-8 text-balance">
-              {c.story_title_main} <span className="italic text-accent">{c.story_title_accent}</span>
+              LeJapon.ma, une expertise Japon portée par <span className="italic text-accent">Moroccan Express Travel &amp; Events.</span>
             </h2>
             <div className="space-y-5 text-foreground/80 text-lg leading-relaxed">
               <p>{c.story_p1}</p>
               <p>{c.story_p2}</p>
               <p>{c.story_p3}</p>
-            </div>
-            <div className="mt-10 grid grid-cols-3 gap-4">
-              {[[c.stat1_value, c.stat1_label], [c.stat2_value, c.stat2_label], [c.stat3_value, c.stat3_label]].map(([v, l]) => (
-                <div key={l} className="text-center p-5 border border-border rounded-2xl bg-card">
-                  <div className="font-display text-2xl md:text-3xl text-accent">{v}</div>
-                  <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">{l}</div>
-                </div>
-              ))}
             </div>
           </motion.div>
         </div>
@@ -142,10 +137,10 @@ const About = () => {
         </motion.div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {[
-            { icon: Compass, t: "Organisation complète", d: "Vols, hôtels, transports, visas, repas — chaque étape est orchestrée pour vous." },
-            { icon: HandHeart, t: "Accompagnement humain", d: "Un guide bilingue à vos côtés, du décollage au retour. Jamais seul." },
-            { icon: MapPin, t: "Expériences authentiques", d: "Geishas, cérémonie du thé, ryokans, marchés cachés — le Japon des Japonais." },
-            { icon: ShieldCheck, t: "Aucun stress", d: "Vous n'avez qu'à profiter. On s'occupe de tout, dans les moindres détails." },
+            { icon: ShieldCheck, t: "Une agence marocaine identifiée", d: "LeJapon.ma s'inscrit dans l'activité de Moroccan Express Travel & Events, avec des points de contact au Maroc." },
+            { icon: Compass, t: "Une marque spécialisée Japon", d: "Les circuits, hôtels, transports et expériences sont étudiés autour d'une destination unique : le Japon." },
+            { icon: HandHeart, t: "Un accompagnement humain", d: "L'équipe répond avant le départ et reste mobilisée pendant le parcours prévu pour le groupe." },
+            { icon: MapPin, t: "Une connaissance du terrain", d: "Les programmes s'appuient sur les villes, les usages et les partenaires mobilisés au Japon." },
           ].map((item, i) => (
             <motion.div key={item.t} {...fade(i * 0.08)} className="relative p-7 rounded-2xl border border-border bg-card shadow-soft">
               <div className="w-12 h-12 rounded-xl bg-accent/10 text-accent flex items-center justify-center mb-5">
@@ -165,13 +160,13 @@ const About = () => {
             <motion.div {...fade()} className="lg:col-span-7">
               <p className="eyebrow mb-4">Notre équipe</p>
               <h2 className="font-display text-4xl md:text-5xl leading-tight mb-8 text-balance">
-                Des passionnés, <span className="italic text-accent">avant tout.</span>
+                Une équipe mobilisée <span className="italic text-accent">au Maroc et au Japon.</span>
               </h2>
               <div className="space-y-6">
                 {[
-                  { t: "Passionnés du Japon", d: "Nous y vivons, nous y retournons sans cesse, nous en parlons comme d'une seconde maison." },
-                  { t: "Experts terrain", d: "Une connaissance fine des villes, des saisons, des hôtels, des trains et des secrets bien gardés." },
-                  { t: "Présents avant, pendant, après", d: "De votre première question au retour à Casablanca — et bien après — nous restons à vos côtés." },
+                  { t: "Conseillers au Maroc", d: "L'équipe accompagne le choix du départ, la réservation et la préparation du dossier avant le voyage." },
+                  { t: "Accompagnement adapté au programme", d: "Selon le voyage publié, un accompagnateur francophone parlant japonais peut faciliter les échanges et la compréhension des codes locaux." },
+                  { t: "Relais et partenaires au Japon", d: "La connaissance du terrain et les contacts locaux soutiennent l'organisation des étapes sur place." },
                 ].map((item, i) => (
                   <motion.div key={item.t} {...fade(i * 0.08)} className="flex gap-5">
                     <div className="shrink-0 w-10 h-10 rounded-full bg-accent text-accent-foreground flex items-center justify-center font-display text-sm">
@@ -194,6 +189,44 @@ const About = () => {
         </div>
       </section>
 
+      {/* IDENTITÉ ET CONTACT */}
+      <section className="container-app py-20 md:py-28">
+        <div className="grid gap-10 rounded-3xl border border-border bg-secondary/35 p-7 sm:p-10 lg:grid-cols-[1.05fr_1fr] lg:items-start">
+          <div>
+            <p className="eyebrow mb-4">Une agence accessible</p>
+            <h2 className="font-display text-4xl md:text-5xl leading-tight text-balance">
+              Moroccan Express Travel &amp; Events, <span className="italic text-accent">au service de votre projet Japon.</span>
+            </h2>
+            <p className="mt-5 leading-relaxed text-muted-foreground">
+              LeJapon.ma, marque spécialisée Japon de Moroccan Express Travel &amp; Events, vous permet d’échanger avec l’équipe, de vérifier les départs publiés et de demander un accompagnement depuis le Maroc avant toute réservation.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Link to="/contact" className="btn-primary">Contacter l’agence</Link>
+              <a href="https://maps.app.goo.gl/ineHnJq3o5DqGByH8" target="_blank" rel="noopener noreferrer" className="btn-ghost">Consulter les avis Google</a>
+            </div>
+          </div>
+          <div>
+            {(contact.addresses ?? []).length > 0 && (
+              <>
+                <h3 className="font-display text-2xl">Nos points de contact au Maroc</h3>
+                <ul className="mt-5 grid gap-4">
+                  {contact.addresses.map((address) => (
+                    <li key={`${address.city}-${address.line}`} className="flex gap-3 rounded-2xl border border-border bg-background p-5">
+                      <MapPin className="mt-1 h-5 w-5 shrink-0 text-accent" />
+                      <div>
+                        <p className="font-semibold">{address.city}</p>
+                        <p className="mt-1 text-sm leading-6 text-muted-foreground">{address.line}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <a href={`mailto:${contact.email}`} className="mt-5 inline-flex font-semibold text-accent hover:underline underline-offset-4">Écrire à {contact.email}</a>
+          </div>
+        </div>
+      </section>
+
       {/* CONCLUSION CTA */}
       <section className="container-app py-24 md:py-32">
         <motion.div {...fade()} className="max-w-3xl mx-auto text-center">
@@ -203,8 +236,9 @@ const About = () => {
           </p>
           <div className="mt-12 flex flex-wrap items-center justify-center gap-4">
             <Link to="/voyages" className="btn-primary text-base">
-              Découvrir nos voyages <ArrowRight className="w-5 h-5" />
+              Découvrir nos voyages au Japon <ArrowRight className="w-5 h-5" />
             </Link>
+            <Link to="/programme" className="btn-ghost text-base">Voir les circuits détaillés</Link>
             <Link to="/contact" className="btn-ghost text-base">
               Nous contacter
             </Link>

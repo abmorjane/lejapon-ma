@@ -88,6 +88,40 @@ if (voyages.document.title === homepage.document.title) throw new Error("Voyages
 if (new URL(voyages.document.querySelector('link[rel="canonical"]')?.getAttribute("href") ?? "").pathname !== "/voyages") {
   throw new Error("Voyages canonical is invalid.");
 }
+
+const assertPillarPage = (route, page, { title, h1, text, links }) => {
+  const headings = [...page.document.querySelectorAll("h1")];
+  if (headings.length !== 1) throw new Error(`${route} must contain exactly one H1; found ${headings.length}.`);
+  const h1Text = headings[0].textContent?.replace(/\s+/g, " ").trim() ?? "";
+  const bodyText = page.document.body.textContent?.replace(/\s+/g, " ").trim() ?? "";
+  if (!title.test(page.document.title)) throw new Error(`${route} title does not match its pillar intent.`);
+  if (!h1.test(h1Text)) throw new Error(`${route} H1 does not match its pillar intent: ${h1Text}`);
+  for (const expected of text) {
+    if (!bodyText.includes(expected)) throw new Error(`${route} is missing expected commercial copy: ${expected}`);
+  }
+  const hrefs = new Set([...page.document.querySelectorAll("a[href]")].map((link) => link.getAttribute("href")));
+  for (const href of links) {
+    if (!hrefs.has(href)) throw new Error(`${route} is missing its internal link to ${href}`);
+  }
+};
+
+assertPillarPage("/voyages", voyages, {
+  title: /Voyage Japon depuis le Maroc/i,
+  h1: /Voyages organisés au Japon.*depuis le Maroc/i,
+  text: ["Quel prix pour un voyage organisé au Japon depuis le Maroc", "L’accompagnement LeJapon.ma"],
+  links: ["/programme", "/visa-japon-maroc", "/a-propos", "/reserver"],
+});
+
+const programme = await loadHtml("/programme");
+assertPillarPage("/programme", programme, {
+  title: /Programme voyage Japon/i,
+  h1: /Programmes et itinéraires.*circuits au Japon/i,
+  text: ["Choisissez votre programme de voyage au Japon", "Du programme détaillé à la réservation"],
+  links: ["/voyages", "/experiences", "/hotels", "/reserver"],
+});
+if (/13\s*(?:et|ou|\/)\s*17\s*jours/i.test(programme.document.title)) {
+  throw new Error("Programme title must not hardcode current circuit durations.");
+}
 for (const [route, title] of prerenderTitles) {
   if (route !== "/" && title === homepage.document.title) throw new Error(`${route} retained the homepage title.`);
 }
@@ -96,6 +130,27 @@ const visa = await loadHtml("/visa-japon-maroc");
 if (!/visa/i.test(visa.document.querySelector("h1")?.textContent ?? "")) throw new Error("Visa H1 is missing.");
 const visaJsonLd = [...visa.document.querySelectorAll('script[type="application/ld+json"]')].map((script) => JSON.parse(script.textContent || "{}"));
 if (!visaJsonLd.some((value) => value["@type"] === "FAQPage")) throw new Error("Visa FAQPage JSON-LD is missing.");
+assertPillarPage("/visa-japon-maroc", visa, {
+  title: /Visa Japon Maroc/i,
+  h1: /Visa Japon au Maroc/i,
+  text: ["Règles officielles du visa Japon", "Informations vérifiées le 26 septembre 2026 auprès de l’Ambassade du Japon au Maroc."],
+  links: ["/voyages", "/reserver", "/mon-voyage-questions-reponses"],
+});
+if (!visa.document.querySelector('a[href^="https://www.ma.emb-japan.go.jp/"]')) {
+  throw new Error("Visa page is missing its official Embassy source.");
+}
+
+const about = await loadHtml("/a-propos");
+assertPillarPage("/a-propos", about, {
+  title: /Agence de voyage Japon au Maroc/i,
+  h1: /agence marocaine spécialisée.*voyages au Japon/i,
+  text: ["LeJapon.ma, marque spécialisée Japon de Moroccan Express Travel & Events", "Nos points de contact au Maroc"],
+  links: ["/voyages", "/programme", "/contact"],
+});
+const aboutText = about.document.body.textContent?.replace(/\s+/g, " ") ?? "";
+if (/\+500|\+30|\+10 ans|150 avis|4[,.]9\/5/i.test(aboutText)) {
+  throw new Error("About page contains an unverified commercial figure.");
+}
 
 const blog = await loadHtml("/blog");
 if (!blog.document.querySelector("h1")?.textContent?.trim()) throw new Error("Blog H1 is missing.");

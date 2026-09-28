@@ -50,6 +50,8 @@ type Programme = {
 };
 
 const WHATSAPP = "212711449838";
+const PROGRAMME_SEO_TITLE = "Programme voyage Japon : circuits et itinéraires | LeJapon.ma";
+const PROGRAMME_SEO_DESCRIPTION = "Explorez nos programmes de voyage au Japon : circuits, itinéraires, villes, rythme et étapes réellement proposés selon le départ.";
 
 export default function ProgrammePage() {
   const [rows, setRows] = useState<Programme[]>([]);
@@ -100,8 +102,8 @@ export default function ProgrammePage() {
   return (
     <>
       <Seo
-        title={active ? `${active.title} — lejapon.ma` : "Programme — Voyages Japon | lejapon.ma"}
-        description={active?.meta_description || active?.introduction || "Découvrez nos programmes de voyage au Japon : itinéraires détaillés, villes traversées et PDF téléchargeable."}
+        title={PROGRAMME_SEO_TITLE}
+        description={PROGRAMME_SEO_DESCRIPTION}
         canonical="/programme"
         prerenderReady={!loading}
       />
@@ -122,6 +124,14 @@ export default function ProgrammePage() {
           </div>
         ) : (
           <>
+            <div className="mx-auto mb-9 max-w-3xl text-center md:mb-12">
+              <p className="eyebrow mb-3">Circuits publiés</p>
+              <h2 className="font-display text-3xl md:text-5xl text-balance">Choisissez votre programme de voyage au Japon</h2>
+              <p className="mt-4 leading-relaxed text-muted-foreground">
+                Comparez les durées et les étapes réellement proposées. Le détail jour par jour ci-dessous s’adapte au programme sélectionné, car le rythme et certaines visites peuvent varier selon le départ.
+              </p>
+            </div>
+
             {/* Tabs */}
             <div className="flex justify-start sm:justify-center mb-10 md:mb-12 -mx-4 px-4 sm:-mx-5 sm:px-5 md:mx-0 md:px-0 overflow-x-auto overflow-y-hidden max-w-[100vw]">
               <div className="inline-flex max-w-full p-1.5 bg-secondary rounded-full border border-border shadow-soft">
@@ -151,6 +161,7 @@ export default function ProgrammePage() {
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.35 }}
                 >
+                  <ProgrammeOverview programme={active} />
                   {active.rich_days.length > 0 ? (
                     <RichDays programme={active} />
                   ) : (
@@ -162,6 +173,8 @@ export default function ProgrammePage() {
           </>
         )}
       </section>
+
+      <ProgrammeLinks />
       </div>
 
       {/* Floating WhatsApp */}
@@ -205,7 +218,7 @@ function ProgrammeHero({ active, loading }: { active?: Programme; loading: boole
           animate={{ opacity: 1, y: 0 }}
           className="inline-block text-xs uppercase tracking-[0.25em] text-accent font-semibold mb-4"
         >
-          {active?.duration || "Itinéraires"}
+          {active?.duration ? `Circuit ${active.duration}` : "Itinéraires au Japon"}
         </motion.span>
         <motion.h1
           initial={{ opacity: 0, y: 12 }}
@@ -213,26 +226,26 @@ function ProgrammeHero({ active, loading }: { active?: Programme; loading: boole
           transition={{ delay: 0.05 }}
           className="font-display text-3xl sm:text-4xl md:text-6xl tracking-tight leading-tight max-w-full break-words"
         >
-          {active?.title || "Nos programmes au Japon"}
+          Programmes et itinéraires de nos circuits au Japon
         </motion.h1>
-        {active?.subtitle && (
+        {active?.title && (
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.12 }}
             className="text-foreground/80 mt-3 text-base sm:text-lg md:text-xl max-w-full break-words"
           >
-            {active.subtitle}
+            {active.title}{active.subtitle ? ` — ${active.subtitle}` : ""}
           </motion.p>
         )}
-        {active?.introduction && (
+        {active && (
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.18 }}
             className="text-muted-foreground mt-5 max-w-2xl mx-auto leading-relaxed text-[15px] sm:text-base px-0 sm:px-2 break-words"
           >
-            {active.introduction}
+            {active.description || `Découvrez les étapes et le rythme de ce programme de ${active.duration || "voyage"} au Japon.`}
           </motion.p>
         )}
         {!loading && active && (
@@ -259,6 +272,41 @@ function ProgrammeHero({ active, loading }: { active?: Programme; loading: boole
   );
 }
 
+function ProgrammeOverview({ programme }: { programme: Programme }) {
+  const cities = Array.from(new Set(programme.cities.filter(Boolean)));
+  return (
+    <section aria-labelledby={`programme-overview-${programme.id}`} className="mb-10 rounded-3xl border border-border bg-secondary/35 p-5 sm:p-7 md:p-9">
+      <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr] lg:items-start">
+        <div>
+          <p className="eyebrow mb-3">Logique du circuit</p>
+          <h2 id={`programme-overview-${programme.id}`} className="font-display text-3xl md:text-4xl text-balance">
+            Circuit Japon de {programme.duration || "plusieurs jours"} : villes, rythme et temps libres
+          </h2>
+          <p className="mt-4 leading-relaxed text-muted-foreground">
+            {programme.description || "Chaque itinéraire équilibre grandes villes, étapes culturelles, déplacements organisés et temps pour découvrir le Japon à votre rythme."}
+          </p>
+          <p className="mt-3 text-sm leading-7 text-muted-foreground">
+            Les visites, excursions optionnelles et journées libres sont indiquées dans le détail du programme actif. Vérifiez toujours le départ choisi avant de réserver.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-border bg-background p-5">
+          <h3 className="font-display text-xl">Étapes publiées pour ce programme</h3>
+          {cities.length > 0 ? (
+            <ul className="mt-4 flex flex-wrap gap-2" aria-label="Villes du circuit">
+              {cities.map((city) => <li key={city} className="rounded-full bg-secondary px-3 py-1.5 text-sm font-medium">{city}</li>)}
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">Les étapes seront précisées avec le prochain programme publié.</p>
+          )}
+          <p className="mt-5 text-sm leading-7 text-muted-foreground">
+            Tokyo, Kyoto, Osaka, Hiroshima et Miyajima figurent dans les circuits lorsque ces étapes sont prévues par le programme sélectionné.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SimpleSummary({ active }: { active: Programme }) {
   return (
     <div className="space-y-12 w-full max-w-full [overflow:clip]">
@@ -275,7 +323,7 @@ function SimpleSummary({ active }: { active: Programme }) {
             </span>
           )}
         </div>
-        <h2 className="font-display text-3xl md:text-4xl mb-3 max-w-full break-words">{active.title}</h2>
+        <h3 className="font-display text-3xl md:text-4xl mb-3 max-w-full break-words">Aperçu de {active.title}</h3>
         {active.description && (
           <p className="text-muted-foreground leading-relaxed max-w-3xl break-words">{active.description}</p>
         )}
@@ -336,6 +384,32 @@ function SimpleSummary({ active }: { active: Programme }) {
         </div>
       )}
     </div>
+  );
+}
+
+function ProgrammeLinks() {
+  const links = [
+    ["Voir les prochains voyages", "Comparez les dates, les saisons et les prix des départs ouverts.", "/voyages"],
+    ["Choisir des expériences au Japon", "Complétez le circuit avec les activités proposées pour votre séjour.", "/experiences"],
+    ["Consulter les hôtels", "Découvrez les hébergements présentés par ville et par itinéraire.", "/hotels"],
+    ["Réserver un départ", "Configurez votre voyage et vérifiez le montant avant confirmation.", "/reserver"],
+  ];
+  return (
+    <section aria-labelledby="programme-next-title" className="container-app px-4 sm:px-5 md:px-8 lg:px-12 pb-20 md:pb-28">
+      <div className="rounded-3xl bg-foreground p-7 text-background sm:p-10 md:p-12">
+        <p className="eyebrow !text-background/60 mb-3">Préparer la suite</p>
+        <h2 id="programme-next-title" className="font-display text-3xl md:text-4xl">Du programme détaillé à la réservation</h2>
+        <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {links.map(([label, description, to]) => (
+            <article key={to} className="rounded-2xl border border-background/15 bg-background/5 p-5">
+              <h3 className="font-display text-xl">{label}</h3>
+              <p className="mt-2 text-sm leading-6 text-background/70">{description}</p>
+              <Link to={to} className="mt-4 inline-flex text-sm font-semibold text-accent hover:underline underline-offset-4">{label}</Link>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
