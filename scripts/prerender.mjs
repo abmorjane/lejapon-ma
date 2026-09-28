@@ -15,6 +15,16 @@ const PORT = 4178;
 const localOrigin = `http://${HOST}:${PORT}`;
 const viteBinary = path.join(projectRoot, "node_modules/vite/bin/vite.js");
 const manifest = await readJson(manifestPath);
+const analyticsHostPattern = /(^|\.)(google-analytics\.com|googletagmanager\.com|clarity\.ms|facebook\.com|connect\.facebook\.net|openai\.com)$/i;
+const analyticsRequests = [];
+
+const isAnalyticsRequest = (requestUrl) => {
+  try {
+    return analyticsHostPattern.test(new URL(requestUrl).hostname);
+  } catch {
+    return false;
+  }
+};
 
 const waitForPreview = async () => {
   const deadline = Date.now() + 30_000;
@@ -48,12 +58,19 @@ try {
   });
 
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => {
+    window.__LEJAPON_PRERENDER__ = true;
+  });
   await page.setBypassServiceWorker(true);
   await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.setRequestInterception(true);
   page.on("request", (request) => {
-    if (["image", "media", "font"].includes(request.resourceType())) request.abort();
+    if (isAnalyticsRequest(request.url())) {
+      analyticsRequests.push(request.url());
+      request.abort();
+    }
+    else if (["image", "media", "font"].includes(request.resourceType())) request.abort();
     else request.continue();
   });
 
@@ -128,9 +145,17 @@ try {
   manifest.prerenderResults = results;
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
+  if (analyticsRequests.length) {
+    throw new Error(`Analytics requests were attempted during prerender:\n${[...new Set(analyticsRequests)].join("\n")}`);
+  }
+  console.log("Prerender analytics guard: 0 external tracking requests.");
+
   // Boot one generated snapshot as a real client navigation. main.tsx must replace,
   // not hydrate, the SEO snapshot without React hydration errors or duplicate content.
   const verificationPage = await browser.newPage();
+  await verificationPage.evaluateOnNewDocument(() => {
+    window.__LEJAPON_PRERENDER__ = true;
+  });
   await verificationPage.setBypassServiceWorker(true);
   const bootErrors = [];
   verificationPage.on("pageerror", (error) => bootErrors.push(error.message));

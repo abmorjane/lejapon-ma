@@ -11,6 +11,9 @@ import { fmtDate } from "@/lib/format";
 import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
 import { useRecaptcha } from "@/hooks/useRecaptcha";
 import { trackEvent } from "@/lib/analytics";
+import { attributionAnalyticsParams, getCurrentAttribution } from "@/lib/attribution";
+import { classifyBookingFailure, createBookingFunnel } from "@/lib/booking-funnel";
+import { createBookingWithMeasurement } from "@/lib/meta-conversions";
 import { findOrCreateClientForBooking } from "@/lib/crm-client";
 import { useAgencySettings } from "@/hooks/useAgencySettings";
 import { commercialDateKey } from "@/lib/public-commercial-visibility";
@@ -38,6 +41,13 @@ type TripRow = {
   short_description: string | null;
   base_price_mad: number;
   promo_percent?: number | null;
+};
+
+type ReturningClientRow = {
+  trips_completed: number;
+  loyalty_tier: string;
+  is_returning: boolean;
+  client_rewards: Array<{ label: string; status: string }> | null;
 };
 
 const fmt = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n)) + " MAD";
@@ -71,10 +81,7 @@ const Booking = () => {
   const { ready: captchaReady, executeRecaptcha, verify: verifyRecaptcha, enabled: recaptchaEnabled } = useRecaptcha({ active: step >= TOTAL_STEPS });
   const [submitting, setSubmitting] = useState(false);
   const tripAutoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    trackEvent("booking_form_started", { source: "public_booking" });
-  }, []);
+  const bookingFunnel = useRef(createBookingFunnel(trackEvent));
 
   useEffect(() => {
     return () => {
@@ -114,11 +121,7 @@ const Booking = () => {
     if (matchedTrip) {
       setTripId(matchedTrip.id);
       setTripLocked(true);
-      setStep((s) => {
-        if (s >= 2) return s;
-        trackEvent("booking_step_1_completed", { source: "trip_url_preselect", from_step: s, to_step: 2 });
-        return 2;
-      });
+      setStep((s) => (s >= 2 ? s : 2));
     } else if (!tripId) {
       setTripId(tripsList[0].id);
     }
@@ -132,12 +135,12 @@ const Booking = () => {
     const t = setTimeout(async () => {
       const { data } = await supabase
         .from("clients")
-        .select("id, trips_completed, loyalty_tier, is_returning, client_rewards:client_rewards(label,status)" as any)
+        .select("id, trips_completed, loyalty_tier, is_returning, client_rewards:client_rewards(label,status)")
         .ilike("email", email)
         .maybeSingle();
-      const c: any = data;
+      const c = data as unknown as ReturningClientRow | null;
       if (c?.is_returning) {
-        const reward = (c.client_rewards ?? []).find((r: any) => r.status === "available");
+        const reward = (c.client_rewards ?? []).find((entry) => entry.status === "available");
         setReturning({ trips: c.trips_completed, tier: c.loyalty_tier, reward: reward?.label });
       } else setReturning(null);
     }, 500);
@@ -145,6 +148,12 @@ const Booking = () => {
   }, [info.email]);
 
   const selectedTrip = useMemo(() => tripsList.find((tr) => tr.id === tripId) ?? null, [tripId, tripsList]);
+
+  useEffect(() => {
+    if (step === TOTAL_STEPS) {
+      bookingFunnel.current.contactStepViewed({ trip_id: selectedTrip?.id ?? null });
+    }
+  }, [selectedTrip?.id, step]);
 
   // If triple becomes invalid (total not a multiple of 3), fall back to double
   useEffect(() => {
@@ -193,29 +202,39 @@ const Booking = () => {
       const nextStep = Math.min(TOTAL_STEPS, current + 1);
       if (nextStep !== current) {
         if (current === 1 || current === 2) {
-          trackEvent(current === 1 ? "booking_step_1_completed" : "booking_step_2_completed", { source: "next_button", from_step: current, to_step: nextStep });
+          bookingFunnel.current.stepCompleted(current, {
+            source: "next_button",
+            from_step: current,
+            to_step: nextStep,
+            trip_id: selectedTrip?.id ?? null,
+          });
         }
       }
       return nextStep;
     });
-  }, []);
+  }, [selectedTrip?.id]);
   const prev = useCallback(() => setStep((s) => Math.max(minStep, s - 1)), [minStep]);
   const canSubmit = Boolean(info.name && info.email && !submitting && captchaReady);
 
   const selectTripAndAdvance = useCallback((nextTripId: string) => {
     const selected = tripsList.find((tr) => tr.id === nextTripId);
     setTripId((current) => (current === nextTripId ? current : nextTripId));
-    trackEvent("booking_step_1_completed", {
+    bookingFunnel.current.tripSelected({
       source: "public_booking",
       trip_id: nextTripId,
       trip_slug: selected?.slug ?? null,
-      trip_index: selected ? tripsList.findIndex((tr) => tr.id === nextTripId) : null,
     });
     if (tripAutoAdvanceTimer.current) clearTimeout(tripAutoAdvanceTimer.current);
     tripAutoAdvanceTimer.current = setTimeout(() => {
       setStep((currentStep) => {
         if (currentStep !== 1) return currentStep;
-        trackEvent("booking_step_1_completed", { source: "trip_auto_advance", from_step: 1, to_step: 2 });
+        bookingFunnel.current.stepCompleted(1, {
+          source: "trip_auto_advance",
+          from_step: 1,
+          to_step: 2,
+          trip_id: nextTripId,
+          trip_slug: selected?.slug ?? null,
+        });
         return 2;
       });
     }, 275);
@@ -241,7 +260,24 @@ const Booking = () => {
 
   const submit = async () => {
     if (submitting) return;
+    const attribution = getCurrentAttribution();
+    const safeMarketingParams = {
+      source: "public_site",
+      trip_id: selectedTrip?.id ?? null,
+      trip_slug: selectedTrip?.slug ?? null,
+      travelers_count: adults + children,
+      room_type: room,
+      hotel_option: hotel,
+      ...attributionAnalyticsParams(attribution),
+    };
+    bookingFunnel.current.submitAttempted(safeMarketingParams);
+    if (!info.name.trim() || !info.email.trim()) {
+      bookingFunnel.current.submitFailed("validation_failed", safeMarketingParams);
+      toast.error("Merci de renseigner votre nom et votre email.");
+      return;
+    }
     setSubmitting(true);
+    let failureStage: "recaptcha" | "validation" | "database" | "unknown" = "recaptcha";
     try {
       // reCAPTCHA: client → server verification
       let token = "";
@@ -251,12 +287,9 @@ const Booking = () => {
       if (!check.ok) {
         throw new Error("Vérification anti-spam refusée. Merci de réessayer.");
       }
+      failureStage = "database";
 
       const tripMeta = selectedTrip;
-      const tripLabel = tripMeta
-        ? (tripMeta.season || tripMeta.title) +
-          (tripMeta.start_date ? ` — ${fmtDate(tripMeta.start_date)}` : "")
-        : null;
       let clientId: string | null = null;
       try {
         const result = await findOrCreateClientForBooking({
@@ -274,27 +307,37 @@ const Booking = () => {
       } catch {
         clientId = null;
       }
-      const newBookingId = crypto.randomUUID();
-      const { error } = await supabase.from("bookings").insert({
-        id: newBookingId,
-        contact_name: info.name,
-        contact_email: info.email,
-        contact_phone: info.phone,
-        contact_city: info.city,
-        client_id: clientId,
-        num_adults: adults,
-        num_children: children,
-        formula: hotel,
-        room_type: room,
-        trip_id: tripMeta?.id ?? null,
-        preferred_dates: tripMeta ? formatDates(tripMeta.start_date, tripMeta.end_date) || tripMeta.season || tripMeta.title : null,
-        message: info.notes,
-        total_amount_mad: Math.round(pricing.total),
-        status: "lead" as const,
-        source: "website",
+      const proposedBookingId = crypto.randomUUID();
+      const newBookingId = await createBookingWithMeasurement({
+        createBooking: async () => {
+          const { error } = await supabase.from("bookings").insert({
+            id: proposedBookingId,
+            contact_name: info.name,
+            contact_email: info.email,
+            contact_phone: info.phone,
+            contact_city: info.city,
+            client_id: clientId,
+            num_adults: adults,
+            num_children: children,
+            formula: hotel,
+            room_type: room,
+            trip_id: tripMeta?.id ?? null,
+            preferred_dates: tripMeta ? formatDates(tripMeta.start_date, tripMeta.end_date) || tripMeta.season || tripMeta.title : null,
+            message: info.notes,
+            total_amount_mad: Math.round(pricing.total),
+            status: "lead" as const,
+            source: "website",
+            marketing_first_touch: attribution?.first_touch ?? null,
+            marketing_last_touch: attribution?.last_touch ?? null,
+          });
+          if (error) throw error;
+          return proposedBookingId;
+        },
+        eventSourceUrl: `${window.location.origin}${window.location.pathname}`,
+        attribution,
+        analyticsParams: { ...safeMarketingParams, extras_count: 0 },
       });
-      if (error) throw error;
-      const { data: fullBookingData, error: fullBookingError } = await supabase
+      const { data: fullBookingData } = await supabase
         .from("bookings")
         .select("*, clients(*), trips(*), booking_extras(*)")
         .eq("id", newBookingId)
@@ -311,12 +354,6 @@ const Booking = () => {
         }
         if (error || data?.ok === false) console.warn("admin booking notification failed", data ?? error);
       });
-      trackEvent("booking_form_submitted", {
-        source: "public_site",
-        trip_id: tripMeta?.id ?? null,
-        travelers_count: adults + children,
-        extras_count: 0,
-      });
       setCreatedBookingId(newBookingId);
       setExtras({});
       setPostBookingExtrasOpen(false);
@@ -325,8 +362,9 @@ const Booking = () => {
       setDone(true);
       trackEvent("booking_success_extras_shown", { trip_id: tripMeta?.id ?? null });
       window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch (e: any) {
-      toast.error(e.message ?? "Erreur lors de l'envoi");
+    } catch (e: unknown) {
+      bookingFunnel.current.submitFailed(classifyBookingFailure(e, failureStage), safeMarketingParams);
+      toast.error(e instanceof Error ? e.message : "Erreur lors de l'envoi");
     } finally {
       setSubmitting(false);
     }
@@ -367,8 +405,8 @@ const Booking = () => {
         extras_total: Math.round(extrasTotal),
       });
       toast.success("Expériences ajoutées à votre réservation.");
-    } catch (error: any) {
-      toast.error(error?.message ?? "Impossible d'ajouter ces expériences.");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Impossible d'ajouter ces expériences.");
     } finally {
       setSavingPostBookingExtras(false);
     }
@@ -858,14 +896,22 @@ const Booking = () => {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex min-h-11 items-center justify-center gap-2 border border-accent bg-accent text-sm font-semibold text-accent-foreground transition-colors hover:bg-foreground"
-                    onClick={() => trackEvent("whatsapp_clicked", { placement: "booking_summary", trip_id: selectedTrip?.id ?? null })}
+                    onClick={() => trackEvent("whatsapp_clicked", {
+                      placement: "booking_summary",
+                      trip_id: selectedTrip?.id ?? null,
+                      ...attributionAnalyticsParams(getCurrentAttribution()),
+                    })}
                   >
                     <MessageCircle className="h-4 w-4" /> WhatsApp
                   </a>
                   <a
                     href={phoneHref}
                     className="inline-flex min-h-11 items-center justify-center gap-2 border border-border bg-background/70 text-sm font-semibold transition-colors hover:border-accent hover:text-accent"
-                    onClick={() => trackEvent("phone_clicked", { placement: "booking_summary", trip_id: selectedTrip?.id ?? null })}
+                    onClick={() => trackEvent("phone_clicked", {
+                      placement: "booking_summary",
+                      trip_id: selectedTrip?.id ?? null,
+                      ...attributionAnalyticsParams(getCurrentAttribution()),
+                    })}
                   >
                     <PhoneCall className="h-4 w-4" /> Être rappelé
                   </a>
@@ -924,14 +970,22 @@ const Booking = () => {
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex min-h-10 items-center justify-center gap-2 border border-border text-xs font-semibold"
-              onClick={() => trackEvent("whatsapp_clicked", { placement: "booking_mobile_sticky", trip_id: selectedTrip?.id ?? null })}
+              onClick={() => trackEvent("whatsapp_clicked", {
+                placement: "booking_mobile_sticky",
+                trip_id: selectedTrip?.id ?? null,
+                ...attributionAnalyticsParams(getCurrentAttribution()),
+              })}
             >
               <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
             </a>
             <a
               href={phoneHref}
               className="inline-flex min-h-10 items-center justify-center gap-2 border border-border text-xs font-semibold"
-              onClick={() => trackEvent("phone_clicked", { placement: "booking_mobile_sticky", trip_id: selectedTrip?.id ?? null })}
+              onClick={() => trackEvent("phone_clicked", {
+                placement: "booking_mobile_sticky",
+                trip_id: selectedTrip?.id ?? null,
+                ...attributionAnalyticsParams(getCurrentAttribution()),
+              })}
             >
               <PhoneCall className="h-3.5 w-3.5" /> Rappel
             </a>

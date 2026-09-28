@@ -355,6 +355,8 @@ export type Database = {
           id: string
           message: string | null
           metadata: Json
+          marketing_first_touch: Json | null
+          marketing_last_touch: Json | null
           num_adults: number
           num_children: number
           paid_amount_mad: number
@@ -384,6 +386,8 @@ export type Database = {
           id?: string
           message?: string | null
           metadata?: Json
+          marketing_first_touch?: Json | null
+          marketing_last_touch?: Json | null
           num_adults?: number
           num_children?: number
           paid_amount_mad?: number
@@ -413,6 +417,8 @@ export type Database = {
           id?: string
           message?: string | null
           metadata?: Json
+          marketing_first_touch?: Json | null
+          marketing_last_touch?: Json | null
           num_adults?: number
           num_children?: number
           paid_amount_mad?: number

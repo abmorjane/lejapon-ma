@@ -18,7 +18,8 @@ import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from
 import { DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
 import { publicPath, type PublicRouteId } from "@/config/publicRoutes";
 import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
-import { initAnalytics, trackPageView } from "@/lib/analytics";
+import { isMarketingTrackingAllowed, trackPageView } from "@/lib/analytics";
+import { captureCurrentAttribution, stripOpaqueAttributionFromCurrentUrl } from "@/lib/attribution";
 import { installWebViewGuards } from "@/lib/webview-guards";
 
 const queryClient = new QueryClient({
@@ -170,12 +171,16 @@ const AnalyticsRouteTracker = () => {
 
   useEffect(() => {
     installWebViewGuards();
-    initAnalytics();
   }, []);
 
   useEffect(() => {
     const path = `${location.pathname}${location.search}`;
-    window.setTimeout(() => trackPageView(path, document.title), 0);
+    if (isMarketingTrackingAllowed(location.pathname)) {
+      captureCurrentAttribution();
+      stripOpaqueAttributionFromCurrentUrl();
+    }
+    const timer = window.setTimeout(() => trackPageView(path, document.title), 0);
+    return () => window.clearTimeout(timer);
   }, [location.pathname, location.search]);
 
   return null;

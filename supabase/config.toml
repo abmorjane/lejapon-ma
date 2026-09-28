@@ -13,6 +13,11 @@ verify_jwt = false
 [functions.recaptcha]
 verify_jwt = false
 
+# Public booking clients invoke this after a successful insert. The function
+# verifies the booking server-side before sending any conversion to Meta.
+[functions.meta-conversion]
+verify_jwt = false
+
 [functions.send-contact-email]
 verify_jwt = false
 
@@ -39,4 +44,3 @@ verify_jwt = false
 
 [functions.send-visa-reminders]
 verify_jwt = false
-
