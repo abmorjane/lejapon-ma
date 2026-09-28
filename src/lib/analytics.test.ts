@@ -15,6 +15,7 @@ const productionContext = {
   isProduction: true,
   deployEnv: "production",
   isPrerender: false,
+  marketingTrackingEnabled: true,
   gaMeasurementId: "G-TEST",
   clarityProjectId: "clarity-test",
   metaPixelId: "pixel-test",
@@ -41,6 +42,26 @@ describe("marketing analytics safeguards", () => {
     expect(isMarketingTrackingAllowed("/voyages", { ...productionContext, deployEnv: "preview" })).toBe(false);
     expect(isMarketingTrackingAllowed("/voyages", { ...productionContext, isProduction: false })).toBe(false);
     expect(isMarketingTrackingAllowed("/voyages", { ...productionContext, isPrerender: true })).toBe(false);
+  });
+
+  it("allows tracking when the activation flag is enabled on a public production route", () => {
+    expect(isMarketingTrackingAllowed("/voyages", productionContext)).toBe(true);
+  });
+
+  it("loads no provider and emits no event when the activation flag is disabled", () => {
+    window.history.replaceState({}, "", "/voyages");
+    const disabledContext = { ...productionContext, marketingTrackingEnabled: false };
+
+    expect(isMarketingTrackingAllowed("/voyages", disabledContext)).toBe(false);
+    expect(trackPageView("/voyages", "Voyages", disabledContext)).toBe(false);
+    expect(trackEvent("reservation_cta_clicked", { placement: "hero" }, { context: disabledContext })).toBe(false);
+
+    expect(document.querySelector("#lejapon-ga4-script")).toBeNull();
+    expect(document.querySelector("#lejapon-meta-pixel-script")).toBeNull();
+    expect(document.querySelector("#lejapon-clarity-script")).toBeNull();
+    expect(window.gtag).not.toHaveBeenCalled();
+    expect(window.fbq).not.toHaveBeenCalled();
+    expect(window.clarity).not.toHaveBeenCalled();
   });
 
   it("initializes each configured provider only once", () => {

@@ -4,17 +4,18 @@
 
 `src/lib/analytics.ts` est l’unique point d’entrée navigateur pour GA4, Microsoft Clarity et Meta Pixel. `src/lib/attribution.ts` collecte uniquement les identifiants d’acquisition non personnels et maintient le first-touch / last-touch. `src/lib/booking-funnel.ts` porte la sémantique et l’idempotence du tunnel. Supabase (`bookings`, puis `payments`) reste la source de vérité métier.
 
-Le tracking navigateur est activé uniquement si les quatre conditions suivantes sont vraies : build de production, environnement déclaré production, hôte `lejapon.ma` ou `www.lejapon.ma`, route marketing publique inscrite dans le registre SEO. Il est bloqué sur localhost, preview, staging, test, prerender et toutes les familles privées.
+Le tracking navigateur est activé uniquement si le flag global vaut exactement `true` et si toutes les protections suivantes sont satisfaites : build de production, environnement déclaré production, hôte `lejapon.ma` ou `www.lejapon.ma`, route marketing publique inscrite dans le registre SEO. Il est bloqué sur localhost, preview, staging, test, prerender et toutes les familles privées.
 
 ## Identifiants publics
 
 Variables Vite publiques :
 
+- `VITE_MARKETING_TRACKING_ENABLED=false` par défaut ; l’activation exige explicitement la valeur exacte `true`
 - `VITE_GA_MEASUREMENT_ID=G-RN0Y6FTMQF`
 - `VITE_CLARITY_PROJECT_ID=x1qyez2dwm`
 - `VITE_META_PIXEL_ID=2129665337343090`
 
-Ces identifiants ne sont pas des secrets. Aucun token serveur ne doit être placé dans une variable `VITE_*`.
+Ces identifiants ne sont pas des secrets. Aucun token serveur ne doit être placé dans une variable `VITE_*`. Tant que la stratégie CMP/consentement n’est pas validée, le flag global reste à `false` et empêche l’initialisation de GA4, Clarity et Meta Pixel, ainsi que toute émission marketing navigateur.
 
 ## GA4
 

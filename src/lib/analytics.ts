@@ -18,6 +18,7 @@ declare global {
 const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
 const CLARITY_PROJECT_ID = import.meta.env.VITE_CLARITY_PROJECT_ID as string | undefined;
 const META_PIXEL_ID = import.meta.env.VITE_META_PIXEL_ID as string | undefined;
+const MARKETING_TRACKING_ENABLED = import.meta.env.VITE_MARKETING_TRACKING_ENABLED === "true";
 const ALLOWED_HOSTS = new Set(["lejapon.ma", "www.lejapon.ma"]);
 const BLOCKED_ENV_PATTERN = /(^|[-_])(dev|development|preview|staging|test|local)([-_]|$)/i;
 const SENSITIVE_KEY_PATTERN =
@@ -76,6 +77,7 @@ export type MarketingTrackingContext = {
   isProduction?: boolean;
   deployEnv?: string;
   isPrerender?: boolean;
+  marketingTrackingEnabled?: boolean;
   gaMeasurementId?: string;
   clarityProjectId?: string;
   metaPixelId?: string;
@@ -89,7 +91,14 @@ export const isMarketingTrackingAllowed = (
   const isProduction = context.isProduction ?? Boolean(import.meta.env.PROD);
   const deployEnv = (context.deployEnv ?? getDeployEnv()).toLowerCase();
   const isPrerender = context.isPrerender ?? (hasBrowser() && window.__LEJAPON_PRERENDER__ === true);
-  if (!isProduction || isPrerender || !ALLOWED_HOSTS.has(hostname) || BLOCKED_ENV_PATTERN.test(deployEnv)) return false;
+  const marketingTrackingEnabled = context.marketingTrackingEnabled ?? MARKETING_TRACKING_ENABLED;
+  if (
+    !marketingTrackingEnabled
+    || !isProduction
+    || isPrerender
+    || !ALLOWED_HOSTS.has(hostname)
+    || BLOCKED_ENV_PATTERN.test(deployEnv)
+  ) return false;
   return isPublicMarketingPath(path);
 };
 
