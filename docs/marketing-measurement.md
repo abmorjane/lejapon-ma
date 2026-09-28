@@ -20,13 +20,15 @@ Ces identifiants ne sont pas des secrets. Aucun token serveur ne doit être plac
 
 GA4 est chargé une fois, de façon asynchrone, avec `send_page_view: false`. Chaque navigation SPA publique réelle envoie manuellement un `page_view`. `/voyages` ajoute `view_trip`, `/programme` ajoute `view_programme`, et `/reserver` ajoute `booking_page_viewed` sans déclencher `booking_form_started`.
 
+Lorsqu’une navigation SPA entre dans une route privée, `ga-disable-<MEASUREMENT_ID>` passe à `true`. Le retour vers une route publique le remet à `false` uniquement si aucune future préférence CMP ne bloque la reprise.
+
 Les paramètres autorisés sont des données non personnelles : `trip_id`, `trip_slug`, `travelers_count`, `room_type`, `hotel_option`, `source`, `step`, `placement`, `traffic_source_normalized` et UTMs non sensibles. La sanitization écarte notamment nom, email, téléphone, adresse, documents, données visa/médicales et identifiants de clic opaques.
 
 ## Microsoft Clarity
 
-Clarity conserve le projet `x1qyez2dwm`, est injecté une seule fois et reçoit les noms d’événement ainsi que des propriétés déjà nettoyées. À l’entrée dans une route non publique, le code suspend le consentement Clarity pour éviter une capture de l’espace sensible.
+Clarity conserve le projet `x1qyez2dwm`, est injecté une seule fois et reçoit les noms d’événement ainsi que des propriétés déjà nettoyées. À l’entrée dans une route non publique, le code envoie `consentv2` avec les stockages publicitaire et analytique refusés, puis l’appel documenté `consent(false)` qui efface les cookies Clarity et empêche la poursuite du tracking. Au retour sur une route publique, les signaux sont rétablis techniquement si aucune future préférence utilisateur ne l’interdit. L’appel de compatibilité Consent V1 est conservé uniquement parce que la documentation Clarity l’indique encore pour arrêter effectivement le tracking ; la future CMP devra piloter cette séquence.
 
-Il n’existe actuellement ni CMP ni préférence cookies exploitable dans le repository. Le choix juridique entre consentement préalable, consentement implicite ou catégorisation des outils doit être validé avant production. Ce chantier ne crée ni wording juridique ni fausse bannière.
+La suspension liée aux routes est une protection technique : elle ne constitue pas un consentement utilisateur. Il n’existe actuellement ni CMP ni préférence cookies exploitable dans le repository. Le point d’intégration `setMarketingConsentPreference` permet à une future CMP de bloquer la reprise, mais ne fabrique aucune décision utilisateur. La stratégie de consentement/CMP et l’activation production du tracking marketing doivent être validées avant mise en production. Ce chantier ne crée ni wording juridique ni fausse bannière.
 
 ## Meta Pixel
 
@@ -42,11 +44,13 @@ Le Pixel existant `2129665337343090` est chargé une seule fois, de manière asy
 
 Un chargement de `/reserver` ne produit jamais `InitiateCheckout`. Un booking n’est jamais un `Purchase`.
 
+Sur une route privée, le Pixel reçoit `fbq('consent', 'revoke')`. Le retour public utilise `grant` uniquement si la suspension de route peut être levée et si une future préférence CMP ne vaut pas `denied`.
+
 ## Meta Conversions API
 
-La fonction préparée `supabase/functions/meta-conversion` accepte uniquement `Lead` et `Purchase`. Elle valide l’URL, l’UUID booking et l’`event_id`, relit le booking avec le client serveur, normalise puis SHA-256 l’email, le téléphone et l’ID externe, et transmet `fbp`/`fbc`, IP et user-agent lorsqu’ils sont disponibles. Elle ne logue aucune PII.
+La fonction préparée `supabase/functions/meta-conversion` accepte uniquement `Lead` en V1. Elle refuse explicitement `Purchase` avec `event_not_allowed`. Elle exige un Origin navigateur `https://lejapon.ma` ou `https://www.lejapon.ma`, valide l’URL et l’UUID, puis relit `id`, `created_at`, `source`, `status`, `contact_email` et `contact_phone` du booking avec le client serveur. Le booking doit exister, provenir de `website` lorsque la source est renseignée, avoir moins de 24 heures et porter exactement l’`event_id` `lead-<booking_uuid>`. Elle normalise puis SHA-256 l’email, le téléphone et l’ID externe, transmet `fbp`/`fbc`, IP et user-agent lorsqu’ils sont disponibles, et ne logue aucune PII.
 
-Pour `Purchase`, la fonction refuse l’envoi tant qu’elle ne trouve pas un paiement `status = received` avec `paid_at` non nul. Aucun appel `Purchase` n’est actuellement branché au workflow admin : il faudra un déclencheur serveur idempotent dédié.
+CORS et la vérification d’Origin ne sont pas une authentification forte. La protection V1 repose surtout sur l’existence du booking, sa source, sa fraîcheur, l’ID déterministe et la déduplication browser/CAPI de Meta. `Purchase` sera implémenté ultérieurement depuis un workflow serveur idempotent lié à un paiement réellement confirmé ; aucun endpoint public ne peut actuellement le déclencher.
 
 Secrets Edge Function requis, exclusivement dans le secret manager Supabase :
 
@@ -109,7 +113,7 @@ Catégories d’échec autorisées : `recaptcha_failed`, `validation_failed`, `d
 
 ## Déduplication Meta
 
-Après succès DB, le client génère un seul `event_id`. Ce même ID est transmis au `fbq Lead` et à la fonction CAPI. Les deux transports sont best-effort : une panne analytics ne modifie jamais le succès du booking. Si l’insert échoue, aucun `booking_form_submitted` et aucun `Lead` ne sont émis.
+Après succès DB, le client construit `lead-<booking_uuid>`. Ce même ID déterministe est transmis au `fbq Lead` et à la fonction CAPI, qui le recalcule depuis le booking. Les deux transports sont best-effort : une panne analytics ne modifie jamais le succès du booking. Si l’insert échoue, aucun `booking_form_submitted` et aucun `Lead` ne sont émis.
 
 ## Routes exclues
 

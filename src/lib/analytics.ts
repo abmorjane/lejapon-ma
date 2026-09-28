@@ -2,6 +2,7 @@ import { publicRouteRegistry } from "@/config/publicRoutes";
 
 export type AnalyticsParams = Record<string, unknown>;
 export type AnalyticsEventOptions = { eventId?: string; onceKey?: string; context?: MarketingTrackingContext };
+export type MarketingConsentPreference = "unmanaged" | "granted" | "denied";
 
 declare global {
   interface Window {
@@ -31,9 +32,12 @@ const SAFE_PAGE_QUERY_KEYS = new Set(["utm_source", "utm_medium", "utm_campaign"
 let gaInitialized = false;
 let clarityInitialized = false;
 let metaInitialized = false;
-let claritySuspended = false;
+let routeSuspended = false;
+let providersSuspended = false;
+let marketingConsentPreference: MarketingConsentPreference = "unmanaged";
 let lastPageViewKey = "";
 const sentOnceKeys = new Set<string>();
+const activeGaMeasurementIds = new Set<string>();
 
 const hasBrowser = () => typeof window !== "undefined" && typeof document !== "undefined";
 
@@ -157,11 +161,18 @@ const initMetaPixel = (pixelId?: string) => {
 };
 
 export const initAnalytics = (path = hasBrowser() ? window.location.pathname : "/", context: MarketingTrackingContext = {}) => {
-  if (!hasBrowser() || !isMarketingTrackingAllowed(path, context)) return false;
+  if (
+    !hasBrowser()
+    || !isMarketingTrackingAllowed(path, context)
+    || routeSuspended
+    || providersSuspended
+    || marketingConsentPreference === "denied"
+  ) return false;
   const ids = providerIds(context);
 
   if (ids.ga && !gaInitialized) {
     gaInitialized = true;
+    activeGaMeasurementIds.add(ids.ga);
     window.dataLayer = window.dataLayer || [];
     window.gtag = window.gtag || function gtagShim(...args: unknown[]) {
       window.dataLayer?.push(args);
@@ -171,7 +182,7 @@ export const initAnalytics = (path = hasBrowser() ? window.location.pathname : "
     window.gtag("config", ids.ga, { send_page_view: false });
   }
 
-  if (ids.clarity && !clarityInitialized && !claritySuspended) {
+  if (ids.clarity && !clarityInitialized) {
     const safeProjectId = ids.clarity.replace(/[^a-zA-Z0-9_-]/g, "");
     if (safeProjectId) {
       clarityInitialized = true;
@@ -186,14 +197,64 @@ export const initAnalytics = (path = hasBrowser() ? window.location.pathname : "
   return true;
 };
 
-export const suspendMarketingTracking = (path: string) => {
-  if (!hasBrowser() || isPublicMarketingPath(path)) return;
-  lastPageViewKey = "";
-  if (window.clarity && !claritySuspended) {
-    claritySuspended = true;
-    window.clarity("consentv2", { ad_Storage: "denied", analytics_Storage: "denied" });
-    window.clarity("consent", false);
+const applyProviderSuspension = (context: MarketingTrackingContext) => {
+  const ids = providerIds(context);
+  if (ids.ga) {
+    activeGaMeasurementIds.add(ids.ga);
+    (window as unknown as Record<string, unknown>)[`ga-disable-${ids.ga}`] = true;
   }
+  if (metaInitialized) window.fbq?.("consent", "revoke");
+  if (clarityInitialized) {
+    window.clarity?.("consentv2", { ad_Storage: "denied", analytics_Storage: "denied" });
+    window.clarity?.("consent", false);
+  }
+  providersSuspended = true;
+};
+
+const applyProviderResume = (context: MarketingTrackingContext) => {
+  const ids = providerIds(context);
+  if (ids.ga) {
+    activeGaMeasurementIds.add(ids.ga);
+    (window as unknown as Record<string, unknown>)[`ga-disable-${ids.ga}`] = false;
+  }
+  if (metaInitialized) window.fbq?.("consent", "grant");
+  if (clarityInitialized) {
+    window.clarity?.("consentv2", { ad_Storage: "granted", analytics_Storage: "granted" });
+    window.clarity?.("consent", true);
+  }
+  providersSuspended = false;
+};
+
+export const suspendMarketingTracking = (path: string, context: MarketingTrackingContext = {}) => {
+  if (!hasBrowser() || isPublicMarketingPath(path)) return;
+  routeSuspended = true;
+  lastPageViewKey = "";
+  if (!providersSuspended) applyProviderSuspension(context);
+};
+
+export const resumeMarketingTracking = (path: string, context: MarketingTrackingContext = {}) => {
+  if (!hasBrowser() || !isMarketingTrackingAllowed(path, context) || marketingConsentPreference === "denied") return false;
+  routeSuspended = false;
+  if (providersSuspended) applyProviderResume(context);
+  return true;
+};
+
+/**
+ * Integration point for a future CMP. "unmanaged" preserves the current V1
+ * behavior; it is not a claim that the visitor granted legal consent.
+ */
+export const setMarketingConsentPreference = (
+  preference: MarketingConsentPreference,
+  path = hasBrowser() ? window.location.pathname : "/",
+  context: MarketingTrackingContext = {},
+) => {
+  marketingConsentPreference = preference;
+  if (!hasBrowser()) return;
+  if (preference === "denied") {
+    if (!providersSuspended) applyProviderSuspension(context);
+    return;
+  }
+  if (isPublicMarketingPath(path)) resumeMarketingTracking(path, context);
 };
 
 const pageSemanticEvent = (pathname: string) => {
@@ -216,8 +277,12 @@ export const createMarketingEventId = (prefix: string) => {
 };
 
 export const trackPageView = (path: string, title?: string, context: MarketingTrackingContext = {}) => {
-  if (!hasBrowser() || !isMarketingTrackingAllowed(path, context) || !initAnalytics(path, context)) {
-    suspendMarketingTracking(path);
+  if (!hasBrowser()) return false;
+  if (!isMarketingTrackingAllowed(path, context)) {
+    suspendMarketingTracking(path, context);
+    return false;
+  }
+  if (!resumeMarketingTracking(path, context) || !initAnalytics(path, context)) {
     return false;
   }
   const pageTitle = title || document.title || "LeJapon.ma";
@@ -235,7 +300,7 @@ export const trackPageView = (path: string, title?: string, context: MarketingTr
     if (pathname === "/reserver") window.gtag("event", "booking_page_viewed", { page_path: pathname });
   }
 
-  if (window.clarity && !claritySuspended) {
+  if (window.clarity && !providersSuspended) {
     window.clarity("set", "page_path", safePagePath);
     window.clarity("set", "page_title", pageTitle);
     if (pathname === "/reserver") window.clarity("event", "booking_page_viewed");
@@ -255,14 +320,19 @@ export const trackNotFound = (path: string) => {
 
 export const trackEvent = (name: string, params: AnalyticsParams = {}, options: AnalyticsEventOptions = {}) => {
   const context = options.context ?? {};
-  if (!hasBrowser() || !name || !isMarketingTrackingAllowed(window.location.pathname, context) || !initAnalytics(window.location.pathname, context)) return false;
+  if (!hasBrowser() || !name) return false;
+  if (!isMarketingTrackingAllowed(window.location.pathname, context)) {
+    suspendMarketingTracking(window.location.pathname, context);
+    return false;
+  }
+  if (!resumeMarketingTracking(window.location.pathname, context) || !initAnalytics(window.location.pathname, context)) return false;
   if (options.onceKey && sentOnceKeys.has(options.onceKey)) return false;
   if (options.onceKey) sentOnceKeys.add(options.onceKey);
   const eventName = normalizeEventName(name, params);
   const safeParams = sanitizeAnalyticsParams(params);
 
   if (providerIds(context).ga && window.gtag) window.gtag("event", eventName, safeParams);
-  if (window.clarity && !claritySuspended) {
+  if (window.clarity && !providersSuspended) {
     window.clarity("event", eventName);
     Object.entries(safeParams).forEach(([key, value]) => {
       if (value !== null) window.clarity?.("set", key, String(value).slice(0, 120));
@@ -274,10 +344,18 @@ export const trackEvent = (name: string, params: AnalyticsParams = {}, options: 
 };
 
 export const resetAnalyticsForTests = () => {
+  if (hasBrowser()) {
+    activeGaMeasurementIds.forEach((measurementId) => {
+      delete (window as unknown as Record<string, unknown>)[`ga-disable-${measurementId}`];
+    });
+  }
   gaInitialized = false;
   clarityInitialized = false;
   metaInitialized = false;
-  claritySuspended = false;
+  routeSuspended = false;
+  providersSuspended = false;
+  marketingConsentPreference = "unmanaged";
   lastPageViewKey = "";
+  activeGaMeasurementIds.clear();
   sentOnceKeys.clear();
 };

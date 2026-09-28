@@ -1,6 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { attributionMetaIdentifiers, type MarketingAttribution } from "./attribution";
-import { createMarketingEventId, isMarketingTrackingAllowed, trackEvent, type AnalyticsParams } from "./analytics";
+import { isMarketingTrackingAllowed, trackEvent, type AnalyticsParams } from "./analytics";
 
 export type MetaServerEvent = {
   event_name: "Lead";
@@ -14,9 +14,10 @@ export type MetaServerEvent = {
 type BookingLeadDependencies = {
   trackBrowser?: typeof trackEvent;
   sendServer?: (event: MetaServerEvent) => Promise<unknown> | void;
-  createEventId?: () => string;
   isAllowed?: (path: string) => boolean;
 };
+
+export const leadEventIdForBooking = (bookingId: string) => `lead-${bookingId}`;
 
 export const sendMetaServerEvent = async (event: MetaServerEvent) => {
   const { error } = await supabase.functions.invoke("meta-conversion", { body: event });
@@ -29,14 +30,13 @@ export const trackSuccessfulBookingLead = async (
     eventSourceUrl: string;
     attribution: MarketingAttribution | null;
     analyticsParams: AnalyticsParams;
-    eventId?: string;
   },
   dependencies: BookingLeadDependencies = {},
 ) => {
   const sourceUrl = new URL(input.eventSourceUrl, "https://www.lejapon.ma");
   const isAllowed = dependencies.isAllowed ?? isMarketingTrackingAllowed;
   if (!isAllowed(sourceUrl.pathname)) return null;
-  const eventId = input.eventId ?? dependencies.createEventId?.() ?? createMarketingEventId("lead");
+  const eventId = leadEventIdForBooking(input.bookingId);
   const trackBrowser = dependencies.trackBrowser ?? trackEvent;
   const sendServer = dependencies.sendServer ?? sendMetaServerEvent;
   const identifiers = attributionMetaIdentifiers(input.attribution);
@@ -69,14 +69,12 @@ export const createBookingWithMeasurement = async (
   },
   dependencies: BookingLeadDependencies = {},
 ) => {
-  const eventId = dependencies.createEventId?.() ?? createMarketingEventId("lead");
   const bookingId = await input.createBooking();
   void trackSuccessfulBookingLead({
     bookingId,
     eventSourceUrl: input.eventSourceUrl,
     attribution: input.attribution,
     analyticsParams: input.analyticsParams,
-    eventId,
   }, dependencies);
   return bookingId;
 };

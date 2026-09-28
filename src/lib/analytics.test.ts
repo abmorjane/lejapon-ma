@@ -5,6 +5,7 @@ import {
   resetAnalyticsForTests,
   sanitizePagePath,
   sanitizeAnalyticsParams,
+  setMarketingConsentPreference,
   trackEvent,
   trackPageView,
 } from "./analytics";
@@ -73,6 +74,48 @@ describe("marketing analytics safeguards", () => {
     expect(window.gtag).not.toHaveBeenCalled();
     expect(window.fbq).not.toHaveBeenCalled();
     expect(window.clarity).not.toHaveBeenCalled();
+  });
+
+  it("suspends GA, Meta and Clarity on private routes, then resumes on a public route", () => {
+    expect(trackPageView("/voyages", "Voyages", productionContext)).toBe(true);
+    expect(trackPageView("/admin", "Admin", productionContext)).toBe(false);
+
+    expect((window as unknown as Record<string, unknown>)["ga-disable-G-TEST"]).toBe(true);
+    expect(window.fbq).toHaveBeenCalledWith("consent", "revoke");
+    expect(window.clarity).toHaveBeenCalledWith("consentv2", {
+      ad_Storage: "denied",
+      analytics_Storage: "denied",
+    });
+    expect(window.clarity).toHaveBeenCalledWith("consent", false);
+
+    expect(trackPageView("/voyages", "Voyages", productionContext)).toBe(true);
+    expect((window as unknown as Record<string, unknown>)["ga-disable-G-TEST"]).toBe(false);
+    expect(window.fbq).toHaveBeenCalledWith("consent", "grant");
+    expect(window.clarity).toHaveBeenCalledWith("consentv2", {
+      ad_Storage: "granted",
+      analytics_Storage: "granted",
+    });
+    expect(window.clarity).toHaveBeenCalledWith("consent", true);
+    expect(vi.mocked(window.gtag!).mock.calls.filter((call) => call[1] === "page_view")).toHaveLength(2);
+  });
+
+  it("does not resume after a future CMP preference denies marketing tracking", () => {
+    expect(trackPageView("/voyages", "Voyages", productionContext)).toBe(true);
+    setMarketingConsentPreference("denied", "/voyages", productionContext);
+    vi.mocked(window.fbq!).mockClear();
+    vi.mocked(window.clarity!).mockClear();
+
+    expect(trackPageView("/admin", "Admin", productionContext)).toBe(false);
+    expect(trackPageView("/voyages", "Voyages", productionContext)).toBe(false);
+
+    expect((window as unknown as Record<string, unknown>)["ga-disable-G-TEST"]).toBe(true);
+    expect(window.fbq).not.toHaveBeenCalledWith("consent", "grant");
+    expect(window.clarity).not.toHaveBeenCalledWith("consentv2", {
+      ad_Storage: "granted",
+      analytics_Storage: "granted",
+    });
+    expect(window.clarity).not.toHaveBeenCalledWith("consent", true);
+    expect(vi.mocked(window.gtag!).mock.calls.filter((call) => call[1] === "page_view")).toHaveLength(1);
   });
 
   it("removes PII and opaque click identifiers from browser analytics", () => {

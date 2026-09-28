@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createBookingWithMeasurement, trackSuccessfulBookingLead } from "./meta-conversions";
+import { createBookingWithMeasurement, leadEventIdForBooking, trackSuccessfulBookingLead } from "./meta-conversions";
 
 describe("Meta conversion deduplication", () => {
-  it("uses the same unique event ID for browser and server Lead", async () => {
+  it("uses the same deterministic booking event ID for browser and server Lead", async () => {
     const trackBrowser = vi.fn();
     const sendServer = vi.fn();
     await trackSuccessfulBookingLead({
@@ -10,10 +10,10 @@ describe("Meta conversion deduplication", () => {
       eventSourceUrl: "https://www.lejapon.ma/reserver",
       attribution: null,
       analyticsParams: { trip_id: "trip-1" },
-    }, { trackBrowser, sendServer, createEventId: () => "lead-unique-1", isAllowed: () => true });
+    }, { trackBrowser, sendServer, isAllowed: () => true });
 
-    expect(trackBrowser).toHaveBeenCalledWith("booking_form_submitted", { trip_id: "trip-1" }, { eventId: "lead-unique-1" });
-    expect(sendServer).toHaveBeenCalledWith(expect.objectContaining({ event_name: "Lead", event_id: "lead-unique-1", booking_id: "booking-1" }));
+    expect(trackBrowser).toHaveBeenCalledWith("booking_form_submitted", { trip_id: "trip-1" }, { eventId: "lead-booking-1" });
+    expect(sendServer).toHaveBeenCalledWith(expect.objectContaining({ event_name: "Lead", event_id: "lead-booking-1", booking_id: "booking-1" }));
   });
 
   it("does not throw when browser or server measurement fails", async () => {
@@ -43,17 +43,25 @@ describe("Meta conversion deduplication", () => {
   });
 
   it("emits browser and server Lead only after booking creation succeeds", async () => {
-    const trackBrowser = vi.fn();
-    const sendServer = vi.fn();
+    const order: string[] = [];
+    const trackBrowser = vi.fn(() => { order.push("browser"); });
+    const sendServer = vi.fn(() => { order.push("server"); });
     await createBookingWithMeasurement({
-      createBooking: async () => "booking-2",
+      createBooking: async () => {
+        order.push("booking");
+        return "booking-2";
+      },
       eventSourceUrl: "https://www.lejapon.ma/reserver",
       attribution: null,
       analyticsParams: {},
-    }, { trackBrowser, sendServer, createEventId: () => "lead-unique-2", isAllowed: () => true });
+    }, { trackBrowser, sendServer, isAllowed: () => true });
     await Promise.resolve();
+    expect(trackBrowser.mock.invocationCallOrder[0]).toBeGreaterThan(0);
     expect(trackBrowser).toHaveBeenCalledTimes(1);
     expect(sendServer).toHaveBeenCalledTimes(1);
+    expect(trackBrowser).toHaveBeenCalledWith("booking_form_submitted", {}, { eventId: "lead-booking-2" });
+    expect(sendServer).toHaveBeenCalledWith(expect.objectContaining({ event_id: "lead-booking-2" }));
+    expect(order).toEqual(["booking", "browser", "server"]);
   });
 
   it("does not call browser or server tracking outside production", async () => {
@@ -69,16 +77,15 @@ describe("Meta conversion deduplication", () => {
     expect(sendServer).not.toHaveBeenCalled();
   });
 
-  it("generates a distinct ID for each business event", async () => {
-    let sequence = 0;
+  it("derives a stable, distinct ID from each booking ID", async () => {
     const dependencies = {
       trackBrowser: vi.fn(),
       sendServer: vi.fn(),
-      createEventId: () => `lead-${++sequence}`,
       isAllowed: () => true,
     };
     await trackSuccessfulBookingLead({ bookingId: "booking-1", eventSourceUrl: "https://www.lejapon.ma/reserver", attribution: null, analyticsParams: {} }, dependencies);
     await trackSuccessfulBookingLead({ bookingId: "booking-2", eventSourceUrl: "https://www.lejapon.ma/reserver", attribution: null, analyticsParams: {} }, dependencies);
-    expect(dependencies.sendServer.mock.calls.map(([event]) => event.event_id)).toEqual(["lead-1", "lead-2"]);
+    expect(dependencies.sendServer.mock.calls.map(([event]) => event.event_id)).toEqual(["lead-booking-1", "lead-booking-2"]);
+    expect(leadEventIdForBooking("booking-1")).toBe("lead-booking-1");
   });
 });
