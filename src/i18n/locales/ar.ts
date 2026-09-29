@@ -1,4 +1,14 @@
 export default {
+  // COPY_REQUIRES_HUMAN_VALIDATION — descriptive draft, not legal advice.
+  cmp: {
+    title: "تفضيلات الخصوصية لديك",
+    description: "نستخدم أدوات القياس لفهم كيفية استخدام الموقع، وبموافقتك نستخدم أدوات تسويقية لقياس فعالية حملاتنا. يمكنك قبول الخيارات أو رفضها أو تخصيصها.",
+    acceptAll: "قبول الكل", rejectAll: "رفض الكل", customize: "تخصيص",
+    necessary: "ضرورية", alwaysOn: "مفعّلة دائمًا",
+    analytics: "قياس الجمهور", analyticsDescription: "يسمح بتفعيل Google Analytics وMicrosoft Clarity لفهم كيفية استخدام الموقع.",
+    marketing: "التسويق", marketingDescription: "يسمح بقياس فعالية حملاتنا الإعلانية، بما في ذلك عبر Meta.",
+    save: "حفظ اختياراتي", manage: "إدارة ملفات تعريف الارتباط", close: "إغلاق التفضيلات",
+  },
   nav: { home: "الصفحة الرئيسية", trips: "الرحلات", price: "الرحلات", programme: "البرنامج", blog: "المدونة", visa: "تأشيرة اليابان", experiences: "تجارب", about: "من نحن", journal: "المدونة", contact: "تواصل معنا", booking: "خطط لرحلتي" },
   cta: { explore: "اكتشف رحلاتنا", book: "خطط لرحلتي", quote: "اطلب عرض سعر", more: "اعرف المزيد", continue: "متابعة", back: "رجوع", confirm: "إرسال طلبي" },
   hero: {

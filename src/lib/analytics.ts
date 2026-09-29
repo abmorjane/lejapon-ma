@@ -1,9 +1,8 @@
 import { publicRouteRegistry } from "@/config/publicRoutes";
+import { getConsent, type ConsentPreferences } from "@/lib/consent";
 
 export type AnalyticsParams = Record<string, unknown>;
 export type AnalyticsEventOptions = { eventId?: string; onceKey?: string; context?: MarketingTrackingContext };
-export type MarketingConsentPreference = "unmanaged" | "granted" | "denied";
-
 declare global {
   interface Window {
     dataLayer?: unknown[];
@@ -19,6 +18,7 @@ const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | und
 const CLARITY_PROJECT_ID = import.meta.env.VITE_CLARITY_PROJECT_ID as string | undefined;
 const META_PIXEL_ID = import.meta.env.VITE_META_PIXEL_ID as string | undefined;
 const MARKETING_TRACKING_ENABLED = import.meta.env.VITE_MARKETING_TRACKING_ENABLED === "true";
+const TEST_CONTEXT_OVERRIDES = import.meta.env.MODE === "test";
 const ALLOWED_HOSTS = new Set(["lejapon.ma", "www.lejapon.ma"]);
 const BLOCKED_ENV_PATTERN = /(^|[-_])(dev|development|preview|staging|test|local)([-_]|$)/i;
 const SENSITIVE_KEY_PATTERN =
@@ -33,10 +33,11 @@ const SAFE_PAGE_QUERY_KEYS = new Set(["utm_source", "utm_medium", "utm_campaign"
 let gaInitialized = false;
 let clarityInitialized = false;
 let metaInitialized = false;
-let routeSuspended = false;
-let providersSuspended = false;
-let marketingConsentPreference: MarketingConsentPreference = "unmanaged";
-let lastPageViewKey = "";
+let gaEnabled = false;
+let clarityEnabled = false;
+let metaEnabled = false;
+let lastGaPageViewKey = "";
+let lastMetaPageViewKey = "";
 const sentOnceKeys = new Set<string>();
 const activeGaMeasurementIds = new Set<string>();
 
@@ -72,6 +73,10 @@ export const isPublicMarketingPath = (path: string) => {
   return TRACKED_CONTENT_PATHS.some((pattern) => pattern.test(pathname));
 };
 
+// Translated blog pages are noindex today but remain public CMP surfaces.
+export const isPublicConsentPath = (path: string) =>
+  isPublicMarketingPath(path) || /^\/(en|ar)\/blog(?:\/[^/]+)?\/?$/i.test(normalizedPathname(path));
+
 export type MarketingTrackingContext = {
   hostname?: string;
   isProduction?: boolean;
@@ -81,17 +86,19 @@ export type MarketingTrackingContext = {
   gaMeasurementId?: string;
   clarityProjectId?: string;
   metaPixelId?: string;
+  consent?: Pick<ConsentPreferences, "analytics" | "marketing"> | null;
 };
 
-export const isMarketingTrackingAllowed = (
+const isTrackingEnvironmentAllowed = (
   path = hasBrowser() ? window.location.pathname : "/",
   context: MarketingTrackingContext = {},
 ) => {
-  const hostname = (context.hostname ?? (hasBrowser() ? window.location.hostname : "")).toLowerCase();
-  const isProduction = context.isProduction ?? Boolean(import.meta.env.PROD);
-  const deployEnv = (context.deployEnv ?? getDeployEnv()).toLowerCase();
-  const isPrerender = context.isPrerender ?? (hasBrowser() && window.__LEJAPON_PRERENDER__ === true);
-  const marketingTrackingEnabled = context.marketingTrackingEnabled ?? MARKETING_TRACKING_ENABLED;
+  const testContext = TEST_CONTEXT_OVERRIDES ? context : {};
+  const hostname = (testContext.hostname ?? (hasBrowser() ? window.location.hostname : "")).toLowerCase();
+  const isProduction = testContext.isProduction ?? Boolean(import.meta.env.PROD);
+  const deployEnv = (testContext.deployEnv ?? getDeployEnv()).toLowerCase();
+  const isPrerender = testContext.isPrerender ?? (hasBrowser() && window.__LEJAPON_PRERENDER__ === true);
+  const marketingTrackingEnabled = testContext.marketingTrackingEnabled ?? MARKETING_TRACKING_ENABLED;
   if (
     !marketingTrackingEnabled
     || !isProduction
@@ -102,7 +109,16 @@ export const isMarketingTrackingAllowed = (
   return isPublicMarketingPath(path);
 };
 
-export const isClarityAllowed = isMarketingTrackingAllowed;
+const consentFor = (context: MarketingTrackingContext) =>
+  TEST_CONTEXT_OVERRIDES && context.consent !== undefined ? context.consent : getConsent().preferences;
+
+export const isAnalyticsTrackingAllowed = (path?: string, context: MarketingTrackingContext = {}) =>
+  isTrackingEnvironmentAllowed(path, context) && consentFor(context)?.analytics === true;
+
+export const isMarketingTrackingAllowed = (path?: string, context: MarketingTrackingContext = {}) =>
+  isTrackingEnvironmentAllowed(path, context) && consentFor(context)?.marketing === true;
+
+export const isClarityAllowed = isAnalyticsTrackingAllowed;
 
 const appendScript = (id: string, src: string) => {
   if (!hasBrowser() || document.getElementById(id)) return;
@@ -125,7 +141,7 @@ export const sanitizeAnalyticsParams = (params: AnalyticsParams = {}) =>
   Object.entries(params).reduce<Record<string, string | number | boolean | null>>((safe, [key, value]) => {
     if (SENSITIVE_KEY_PATTERN.test(key)) return safe;
     if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      safe[key] = typeof value === "string" ? value.slice(0, 120) : value;
+      safe[key] = typeof value === "string" ? value.slice(0, 120) : value as number | boolean | null;
     }
     return safe;
   }, {});
@@ -145,9 +161,9 @@ const normalizeEventName = (name: string, params: AnalyticsParams = {}) => {
 };
 
 const providerIds = (context: MarketingTrackingContext) => ({
-  ga: context.gaMeasurementId ?? GA_MEASUREMENT_ID,
-  clarity: context.clarityProjectId ?? CLARITY_PROJECT_ID,
-  meta: context.metaPixelId ?? META_PIXEL_ID,
+  ga: TEST_CONTEXT_OVERRIDES ? context.gaMeasurementId ?? GA_MEASUREMENT_ID : GA_MEASUREMENT_ID,
+  clarity: TEST_CONTEXT_OVERRIDES ? context.clarityProjectId ?? CLARITY_PROJECT_ID : CLARITY_PROJECT_ID,
+  meta: TEST_CONTEXT_OVERRIDES ? context.metaPixelId ?? META_PIXEL_ID : META_PIXEL_ID,
 });
 
 const initMetaPixel = (pixelId?: string) => {
@@ -165,33 +181,68 @@ const initMetaPixel = (pixelId?: string) => {
     window.fbq = fbq;
     window._fbq = fbq;
   }
-  appendScript("lejapon-meta-pixel-script", "https://connect.facebook.net/en_US/fbevents.js");
+  window.fbq?.("consent", "revoke");
   window.fbq?.("init", pixelId);
+  window.fbq?.("consent", "grant");
+  appendScript("lejapon-meta-pixel-script", "https://connect.facebook.net/en_US/fbevents.js");
+  metaEnabled = true;
+};
+
+const googleConsentState = (analytics: boolean) => ({
+  analytics_storage: analytics ? "granted" : "denied",
+  ad_storage: "denied",
+  ad_user_data: "denied",
+  ad_personalization: "denied",
+});
+
+const synchronizeProviders = (path: string, context: MarketingTrackingContext) => {
+  if (!hasBrowser()) return { analytics: false, marketing: false };
+  const analytics = isAnalyticsTrackingAllowed(path, context);
+  const marketing = isMarketingTrackingAllowed(path, context);
+  const ids = providerIds(context);
+
+  if (gaInitialized && gaEnabled !== analytics) {
+    if (ids.ga) (window as unknown as Record<string, unknown>)[`ga-disable-${ids.ga}`] = !analytics;
+    window.gtag?.("consent", "update", googleConsentState(analytics));
+    gaEnabled = analytics;
+  }
+  if (clarityInitialized && clarityEnabled !== analytics) {
+    window.clarity?.("consentv2", { analytics_Storage: analytics ? "granted" : "denied", ad_Storage: "denied" });
+    if (!analytics) window.clarity?.("consent", false); // Official cookie erase/stop API; V2 remains primary.
+    clarityEnabled = analytics;
+  }
+  if (metaInitialized && metaEnabled !== marketing) {
+    window.fbq?.("consent", marketing ? "grant" : "revoke");
+    metaEnabled = marketing;
+  }
+  if (!analytics) lastGaPageViewKey = "";
+  if (!marketing) lastMetaPageViewKey = "";
+  return { analytics, marketing };
 };
 
 export const initAnalytics = (path = hasBrowser() ? window.location.pathname : "/", context: MarketingTrackingContext = {}) => {
-  if (
-    !hasBrowser()
-    || !isMarketingTrackingAllowed(path, context)
-    || routeSuspended
-    || providersSuspended
-    || marketingConsentPreference === "denied"
-  ) return false;
+  if (!hasBrowser()) return false;
+  const allowed = synchronizeProviders(path, context);
+  if (!allowed.analytics && !allowed.marketing) return false;
   const ids = providerIds(context);
 
-  if (ids.ga && !gaInitialized) {
+  if (allowed.analytics && ids.ga && !gaInitialized) {
     gaInitialized = true;
     activeGaMeasurementIds.add(ids.ga);
     window.dataLayer = window.dataLayer || [];
     window.gtag = window.gtag || function gtagShim(...args: unknown[]) {
       window.dataLayer?.push(args);
     };
+    window.gtag("consent", "default", googleConsentState(false));
+    window.gtag("consent", "update", googleConsentState(true));
+    (window as unknown as Record<string, unknown>)[`ga-disable-${ids.ga}`] = false;
+    gaEnabled = true;
     appendScript("lejapon-ga4-script", `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(ids.ga)}`);
     window.gtag("js", new Date());
     window.gtag("config", ids.ga, { send_page_view: false });
   }
 
-  if (ids.clarity && !clarityInitialized) {
+  if (allowed.analytics && ids.clarity && !clarityInitialized) {
     const safeProjectId = ids.clarity.replace(/[^a-zA-Z0-9_-]/g, "");
     if (safeProjectId) {
       clarityInitialized = true;
@@ -199,71 +250,24 @@ export const initAnalytics = (path = hasBrowser() ? window.location.pathname : "
         "lejapon-clarity-script",
         `(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","${safeProjectId}");`,
       );
+      window.clarity?.("consentv2", { analytics_Storage: "granted", ad_Storage: "denied" });
+      clarityEnabled = true;
     }
   }
 
-  initMetaPixel(ids.meta);
+  if (allowed.marketing) initMetaPixel(ids.meta);
   return true;
-};
-
-const applyProviderSuspension = (context: MarketingTrackingContext) => {
-  const ids = providerIds(context);
-  if (ids.ga) {
-    activeGaMeasurementIds.add(ids.ga);
-    (window as unknown as Record<string, unknown>)[`ga-disable-${ids.ga}`] = true;
-  }
-  if (metaInitialized) window.fbq?.("consent", "revoke");
-  if (clarityInitialized) {
-    window.clarity?.("consentv2", { ad_Storage: "denied", analytics_Storage: "denied" });
-    window.clarity?.("consent", false);
-  }
-  providersSuspended = true;
-};
-
-const applyProviderResume = (context: MarketingTrackingContext) => {
-  const ids = providerIds(context);
-  if (ids.ga) {
-    activeGaMeasurementIds.add(ids.ga);
-    (window as unknown as Record<string, unknown>)[`ga-disable-${ids.ga}`] = false;
-  }
-  if (metaInitialized) window.fbq?.("consent", "grant");
-  if (clarityInitialized) {
-    window.clarity?.("consentv2", { ad_Storage: "granted", analytics_Storage: "granted" });
-    window.clarity?.("consent", true);
-  }
-  providersSuspended = false;
 };
 
 export const suspendMarketingTracking = (path: string, context: MarketingTrackingContext = {}) => {
   if (!hasBrowser() || isPublicMarketingPath(path)) return;
-  routeSuspended = true;
-  lastPageViewKey = "";
-  if (!providersSuspended) applyProviderSuspension(context);
+  synchronizeProviders(path, context);
 };
 
 export const resumeMarketingTracking = (path: string, context: MarketingTrackingContext = {}) => {
-  if (!hasBrowser() || !isMarketingTrackingAllowed(path, context) || marketingConsentPreference === "denied") return false;
-  routeSuspended = false;
-  if (providersSuspended) applyProviderResume(context);
-  return true;
-};
-
-/**
- * Integration point for a future CMP. "unmanaged" preserves the current V1
- * behavior; it is not a claim that the visitor granted legal consent.
- */
-export const setMarketingConsentPreference = (
-  preference: MarketingConsentPreference,
-  path = hasBrowser() ? window.location.pathname : "/",
-  context: MarketingTrackingContext = {},
-) => {
-  marketingConsentPreference = preference;
-  if (!hasBrowser()) return;
-  if (preference === "denied") {
-    if (!providersSuspended) applyProviderSuspension(context);
-    return;
-  }
-  if (isPublicMarketingPath(path)) resumeMarketingTracking(path, context);
+  if (!hasBrowser()) return false;
+  const allowed = synchronizeProviders(path, context);
+  return allowed.analytics || allowed.marketing;
 };
 
 const pageSemanticEvent = (pathname: string) => {
@@ -287,39 +291,40 @@ export const createMarketingEventId = (prefix: string) => {
 
 export const trackPageView = (path: string, title?: string, context: MarketingTrackingContext = {}) => {
   if (!hasBrowser()) return false;
-  if (!isMarketingTrackingAllowed(path, context)) {
-    suspendMarketingTracking(path, context);
-    return false;
-  }
-  if (!resumeMarketingTracking(path, context) || !initAnalytics(path, context)) {
-    return false;
-  }
+  const allowed = synchronizeProviders(path, context);
+  if (!allowed.analytics && !allowed.marketing) return false;
+  initAnalytics(path, context);
   const pageTitle = title || document.title || "LeJapon.ma";
   const pathname = normalizedPathname(path);
   const safePagePath = sanitizePagePath(path);
   const ids = providerIds(context);
   const pageViewKey = `${pathname}${new URL(path, window.location.origin).search}`;
-  if (pageViewKey === lastPageViewKey) return false;
-  lastPageViewKey = pageViewKey;
+  let emitted = false;
 
-  if (ids.ga && window.gtag) {
+  if (allowed.analytics && ids.ga && window.gtag && pageViewKey !== lastGaPageViewKey) {
+    lastGaPageViewKey = pageViewKey;
+    emitted = true;
     window.gtag("event", "page_view", { page_path: safePagePath, page_title: pageTitle, page_location: `${window.location.origin}${safePagePath}` });
     const semanticEvent = pageSemanticEvent(pathname);
     if (semanticEvent) window.gtag("event", semanticEvent, { page_path: pathname });
     if (pathname === "/reserver") window.gtag("event", "booking_page_viewed", { page_path: pathname });
   }
 
-  if (window.clarity && !providersSuspended) {
+  if (allowed.analytics && window.clarity) {
     window.clarity("set", "page_path", safePagePath);
     window.clarity("set", "page_title", pageTitle);
     if (pathname === "/reserver") window.clarity("event", "booking_page_viewed");
   }
 
-  window.fbq?.("track", "PageView");
-  if (META_VIEW_CONTENT_PATHS.some((pattern) => pattern.test(pathname))) {
-    window.fbq?.("track", "ViewContent", { content_category: pathname.startsWith("/hotels") ? "hotel" : pathname.slice(1) });
+  if (allowed.marketing && window.fbq && pageViewKey !== lastMetaPageViewKey) {
+    lastMetaPageViewKey = pageViewKey;
+    emitted = true;
+    window.fbq("track", "PageView");
+    if (META_VIEW_CONTENT_PATHS.some((pattern) => pattern.test(pathname))) {
+      window.fbq("track", "ViewContent", { content_category: pathname.startsWith("/hotels") ? "hotel" : pathname.slice(1) });
+    }
   }
-  return true;
+  return emitted;
 };
 
 export const trackNotFound = (path: string) => {
@@ -330,25 +335,23 @@ export const trackNotFound = (path: string) => {
 export const trackEvent = (name: string, params: AnalyticsParams = {}, options: AnalyticsEventOptions = {}) => {
   const context = options.context ?? {};
   if (!hasBrowser() || !name) return false;
-  if (!isMarketingTrackingAllowed(window.location.pathname, context)) {
-    suspendMarketingTracking(window.location.pathname, context);
-    return false;
-  }
-  if (!resumeMarketingTracking(window.location.pathname, context) || !initAnalytics(window.location.pathname, context)) return false;
+  const allowed = synchronizeProviders(window.location.pathname, context);
+  if (!allowed.analytics && !allowed.marketing) return false;
+  initAnalytics(window.location.pathname, context);
   if (options.onceKey && sentOnceKeys.has(options.onceKey)) return false;
   if (options.onceKey) sentOnceKeys.add(options.onceKey);
   const eventName = normalizeEventName(name, params);
   const safeParams = sanitizeAnalyticsParams(params);
 
-  if (providerIds(context).ga && window.gtag) window.gtag("event", eventName, safeParams);
-  if (window.clarity && !providersSuspended) {
+  if (allowed.analytics && providerIds(context).ga && window.gtag) window.gtag("event", eventName, safeParams);
+  if (allowed.analytics && window.clarity) {
     window.clarity("event", eventName);
     Object.entries(safeParams).forEach(([key, value]) => {
       if (value !== null) window.clarity?.("set", key, String(value).slice(0, 120));
     });
   }
   const metaEvent = metaEventFor(eventName, params);
-  if (metaEvent) window.fbq?.("track", metaEvent, safeParams, options.eventId ? { eventID: options.eventId } : undefined);
+  if (allowed.marketing && metaEvent) window.fbq?.("track", metaEvent, safeParams, options.eventId ? { eventID: options.eventId } : undefined);
   return true;
 };
 
@@ -361,10 +364,11 @@ export const resetAnalyticsForTests = () => {
   gaInitialized = false;
   clarityInitialized = false;
   metaInitialized = false;
-  routeSuspended = false;
-  providersSuspended = false;
-  marketingConsentPreference = "unmanaged";
-  lastPageViewKey = "";
+  gaEnabled = false;
+  clarityEnabled = false;
+  metaEnabled = false;
+  lastGaPageViewKey = "";
+  lastMetaPageViewKey = "";
   activeGaMeasurementIds.clear();
   sentOnceKeys.clear();
 };

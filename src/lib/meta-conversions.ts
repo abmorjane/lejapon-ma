@@ -35,7 +35,6 @@ export const trackSuccessfulBookingLead = async (
 ) => {
   const sourceUrl = new URL(input.eventSourceUrl, "https://www.lejapon.ma");
   const isAllowed = dependencies.isAllowed ?? isMarketingTrackingAllowed;
-  if (!isAllowed(sourceUrl.pathname)) return null;
   const eventId = leadEventIdForBooking(input.bookingId);
   const trackBrowser = dependencies.trackBrowser ?? trackEvent;
   const sendServer = dependencies.sendServer ?? sendMetaServerEvent;
@@ -46,6 +45,9 @@ export const trackSuccessfulBookingLead = async (
   } catch {
     // Measurement is best-effort and must never change booking success.
   }
+  // GA may receive the booking event with analytics consent even when Meta is denied.
+  // trackEvent applies provider-specific consent to the browser Pixel.
+  if (!isAllowed(sourceUrl.pathname)) return null;
   try {
     await sendServer({
       event_name: "Lead",

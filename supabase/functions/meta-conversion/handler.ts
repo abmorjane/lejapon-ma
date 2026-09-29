@@ -14,6 +14,7 @@ export type MetaLeadBooking = {
   status: string | null;
   contact_email: string | null;
   contact_phone: string | null;
+  measurement_consent: unknown;
 };
 
 export type MetaLeadDelivery = {
@@ -115,6 +116,13 @@ export const handleMetaConversionRequest = async (
 
   if (body.event_id !== `lead-${booking.id}`) {
     return response(request, 400, { ok: false, error: "invalid_event_id" });
+  }
+
+  const consent = booking.measurement_consent;
+  if (!consent || typeof consent !== "object" || Array.isArray(consent)
+    || (consent as Record<string, unknown>).version !== 1
+    || (consent as Record<string, unknown>).marketing !== true) {
+    return response(request, 403, { ok: false, error: "marketing_consent_required" });
   }
 
   if (booking.source && booking.source !== "website") {

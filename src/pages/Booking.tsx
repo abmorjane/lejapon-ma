@@ -14,6 +14,7 @@ import { trackEvent } from "@/lib/analytics";
 import { attributionAnalyticsParams, getCurrentAttribution } from "@/lib/attribution";
 import { classifyBookingFailure, createBookingFunnel } from "@/lib/booking-funnel";
 import { createBookingWithMeasurement } from "@/lib/meta-conversions";
+import { consentSnapshotForBooking } from "@/lib/consent";
 import { findOrCreateClientForBooking } from "@/lib/crm-client";
 import { useAgencySettings } from "@/hooks/useAgencySettings";
 import { commercialDateKey } from "@/lib/public-commercial-visibility";
@@ -329,6 +330,7 @@ const Booking = () => {
             source: "website",
             marketing_first_touch: attribution?.first_touch ?? null,
             marketing_last_touch: attribution?.last_touch ?? null,
+            measurement_consent: consentSnapshotForBooking(),
           });
           if (error) throw error;
           return proposedBookingId;

@@ -4,7 +4,8 @@ import fr from "./locales/fr";
 import en from "./locales/en";
 import ar from "./locales/ar";
 
-const stored = typeof window !== "undefined" ? localStorage.getItem("lang") : null;
+let stored: string | null = null;
+try { if (typeof window !== "undefined") stored = localStorage.getItem("lang"); } catch { /* Private browsing/storage blocks must not prevent the site or CMP from rendering. */ }
 const lang = stored || "fr";
 
 i18n.use(initReactI18next).init({
@@ -21,7 +22,7 @@ if (typeof document !== "undefined") {
 
 export const setLang = (l: "fr" | "en" | "ar") => {
   i18n.changeLanguage(l);
-  localStorage.setItem("lang", l);
+  try { localStorage.setItem("lang", l); } catch { /* Language still works for this page view. */ }
   document.documentElement.lang = l;
   document.documentElement.dir = l === "ar" ? "rtl" : "ltr";
 };

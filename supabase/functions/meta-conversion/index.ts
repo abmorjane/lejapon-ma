@@ -25,7 +25,7 @@ const loadBooking = async (bookingId: string) => {
   if (!admin) throw new Error("server_not_configured");
   const { data, error } = await admin
     .from("bookings")
-    .select("id,created_at,source,status,contact_email,contact_phone")
+    .select("id,created_at,source,status,contact_email,contact_phone,measurement_consent")
     .eq("id", bookingId)
     .maybeSingle();
   if (error) return null;

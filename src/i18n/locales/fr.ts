@@ -1,4 +1,14 @@
 export default {
+  // COPY_REQUIRES_HUMAN_VALIDATION — descriptive draft, not legal advice.
+  cmp: {
+    title: "Vos préférences de confidentialité",
+    description: "Nous utilisons des outils de mesure pour comprendre l’utilisation du site et, avec votre accord, des outils marketing pour mesurer l’efficacité de nos campagnes. Vous pouvez accepter, refuser ou personnaliser vos choix.",
+    acceptAll: "Tout accepter", rejectAll: "Tout refuser", customize: "Personnaliser",
+    necessary: "Nécessaires", alwaysOn: "Toujours actifs",
+    analytics: "Mesure d’audience", analyticsDescription: "Permet d’activer Google Analytics et Microsoft Clarity pour comprendre l’utilisation du site.",
+    marketing: "Marketing", marketingDescription: "Permet de mesurer l’efficacité de nos campagnes publicitaires, notamment avec Meta.",
+    save: "Enregistrer mes choix", manage: "Gérer mes cookies", close: "Fermer les préférences",
+  },
   nav: { home: "Accueil", trips: "Voyages", price: "Voyages", programme: "Programme", blog: "Blog", visa: "Visa Japon", experiences: "Expériences", about: "À propos", journal: "Journal", contact: "Contact", booking: "Préparer mon voyage" },
   cta: { explore: "Découvrir nos voyages", book: "Préparer mon voyage", quote: "Demander un devis", more: "En savoir plus", continue: "Continuer", back: "Retour", confirm: "Envoyer ma demande" },
   hero: {

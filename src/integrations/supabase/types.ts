@@ -357,6 +357,7 @@ export type Database = {
           metadata: Json
           marketing_first_touch: Json | null
           marketing_last_touch: Json | null
+          measurement_consent: Json | null
           num_adults: number
           num_children: number
           paid_amount_mad: number
@@ -388,6 +389,7 @@ export type Database = {
           metadata?: Json
           marketing_first_touch?: Json | null
           marketing_last_touch?: Json | null
+          measurement_consent?: Json | null
           num_adults?: number
           num_children?: number
           paid_amount_mad?: number
@@ -419,6 +421,7 @@ export type Database = {
           metadata?: Json
           marketing_first_touch?: Json | null
           marketing_last_touch?: Json | null
+          measurement_consent?: Json | null
           num_adults?: number
           num_children?: number
           paid_amount_mad?: number

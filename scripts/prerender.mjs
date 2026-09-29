@@ -57,32 +57,32 @@ try {
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   });
 
-  const page = await browser.newPage();
-  await page.evaluateOnNewDocument(() => {
-    window.__LEJAPON_PRERENDER__ = true;
-  });
-  await page.setBypassServiceWorker(true);
-  await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
-  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-  await page.setRequestInterception(true);
-  page.on("request", (request) => {
-    if (isAnalyticsRequest(request.url())) {
-      analyticsRequests.push(request.url());
-      request.abort();
-    }
-    else if (["image", "media", "font"].includes(request.resourceType())) request.abort();
-    else request.continue();
-  });
-
-  const browserErrors = [];
-  page.on("pageerror", (error) => browserErrors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") browserErrors.push(message.text());
-  });
-
   const results = [];
   for (const route of manifest.prerenderRoutes) {
-    browserErrors.length = 0;
+    // A fresh page prevents a late SPA navigation from detaching the frame
+    // while the next route is being snapshotted.
+    const page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => {
+      window.__LEJAPON_PRERENDER__ = true;
+    });
+    await page.setBypassServiceWorker(true);
+    await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+    await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+    await page.setRequestInterception(true);
+    page.on("request", (request) => {
+      if (isAnalyticsRequest(request.url())) {
+        analyticsRequests.push(request.url());
+        request.abort();
+      }
+      else if (["image", "media", "font"].includes(request.resourceType())) request.abort();
+      else request.continue();
+    });
+
+    const browserErrors = [];
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") browserErrors.push(message.text());
+    });
     const response = await page.goto(`${localOrigin}${route}`, { waitUntil: "domcontentloaded", timeout: 30_000 });
     if (!response?.ok()) throw new Error(`Prerender navigation failed for ${route}: HTTP ${response?.status() ?? "unknown"}`);
 
@@ -140,6 +140,7 @@ try {
     await fs.writeFile(outputFile, html, "utf8");
     results.push({ route, outputFile: path.relative(projectRoot, outputFile), bytes: Buffer.byteLength(html), ...snapshot });
     console.log(`Prerendered ${route} -> ${path.relative(projectRoot, outputFile)} (${formatBytes(Buffer.byteLength(html))})`);
+    await page.close();
   }
 
   manifest.prerenderResults = results;
