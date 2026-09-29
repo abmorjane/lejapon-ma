@@ -44,7 +44,7 @@ describe("Meta conversion deduplication", () => {
 
   it("emits browser and server Lead only after booking creation succeeds", async () => {
     const order: string[] = [];
-    const trackBrowser = vi.fn(() => { order.push("browser"); });
+    const trackBrowser = vi.fn(() => { order.push("browser"); return true; });
     const sendServer = vi.fn(() => { order.push("server"); });
     await createBookingWithMeasurement({
       createBooking: async () => {
@@ -64,7 +64,7 @@ describe("Meta conversion deduplication", () => {
     expect(order).toEqual(["booking", "browser", "server"]);
   });
 
-  it("does not call browser or server tracking outside production", async () => {
+  it("still invokes the consent-gated browser emitter but never CAPI outside production", async () => {
     const trackBrowser = vi.fn();
     const sendServer = vi.fn();
     await expect(trackSuccessfulBookingLead({
@@ -73,7 +73,22 @@ describe("Meta conversion deduplication", () => {
       attribution: null,
       analyticsParams: {},
     }, { trackBrowser, sendServer, isAllowed: () => false })).resolves.toBeNull();
-    expect(trackBrowser).not.toHaveBeenCalled();
+    expect(trackBrowser).toHaveBeenCalledWith("booking_form_submitted", {}, { eventId: "lead-booking-1" });
+    expect(sendServer).not.toHaveBeenCalled();
+  });
+
+  it("keeps booking successful and CAPI silent when marketing is denied", async () => {
+    const trackBrowser = vi.fn();
+    const sendServer = vi.fn();
+    const id = await createBookingWithMeasurement({
+      createBooking: async () => "booking-denied",
+      eventSourceUrl: "https://www.lejapon.ma/reserver",
+      attribution: null,
+      analyticsParams: {},
+    }, { trackBrowser, sendServer, isAllowed: () => false });
+    await Promise.resolve();
+    expect(id).toBe("booking-denied");
+    expect(trackBrowser).toHaveBeenCalledTimes(1);
     expect(sendServer).not.toHaveBeenCalled();
   });
 

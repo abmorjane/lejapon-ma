@@ -15,6 +15,7 @@ const booking: MetaLeadBooking = {
   status: "lead",
   contact_email: "private@example.com",
   contact_phone: "+212600000000",
+  measurement_consent: { version: 1, analytics: false, marketing: true, captured_at: "2026-09-28T11:59:00.000Z" },
 };
 
 const request = (overrides: Record<string, unknown> = {}, origin = "https://www.lejapon.ma") => new Request(
@@ -61,6 +62,16 @@ describe("Meta conversion Lead policy", () => {
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ ok: false, error: "event_not_allowed" });
     expect(deps.loadBooking).not.toHaveBeenCalled();
+  });
+
+  it("refuses a Lead when the booking snapshot is absent or denies marketing", async () => {
+    for (const measurement_consent of [null, { version: 1, analytics: true, marketing: false }]) {
+      const deps = dependencies({ ...booking, measurement_consent });
+      const result = await handleMetaConversionRequest(request(), deps);
+      expect(result.status).toBe(403);
+      expect(await json(result)).toEqual({ ok: false, error: "marketing_consent_required" });
+      expect(deps.deliverLead).not.toHaveBeenCalled();
+    }
   });
 
   it("refuses a booking that does not exist", async () => {

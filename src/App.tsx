@@ -18,7 +18,8 @@ import { LegacyStaticRedirect, LegacyExtraRedirect, LegacyArticleRedirect } from
 import { DEFAULT_SLUGS, type RouteKey } from "@/hooks/useRouteSlugs";
 import { publicPath, type PublicRouteId } from "@/config/publicRoutes";
 import { PWAInstallPrompt } from "@/components/pwa/InstallPrompt";
-import { isMarketingTrackingAllowed, trackPageView } from "@/lib/analytics";
+import { isPublicMarketingPath, trackPageView } from "@/lib/analytics";
+import { subscribeConsentChanges } from "@/lib/consent";
 import { captureCurrentAttribution, stripOpaqueAttributionFromCurrentUrl } from "@/lib/attribution";
 import { installWebViewGuards } from "@/lib/webview-guards";
 
@@ -171,13 +172,15 @@ const AnalyticsRouteTracker = () => {
 
   useEffect(() => {
     installWebViewGuards();
+    return subscribeConsentChanges(() => {
+      trackPageView(`${window.location.pathname}${window.location.search}`, document.title);
+    });
   }, []);
 
   useEffect(() => {
     const path = `${location.pathname}${location.search}`;
-    if (isMarketingTrackingAllowed(location.pathname)) {
-      captureCurrentAttribution();
-      stripOpaqueAttributionFromCurrentUrl();
+    if (isPublicMarketingPath(location.pathname) && !window.__LEJAPON_PRERENDER__) {
+      if (captureCurrentAttribution()) stripOpaqueAttributionFromCurrentUrl();
     }
     const timer = window.setTimeout(() => trackPageView(path, document.title), 0);
     return () => window.clearTimeout(timer);

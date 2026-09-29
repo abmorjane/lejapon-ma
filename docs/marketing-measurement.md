@@ -4,7 +4,7 @@
 
 `src/lib/analytics.ts` est l’unique point d’entrée navigateur pour GA4, Microsoft Clarity et Meta Pixel. `src/lib/attribution.ts` collecte uniquement les identifiants d’acquisition non personnels et maintient le first-touch / last-touch. `src/lib/booking-funnel.ts` porte la sémantique et l’idempotence du tunnel. Supabase (`bookings`, puis `payments`) reste la source de vérité métier.
 
-Le tracking navigateur est activé uniquement si le flag global vaut exactement `true` et si toutes les protections suivantes sont satisfaites : build de production, environnement déclaré production, hôte `lejapon.ma` ou `www.lejapon.ma`, route marketing publique inscrite dans le registre SEO. Il est bloqué sur localhost, preview, staging, test, prerender et toutes les familles privées.
+Le tracking navigateur est activé uniquement si le flag global vaut exactement `true`, si le visiteur a donné un choix CMP explicite pour la catégorie concernée, et si toutes les protections suivantes sont satisfaites : build de production, environnement déclaré production, hôte `lejapon.ma` ou `www.lejapon.ma`, route marketing publique inscrite dans le registre SEO. Il est bloqué sur localhost, preview, staging, test, prerender et toutes les familles privées. Voir [Consent / CMP V1](consent-cmp.md).
 
 ## Identifiants publics
 
@@ -21,15 +21,13 @@ Ces identifiants ne sont pas des secrets. Aucun token serveur ne doit être plac
 
 GA4 est chargé une fois, de façon asynchrone, avec `send_page_view: false`. Chaque navigation SPA publique réelle envoie manuellement un `page_view`. `/voyages` ajoute `view_trip`, `/programme` ajoute `view_programme`, et `/reserver` ajoute `booking_page_viewed` sans déclencher `booking_form_started`.
 
-Lorsqu’une navigation SPA entre dans une route privée, `ga-disable-<MEASUREMENT_ID>` passe à `true`. Le retour vers une route publique le remet à `false` uniquement si aucune future préférence CMP ne bloque la reprise.
+GA appartient à la catégorie mesure d'audience. Consent Mode v2 Basic initialise les quatre valeurs à `denied` avant toute mesure ; seul `analytics_storage` passe à `granted` après accord. Lorsqu’une navigation SPA entre dans une route privée ou que l'accord mesure est retiré, `ga-disable-<MEASUREMENT_ID>` passe à `true`. Le retour public ne reprend GA que si l'accord mesure existe encore.
 
 Les paramètres autorisés sont des données non personnelles : `trip_id`, `trip_slug`, `travelers_count`, `room_type`, `hotel_option`, `source`, `step`, `placement`, `traffic_source_normalized` et UTMs non sensibles. La sanitization écarte notamment nom, email, téléphone, adresse, documents, données visa/médicales et identifiants de clic opaques.
 
 ## Microsoft Clarity
 
-Clarity conserve le projet `x1qyez2dwm`, est injecté une seule fois et reçoit les noms d’événement ainsi que des propriétés déjà nettoyées. À l’entrée dans une route non publique, le code envoie `consentv2` avec les stockages publicitaire et analytique refusés, puis l’appel documenté `consent(false)` qui efface les cookies Clarity et empêche la poursuite du tracking. Au retour sur une route publique, les signaux sont rétablis techniquement si aucune future préférence utilisateur ne l’interdit. L’appel de compatibilité Consent V1 est conservé uniquement parce que la documentation Clarity l’indique encore pour arrêter effectivement le tracking ; la future CMP devra piloter cette séquence.
-
-La suspension liée aux routes est une protection technique : elle ne constitue pas un consentement utilisateur. Il n’existe actuellement ni CMP ni préférence cookies exploitable dans le repository. Le point d’intégration `setMarketingConsentPreference` permet à une future CMP de bloquer la reprise, mais ne fabrique aucune décision utilisateur. La stratégie de consentement/CMP et l’activation production du tracking marketing doivent être validées avant mise en production. Ce chantier ne crée ni wording juridique ni fausse bannière.
+Clarity conserve le projet `x1qyez2dwm`, appartient à la catégorie mesure et est injecté une seule fois après accord. `consentv2` accorde uniquement `analytics_Storage` ; `ad_Storage` reste refusé. Sur route privée ou retrait, les deux sont refusés et l'appel documenté `consent(false)` efface les cookies Clarity et empêche la poursuite du tracking. Aucune reprise sans accord mesure. La suspension de route reste distincte du choix utilisateur.
 
 ## Meta Pixel
 
@@ -45,11 +43,11 @@ Le Pixel existant `2129665337343090` est chargé une seule fois, de manière asy
 
 Un chargement de `/reserver` ne produit jamais `InitiateCheckout`. Un booking n’est jamais un `Purchase`.
 
-Sur une route privée, le Pixel reçoit `fbq('consent', 'revoke')`. Le retour public utilise `grant` uniquement si la suspension de route peut être levée et si une future préférence CMP ne vaut pas `denied`.
+Sur une route privée ou après retrait marketing, le Pixel reçoit `fbq('consent', 'revoke')`. Le retour public utilise `grant` uniquement avec accord marketing enregistré.
 
 ## Meta Conversions API
 
-La fonction préparée `supabase/functions/meta-conversion` accepte uniquement `Lead` en V1. Elle refuse explicitement `Purchase` avec `event_not_allowed`. Elle exige un Origin navigateur `https://lejapon.ma` ou `https://www.lejapon.ma`, valide l’URL et l’UUID, puis relit `id`, `created_at`, `source`, `status`, `contact_email` et `contact_phone` du booking avec le client serveur. Le booking doit exister, provenir de `website` lorsque la source est renseignée, avoir moins de 24 heures et porter exactement l’`event_id` `lead-<booking_uuid>`. Elle normalise puis SHA-256 l’email, le téléphone et l’ID externe, transmet `fbp`/`fbc`, IP et user-agent lorsqu’ils sont disponibles, et ne logue aucune PII.
+La fonction préparée `supabase/functions/meta-conversion` accepte uniquement `Lead` en V1. Elle refuse explicitement `Purchase` avec `event_not_allowed`. Elle exige un Origin navigateur `https://lejapon.ma` ou `https://www.lejapon.ma`, valide l’URL et l’UUID, puis relit `id`, `created_at`, `source`, `status`, `contact_email`, `contact_phone` et `measurement_consent` du booking avec le client serveur. Le booking doit exister, provenir de `website` lorsque la source est renseignée, avoir moins de 24 heures, porter exactement l’`event_id` `lead-<booking_uuid>` et contenir un snapshot `marketing: true`. Sans lui : `marketing_consent_required`, aucun envoi Meta. Elle normalise puis SHA-256 l’email, le téléphone et l’ID externe, transmet `fbp`/`fbc`, IP et user-agent lorsqu’ils sont disponibles, et ne logue aucune PII.
 
 CORS et la vérification d’Origin ne sont pas une authentification forte. La protection V1 repose surtout sur l’existence du booking, sa source, sa fraîcheur, l’ID déterministe et la déduplication browser/CAPI de Meta. `Purchase` sera implémenté ultérieurement depuis un workflow serveur idempotent lié à un paiement réellement confirmé ; aucun endpoint public ne peut actuellement le déclencher.
 
@@ -142,13 +140,10 @@ Aucune PII ne part vers GA4, Clarity ou le Pixel navigateur. Les PII nécessaire
 
 ## Procédure de déploiement
 
-1. Faire approuver le choix de consentement/CMP et la version Graph Meta.
-2. Appliquer la migration `20260928151222_marketing_measurement_v1_booking_attribution.sql` sur staging, exécuter les contrôles DB, puis appliquer en production.
-3. Configurer les secrets de la fonction sans les écrire dans Git.
-4. Déployer `meta-conversion`, appeler un événement de test contrôlé et vérifier Events Manager.
-5. Configurer les trois variables Vite publiques puis lancer le build complet.
-6. Déployer `dist` seulement après validation sitemap/prerender et test navigateur sans PII.
-7. Tester un booking de bout en bout ; confirmer l’attribution DB, le `Lead` dédupliqué et les emails métier.
-8. Surveiller GA4/Meta/Clarity ; conserver un rollback frontend et fonction indépendant.
+1. Faire valider humainement le wording CMP, les catégories/cookies, la stratégie juridique et la version Graph Meta.
+2. La migration Marketing Measurement V1 est déjà appliquée en production. Appliquer **séparément** `20260928184511_measurement_consent_v1.sql` sur staging puis production avant tout frontend qui écrit le snapshot ; vérifier colonnes, contraintes et booking test.
+3. Après validation, construire avec `VITE_MARKETING_TRACKING_ENABLED=true` et les trois IDs publics documentés, tester l'absence de provider avant choix et le retrait, puis déployer `dist`.
+4. Configurer les secrets de la fonction sans les écrire dans Git, puis déployer `meta-conversion` séparément. Tester un `Lead` autorisé et les refus sans consentement.
+5. Surveiller GA4/Meta/Clarity ; conserver un rollback frontend et fonction indépendant.
 
-La migration et l’Edge Function sont uniquement préparées dans cette branche : aucune écriture, migration, secret ou fonction n’a été appliqué en production.
+Dans cette branche CMP, la nouvelle migration et l'Edge Function sont uniquement préparées : aucune nouvelle migration, fonction ou secret n'est appliqué en production.

@@ -47,6 +47,10 @@ type CaptureAttributionInput = {
   storage?: StorageLike;
 };
 
+const browserStorage = (): Storage | undefined => {
+  try { return typeof window === "undefined" ? undefined : window.localStorage; } catch { return undefined; }
+};
+
 const MAX_VALUE_LENGTH = 500;
 const STANDARD_QUERY_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "fbclid", "gclid", "chatgpt_campaign_id", "chatgpt_ad_group_id", "chatgpt_ad_account_id"] as const;
 const OPAQUE_QUERY_KEYS = ["oppref", "click_id", "chatgpt_campaign_id", "chatgpt_ad_group_id", "chatgpt_ad_account_id"] as const;
@@ -198,7 +202,7 @@ const buildTouch = ({ url, referrer = "", cookie = "", now = new Date() }: Captu
 };
 
 export const captureAttribution = (input: CaptureAttributionInput): MarketingAttribution => {
-  const storage = input.storage ?? (typeof window !== "undefined" ? window.localStorage : undefined);
+  const storage = input.storage ?? browserStorage();
   const existing = readStoredAttribution(storage);
   const { touch, hasAcquisitionSignal, isDirect } = buildTouch(input);
 
@@ -218,7 +222,10 @@ export const captureAttribution = (input: CaptureAttributionInput): MarketingAtt
 
 export const captureCurrentAttribution = () => {
   if (typeof window === "undefined" || typeof document === "undefined") return null;
-  return captureAttribution({ url: window.location.href, referrer: document.referrer, cookie: document.cookie, storage: window.localStorage });
+  const storage = browserStorage();
+  if (!storage) return null;
+  captureAttribution({ url: window.location.href, referrer: document.referrer, cookie: document.cookie, storage });
+  return readStoredAttribution(storage);
 };
 
 export const stripOpaqueAttributionFromCurrentUrl = () => {
@@ -236,7 +243,7 @@ export const stripOpaqueAttributionFromCurrentUrl = () => {
 
 export const getCurrentAttribution = () => {
   if (typeof window === "undefined") return null;
-  return readStoredAttribution(window.localStorage);
+  return readStoredAttribution(browserStorage());
 };
 
 export const attributionAnalyticsParams = (attribution: MarketingAttribution | null) => {

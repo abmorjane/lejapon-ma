@@ -1,13 +1,15 @@
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Instagram, Facebook, Twitter, Mail, MapPin, Phone } from "lucide-react";
 import logo from "@/assets/logo-lejapon.png";
 import { useAgencySettings } from "@/hooks/useAgencySettings";
 import { agencyAddressLine } from "@/lib/agency-settings";
-import { trackEvent } from "@/lib/analytics";
+import { isPublicConsentPath, trackEvent } from "@/lib/analytics";
+import { openConsentPreferences } from "@/lib/consent";
 
 export const Footer = () => {
   const { t, i18n } = useTranslation();
+  const { pathname } = useLocation();
   const agency = useAgencySettings();
   const faqUrl = i18n.language === "en" ? "/en/faq" : i18n.language === "ar" ? "/ar/faq" : "/mon-voyage-questions-reponses";
   const phoneHref = `tel:${String(agency.phone).replace(/[^+\d]/g, "")}`;
@@ -62,6 +64,9 @@ export const Footer = () => {
         <div className="container-app py-6 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-background/50">
           <p>© {new Date().getFullYear()} LeJapon.ma — {t("footer.rights")}</p>
           <p>Le Japon à découvrir, à votre façon, depuis le Maroc.</p>
+          {isPublicConsentPath(pathname) && <button type="button" onClick={openConsentPreferences} className="cursor-pointer text-background/80 underline underline-offset-4 transition-colors hover:text-accent focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+            {t("cmp.manage")}
+          </button>}
         </div>
       </div>
     </footer>

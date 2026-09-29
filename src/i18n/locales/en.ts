@@ -1,4 +1,14 @@
 export default {
+  // COPY_REQUIRES_HUMAN_VALIDATION — descriptive draft, not legal advice.
+  cmp: {
+    title: "Your privacy preferences",
+    description: "We use measurement tools to understand how the site is used and, with your permission, marketing tools to measure how effective our campaigns are. You can accept, reject or customize your choices.",
+    acceptAll: "Accept all", rejectAll: "Reject all", customize: "Customize",
+    necessary: "Necessary", alwaysOn: "Always active",
+    analytics: "Audience measurement", analyticsDescription: "Enables Google Analytics and Microsoft Clarity to help us understand how the site is used.",
+    marketing: "Marketing", marketingDescription: "Helps measure the effectiveness of our advertising campaigns, including with Meta.",
+    save: "Save my choices", manage: "Manage my cookies", close: "Close preferences",
+  },
   nav: { home: "Home", trips: "Trips", price: "Trips", programme: "Programme", blog: "Blog", visa: "Japan Visa", experiences: "Experiences", about: "About", journal: "Journal", contact: "Contact", booking: "Plan my trip" },
   cta: { explore: "Discover our trips", book: "Plan my trip", quote: "Request a quote", more: "Learn more", continue: "Continue", back: "Back", confirm: "Send my request" },
   hero: {
