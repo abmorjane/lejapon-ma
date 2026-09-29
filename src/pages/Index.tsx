@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
-import { ArrowRight, Star, Check, Sparkles, Shield, Users, MapPin, Calendar, Plane, Heart, Zap, Languages, Headphones, Building2, Hotel, Route, Smile, PhoneCall, Award, CheckCircle } from "lucide-react";
+import { ArrowRight, Star, Check, Sparkles, Shield, Users, Plane, Heart, Zap, Languages, Headphones, Building2, Hotel, Route, PhoneCall, Award, CheckCircle } from "lucide-react";
 import { Seo } from "@/components/Seo";
 import { supabase } from "@/integrations/supabase/client";
 import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
@@ -36,7 +36,6 @@ const truncateWords = (text: string | null | undefined, max: number) => {
   return words.slice(0, max).join(" ") + "…";
 };
 
-const statIcons = [Plane, Users, Calendar, Star];
 
 const fallbackImgs = [hero, torii, shibuya];
 
@@ -59,101 +58,150 @@ const ExperienceSkeleton = ({ dark = false }: { dark?: boolean }) => (
   </article>
 );
 
-const DEFAULT_TESTIMONIALS = [
-  { name: "Kawtar B.", city: "Casablanca", quote: "Topissime ! Organisation juste parfaite. Une équipe passionnée, professionnelle et disponible. Je recommande vivement !" },
-  { name: "Hanaa El.", city: "Casablanca", quote: "Un voyage hors normes du début à la fin. La qualité du programme et des guides dépassait nos attentes." },
-  { name: "Ghita A.", city: "Casablanca", quote: "Pour profiter pleinement d'un séjour inoubliable au Japon, faites-leur confiance. Programme riche et varié." },
-  { name: "Fatima Z.", city: "Casablanca", quote: "Voyage extraordinaire, organisation au top. La bienveillance et le professionnalisme de l'équipe y sont pour beaucoup." },
-];
-
 const HOME_DEFAULTS = {
-  hero_badge: "Sakura 2026 · 4 places restantes",
+  hero_badge: "Voyages au Japon depuis le Maroc",
   hero_title_l1: "Vivez le Japon comme",
   hero_title_l2: "vous l'avez rêvé.",
-  hero_subtitle: "Voyages premium pensé au moindre détail, jusqu'à 17 jours au japon, équipe maroco-japonaise, prix imbattables.",
+  hero_subtitle: "Des itinéraires pensés avec soin, une équipe attentive et la liberté de vivre le Japon à votre façon.",
   hero_cta_primary: "Composer mon voyage",
   hero_cta_secondary: "Voir les voyages",
-  hero_trust_count: "500+",
-  hero_trust_text: "voyageurs heureux",
-  hero_rating_value: "4.9/5",
-  hero_rating_text: "sur Google",
   hero_scroll: "Découvrir",
-  stat1_v: "+30", stat1_k: "Voyages organisés",
-  stat2_v: "+500", stat2_k: "Voyageurs satisfaits",
-  stat3_v: "+10", stat3_k: "Départs / an",
-  stat4_v: "4.9/5", stat4_k: "Note moyenne",
   trips_eyebrow: "Nos prochains départs",
-  trips_title_main: "Quatre saisons magnifiques,",
-  trips_title_accent: "plusieurs départs au Japon inoubliables.",
+  trips_title_main: "Le Japon vous appelle,",
+  trips_title_accent: "choisissez votre départ.",
   trips_link: "Voir tous les voyages",
   trips_empty: "Aucun départ disponible pour le moment. Revenez bientôt.",
   why_eyebrow: "Pourquoi nous choisir",
-  why_title_main: "Le premier site web au Maroc",
-  why_title_accent: "dédié aux voyages organisés au Japon.",
-  why_intro: "Une expertise unique, une équipe passionnée, et la garantie d'un voyage inoubliable.",
-  why1_t: "Un programme complet", why1_d: "Tout est pensé dans les moindres détails : hôtels, transports, guides, accompagnateur… aucune surprise.",
+  why_title_main: "Votre voyage au Japon,",
+  why_title_accent: "pensé avec attention.",
+  why_intro: "Une équipe qui connaît le Japon, des itinéraires pour le découvrir et du temps pour le vivre à votre façon.",
+  why1_t: "Un itinéraire clair", why1_d: "Les étapes et les prestations de chaque départ sont précisées avant votre choix.",
   why2_t: "Équipe maroco-japonaise", why2_d: "Une vraie connaissance du terrain et la chaleur de l'accueil marocain.",
-  why3_t: "Immersion totale", why3_d: "Des programmes de 13 à 18 jours selon la saison, pour vivre le Japon pleinement.",
-  why4_t: "Réservation simple", why4_d: "Composez votre voyage en 2 minutes avec prix instantané.",
+  why3_t: "Vos propres découvertes", why3_d: "Les temps libres indiqués dans le programme laissent de la place à vos envies.",
+  why4_t: "Choix serein", why4_d: "Comparez les départs puis personnalisez votre demande.",
   how_eyebrow: "Comment ça marche",
   how_title_main: "Réservez en 3 étapes",
   how_title_accent: "ultra simples.",
   step1_t: "Composez votre voyage", step1_d: "Choisissez vos dates, formule et options. Prix en temps réel, sans engagement.",
-  step2_t: "Confirmez avec acompte", step2_d: "Un acompte de 25 000 MAD par personne garantit votre place et lance votre demande de visa.",
-  step3_t: "Préparez vos valises", step3_d: "Visa reçu, solde réglé, et nous nous retrouvons à l'aéroport de Casablanca.",
+  step2_t: "Parlons des détails", step2_d: "Notre équipe confirme les disponibilités et les conditions avec vous.",
+  step3_t: "Préparez vos valises", step3_d: "Profitez de nos conseils pour préparer le départ et votre dossier de visa.",
   exp_eyebrow: "Plans extra",
   exp_title_l1: "Ajoutez un peu de magie",
   exp_title_l2: "à votre séjour.",
   exp_link: "Voir toutes les expériences",
   exp_empty: "Aucune activité disponible pour l'instant.",
-  test_eyebrow: "Témoignages",
-  test_title_main: "Ils ont vécu le voyage",
-  test_title_accent: "de leur vie.",
-  testimonials: DEFAULT_TESTIMONIALS,
-  gua1_t: "Transparence totale", gua1_d: "Petits-déjeuners et prestations du programme inclus, sans mauvaise surprise",
-  gua2_t: "Visa assisté", gua2_d: "Nous gérons toute la procédure",
-  gua3_t: "Guide bilingue", gua3_d: "Marocain + japonais sur place",
-  gua4_t: "Paiement flexible", gua4_d: "Acompte de 25 000 MAD par personne, solde avant départ",
-  cta_badge: "Offre limitée",
+  gua1_t: "Un programme lisible", gua1_d: "Prestations et temps libres précisés pour chaque départ",
+  gua2_t: "Visa accompagné", gua2_d: "Aide à la préparation sans garantie de délivrance",
+  gua3_t: "Présence adaptée", gua3_d: "Accompagnement précisé selon le programme",
+  gua4_t: "Des choix personnels", gua4_d: "Formule et expériences optionnelles selon le voyage",
+  cta_badge: "À vous le Japon",
   cta_title: "Votre Japon vous attend.",
-  cta_subtitle: "Composez votre voyage en 2 minutes et découvrez votre prix instantanément.",
+  cta_subtitle: "Choisissez le départ qui vous inspire et préparons ensemble la suite.",
   cta_primary: "Composer mon voyage",
   cta_secondary: "Parler à un conseiller",
 };
 
+// Public sales promises stay in code until the site:home CMS copy is reviewed.
+// The CMS still supplies non-critical content, but cannot reintroduce expired
+// departure badges, unverified numbers or unconditional service guarantees.
+const HOME_BRAND_COPY = {
+  fr: {
+    hero_badge: "Voyages au Japon depuis le Maroc",
+    hero_title_l1: "Le Japon,",
+    hero_title_l2: "à vivre pleinement.",
+    hero_subtitle: "Des circuits pensés avec soin, des découvertes à partager et la liberté de savourer le Japon à votre rythme.",
+    hero_cta_primary: "Imaginer mon voyage",
+    hero_cta_secondary: "Découvrir les départs",
+    trips_title_main: "Le Japon vous appelle,",
+    trips_title_accent: "choisissez votre départ.",
+    why_title_main: "Votre Japon,",
+    why_title_accent: "avec le plaisir de se laisser guider.",
+    why_intro: "Une équipe attentive vous aide à choisir le bon départ et à profiter de chaque étape, sans renoncer à vos envies personnelles.",
+    why1_t: "Un itinéraire qui a du sens", why1_d: "Les villes, les visites et le rythme de chaque circuit sont présentés avant votre choix.",
+    why2_t: "Le Japon vu de près", why2_d: "Notre connaissance de la destination nourrit les étapes et les conseils que nous partageons.",
+    why3_t: "Du temps pour vous", why3_d: "Les moments libres prévus au programme laissent place à vos propres découvertes.",
+    why4_t: "Un choix en toute clarté", why4_d: "Comparez les départs, puis personnalisez votre demande selon vos envies.",
+    step1_t: "Choisissez votre départ", step1_d: "Choisissez votre départ et les options qui vous plaisent ; le montant estimé apparaît avant l'envoi.",
+    step2_t: "Parlons des détails",
+    step2_d: "Notre équipe confirme avec vous les disponibilités et les conditions de réservation.",
+    step3_t: "Préparez le départ",
+    step3_d: "Préparez votre départ avec nos conseils, notamment pour votre dossier de visa.",
+    gua1_t: "Un programme lisible", gua1_d: "Prestations et moments libres sont précisés pour le départ choisi.",
+    gua2_t: "Visa accompagné", gua2_d: "Une aide à la préparation du dossier, sans garantie de délivrance.",
+    gua3_t: "Une présence adaptée", gua3_d: "L'accompagnement est précisé pour chaque programme.",
+    gua4_t: "Vos envies comptent", gua4_d: "Formule et expériences optionnelles selon le voyage.",
+    cta_badge: "À vous le Japon",
+    cta_primary: "Préparer mon voyage",
+    cta_subtitle: "Choisissez le départ qui vous inspire ; nous vous aiderons à préparer la suite.",
+  },
+  en: {
+    hero_badge: "Japan journeys from Morocco",
+    hero_title_l1: "Japan,",
+    hero_title_l2: "yours to discover.",
+    hero_subtitle: "Thoughtfully planned routes, discoveries to share and room to enjoy Japan at your own pace.",
+    hero_cta_primary: "Plan my journey", hero_cta_secondary: "Explore departures",
+    trips_title_main: "Japan is calling,",
+    trips_title_accent: "choose your departure.",
+    why_title_main: "Your Japan,", why_title_accent: "with thoughtful support.",
+    why_intro: "Our team helps you choose the right departure and enjoy every stage while making room for your own interests.",
+    why1_t: "A meaningful route", why1_d: "Explore the cities, visits and pace of each trip before choosing.",
+    why2_t: "Japan up close", why2_d: "Our destination knowledge shapes the routes and advice we share.",
+    why3_t: "Time for yourself", why3_d: "Free moments in the programme make room for your discoveries.",
+    why4_t: "A clear choice", why4_d: "Compare departures and tailor your request to your preferences.",
+    step1_t: "Choose your departure", step1_d: "Choose a departure and optional experiences; see the estimate before sending your request.",
+    step2_t: "Let's discuss the details",
+    step2_d: "Our team confirms availability and booking conditions with you.",
+    step3_t: "Get ready to go",
+    step3_d: "Prepare to leave with our advice, including support for your visa file.",
+    gua1_t: "A clear programme", gua1_d: "Services and free time are detailed for each departure.",
+    gua2_t: "Visa support", gua2_d: "Help preparing the file, with no guarantee of approval.",
+    gua3_t: "Support that fits", gua3_d: "Accompaniment is specified for each programme.",
+    gua4_t: "Your preferences matter", gua4_d: "Formula and optional experiences vary by trip.",
+    cta_badge: "Japan awaits", cta_primary: "Plan my journey", cta_subtitle: "Choose the departure that inspires you; we will help with the next steps.",
+  },
+  ar: {
+    hero_badge: "رحلات إلى اليابان من المغرب",
+    hero_title_l1: "اليابان،",
+    hero_title_l2: "اكتشفها بطريقتك.",
+    hero_subtitle: "مسارات مدروسة وتجارب تتشاركها مع الآخرين ووقت للاستمتاع باليابان على إيقاعك.",
+    hero_cta_primary: "خطط لرحلتي", hero_cta_secondary: "اكتشف الرحلات",
+    trips_title_main: "اليابان تناديك،",
+    trips_title_accent: "اختر موعد رحلتك.",
+    why_title_main: "رحلتك إلى اليابان،", why_title_accent: "برفقة فريق يهتم بالتفاصيل.",
+    why_intro: "نساعدك في اختيار الرحلة المناسبة والاستمتاع بكل محطة مع مساحة لرغباتك الخاصة.",
+    why1_t: "مسار واضح", why1_d: "تعرف على المدن والزيارات ووتيرة كل رحلة قبل الاختيار.",
+    why2_t: "معرفة باليابان", why2_d: "توجه خبرتنا بالوجهة البرامج والنصائح التي نقدمها.",
+    why3_t: "وقت لنفسك", why3_d: "تترك الفترات الحرة في البرنامج مساحة لاكتشافاتك.",
+    why4_t: "اختيار بكل وضوح", why4_d: "قارن الرحلات وخصص طلبك حسب رغباتك.",
+    step1_t: "اختر رحلتك", step1_d: "اختر موعد الرحلة والخيارات التي تناسبك واطلع على السعر التقديري قبل الإرسال.",
+    step2_t: "لنتحدث عن التفاصيل",
+    step2_d: "يؤكد فريقنا معك التوفر وشروط الحجز.",
+    step3_t: "استعد للسفر",
+    step3_d: "استعد للسفر مع نصائحنا، بما في ذلك المساعدة في ملف التأشيرة.",
+    gua1_t: "برنامج واضح", gua1_d: "تفاصيل الخدمات والوقت الحر لكل رحلة.",
+    gua2_t: "مساعدة في التأشيرة", gua2_d: "مساعدة في إعداد الملف دون ضمان القبول.",
+    gua3_t: "مرافقة حسب البرنامج", gua3_d: "توضح تفاصيل المرافقة في كل رحلة.",
+    gua4_t: "رغباتك مهمة", gua4_d: "الصيغة والتجارب الاختيارية تختلف حسب الرحلة.",
+    cta_badge: "اليابان بانتظارك", cta_primary: "خطط لرحلتي", cta_subtitle: "اختر الرحلة التي تلهمك وسنساعدك في الخطوات التالية.",
+  },
+} as const;
+
 const MARKETING_COPY = {
   fr: {
     advantagesTitle: "Pourquoi voyager au Japon avec LeJapon.ma ?",
-    advantagesIntro: "Un circuit pensé pour les voyageurs marocains: présence humaine, expertise Japon et assistance concrète avant, pendant et après le séjour.",
+    advantagesIntro: "Des voyages pensés pour partir du Maroc avec des repères clairs, une connaissance du Japon et la place de vivre vos propres découvertes.",
     reserve: "Réserver mon voyage",
     advisor: "Parler à un conseiller",
     advantages: [
-      ["Accompagnement depuis Casablanca", "Vous partez avec un cadre clair dès l'aéroport, pas une simple convocation impersonnelle."],
-      ["Accompagnateur parlant japonais", "Un accompagnateur francophone qui parle japonais et comprend les codes culturels sur place."],
-      ["Présence pendant tout le voyage", "Le groupe est accompagné au quotidien pour limiter le stress et fluidifier les étapes."],
-      ["Bureau/partenaire au Japon", "Un relais maroco-japonais facilite l'aide locale et les ajustements de dernière minute."],
-      ["Hôtels bien placés", "Des adresses choisies pour simplifier les visites, les transports et les temps libres."],
-      ["Circuit plus long et plus complet", "Plus de jours pour découvrir le Japon sans transformer le voyage en course."],
-      ["Journées libres", "Du temps pour vivre votre propre Japon: shopping, cafés, temples, quartiers ou expériences."],
-      ["Avis clients vérifiés", "Des retours Google très positifs de voyageurs qui ont réellement vécu l'expérience."],
-      ["Prix compétitif", "Une proposition claire, dense et compétitive au regard de l'accompagnement inclus."],
-    ],
-    comparisonTitle: "Comparez avant de réserver votre voyage au Japon",
-    comparisonEyebrow: "Comparatif",
-    criteria: "Critères",
-    classic: "Voyage classique",
-    lejapon: "LeJapon.ma",
-    rows: [
-      ["Durée du circuit", "Souvent plus courte", "Circuit plus long et plus complet"],
-      ["Accompagnement depuis Casablanca", "Variable", "Inclus selon départ"],
-      ["Accompagnateur parlant japonais", "Rare", "Oui, francophone et japonisant"],
-      ["Assistance sur place au Japon", "Limitée", "Présence avec le groupe"],
-      ["Bureau/partenaire local", "Pas toujours visible", "Relais maroco-japonais"],
-      ["Hôtels bien placés", "Variable", "Sélection axée emplacement"],
-      ["Journées libres", "Peu ou mal intégrées", "Prévues pour l'immersion"],
-      ["Extras réservables sur place", "Souvent rigide", "Aide pour options de dernière minute"],
-      ["Avis clients vérifiés", "À vérifier", "Lien Google public"],
-      ["Prix compétitif", "Variable", "Positionnement clair et compétitif"],
+      ["Départs depuis Casablanca", "Les dates et les informations de chaque départ sont indiquées avant la réservation."],
+      ["Accompagnement selon le voyage", "Un accompagnateur francophone parlant japonais peut être prévu selon le programme choisi."],
+      ["Une équipe à votre écoute", "Posez vos questions avant de partir et retrouvez le cadre du voyage dans le programme."],
+      ["Une connaissance du Japon", "Nos itinéraires s'appuient sur l'expérience de la destination et de ses étapes."],
+      ["Des hôtels à découvrir", "Consultez les hébergements présentés avec votre itinéraire."],
+      ["Un rythme à choisir", "Comparez les circuits proposés pour trouver celui qui vous ressemble."],
+      ["Des moments libres", "Selon le programme, du temps pour explorer à votre façon."],
+      ["Des avis publics", "Vous pouvez consulter directement les retours publiés sur Google."],
+      ["Un prix à comprendre", "Le tarif et les options de chaque départ sont présentés avant votre demande."],
     ],
     reviewsTitle: "Nos voyageurs parlent de nous",
     reviewsText: "Consultez les avis Google et les retours de voyageurs accompagnés par LeJapon.ma.",
@@ -168,32 +216,15 @@ const MARKETING_COPY = {
     reserve: "Book my trip",
     advisor: "Talk to an advisor",
     advantages: [
-      ["Support from Casablanca", "A clear departure experience from the airport."],
-      ["Japanese-speaking tour leader", "A French-speaking leader who understands Japanese culture."],
-      ["Present throughout the trip", "Daily support to reduce stress and keep the journey smooth."],
-      ["Local partner in Japan", "A Morocco-Japan relay for local help and last-minute adjustments."],
-      ["Well-located hotels", "Hotels selected to simplify visits, transport and free time."],
-      ["Longer, fuller itinerary", "More days to discover Japan without rushing."],
-      ["Free days", "Time to experience your own Japan."],
-      ["Verified client reviews", "Positive public Google feedback from real travelers."],
-      ["Competitive price", "A clear, dense and competitive offer for the support included."],
-    ],
-    comparisonTitle: "Compare before booking your Japan trip",
-    comparisonEyebrow: "Comparison",
-    criteria: "Criteria",
-    classic: "Classic trip",
-    lejapon: "LeJapon.ma",
-    rows: [
-      ["Itinerary duration", "Often shorter", "Longer and fuller"],
-      ["Support from Casablanca", "Variable", "Included depending on departure"],
-      ["Japanese-speaking leader", "Rare", "Yes"],
-      ["On-site assistance in Japan", "Limited", "Present with the group"],
-      ["Local partner", "Not always visible", "Morocco-Japan relay"],
-      ["Well-located hotels", "Variable", "Location-focused selection"],
-      ["Free days", "Limited", "Planned for immersion"],
-      ["Bookable extras on site", "Often rigid", "Help with last-minute options"],
-      ["Verified reviews", "To be checked", "Public Google link"],
-      ["Competitive price", "Variable", "Clear competitive positioning"],
+      ["Departures from Casablanca", "Dates and departure details are shown for each trip."],
+      ["Support that fits the trip", "A French-speaking leader who speaks Japanese may be included, depending on the programme."],
+      ["A team to talk to", "Ask questions before you go and check the details of your chosen programme."],
+      ["Knowledge of Japan", "Our routes draw on experience of the destination and its many stages."],
+      ["Hotels to explore", "See the accommodation presented with your route."],
+      ["A pace to choose", "Compare the available circuits to find one that suits you."],
+      ["Free moments", "Depending on the programme, time to explore your own way."],
+      ["Public reviews", "Read feedback directly on Google."],
+      ["Clear pricing", "Each departure shows its price and options before you enquire."],
     ],
     reviewsTitle: "Our travelers talk about us",
     reviewsText: "Read Google reviews from travelers supported by LeJapon.ma.",
@@ -208,32 +239,15 @@ const MARKETING_COPY = {
     reserve: "أحجز رحلتي",
     advisor: "تحدث مع مستشار",
     advantages: [
-      ["مرافقة من الدار البيضاء", "انطلاقة واضحة ومنظمة منذ المطار."],
-      ["مرافق يتحدث اليابانية", "مرافق فرنكوفوني يعرف اللغة والثقافة اليابانية."],
-      ["حضور طوال الرحلة", "مساعدة يومية لتقليل التوتر وتنظيم التنقلات."],
-      ["شريك محلي في اليابان", "دعم مغربي ياباني للمساعدة في عين المكان."],
-      ["فنادق بمواقع مناسبة", "اختيار فنادق يسهل الزيارات والتنقلات."],
-      ["برنامج أطول وأكمل", "أيام أكثر لاكتشاف اليابان بدون استعجال."],
-      ["أيام حرة", "وقت لتعيش اليابان بطريقتك الخاصة."],
-      ["آراء عملاء موثقة", "تقييمات Google إيجابية من مسافرين حقيقيين."],
-      ["سعر تنافسي", "عرض واضح ومتكامل مقارنة بالمرافقة المقدمة."],
-    ],
-    comparisonTitle: "قارن قبل حجز رحلتك إلى اليابان",
-    comparisonEyebrow: "مقارنة",
-    criteria: "المعايير",
-    classic: "رحلة كلاسيكية",
-    lejapon: "LeJapon.ma",
-    rows: [
-      ["مدة البرنامج", "غالبا أقصر", "أطول وأكثر اكتمالا"],
-      ["المرافقة من الدار البيضاء", "متغيرة", "متوفرة حسب الرحلة"],
-      ["مرافق يتحدث اليابانية", "نادر", "نعم"],
-      ["المساعدة في اليابان", "محدودة", "حضور مع المجموعة"],
-      ["شريك محلي", "غير واضح دائما", "دعم مغربي ياباني"],
-      ["فنادق بمواقع مناسبة", "متغيرة", "اختيار يركز على الموقع"],
-      ["أيام حرة", "قليلة", "مدمجة للاندماج الشخصي"],
-      ["إضافات في عين المكان", "غالبا جامدة", "مساعدة للحجوزات الأخيرة"],
-      ["آراء موثقة", "تحتاج تحقق", "رابط Google علني"],
-      ["سعر تنافسي", "متغير", "تموقع واضح وتنافسي"],
+      ["رحلات من الدار البيضاء", "تظهر المواعيد وتفاصيل الانطلاق لكل رحلة."],
+      ["مرافقة حسب البرنامج", "قد يرافق الرحلة شخص يتحدث الفرنسية واليابانية حسب البرنامج المختار."],
+      ["فريق يصغي إليك", "اطرح أسئلتك قبل السفر وتعرف على تفاصيل البرنامج."],
+      ["معرفة باليابان", "تستند مساراتنا إلى تجربة الوجهة ومحطاتها."],
+      ["فنادق للاكتشاف", "تعرف على أماكن الإقامة المقدمة مع رحلتك."],
+      ["إيقاع تختاره", "قارن البرامج المتاحة لتجد ما يناسبك."],
+      ["أوقات حرة", "حسب البرنامج، وقت للاستكشاف بطريقتك."],
+      ["آراء منشورة", "اقرأ التقييمات المنشورة مباشرة على Google."],
+      ["سعر واضح", "تظهر أسعار وخيارات كل رحلة قبل إرسال طلبك."],
     ],
     reviewsTitle: "مسافرونا يتحدثون عنا",
     reviewsText: "اطلع على آراء Google وتجارب المسافرين مع LeJapon.ma.",
@@ -246,7 +260,9 @@ const MARKETING_COPY = {
 
 const Index = () => {
   const { t, i18n } = useTranslation();
-  const c = useSiteContent("site:home", HOME_DEFAULTS);
+  const cms = useSiteContent("site:home", HOME_DEFAULTS);
+  const language = i18n.language === "en" || i18n.language === "ar" ? i18n.language : "fr";
+  const c = { ...cms, ...HOME_BRAND_COPY[language] };
   const m = MARKETING_COPY[(i18n.language as keyof typeof MARKETING_COPY) || "fr"] ?? MARKETING_COPY.fr;
   const [trips, setTrips] = useState<Trip[]>([]);
   const [tripsLoading, setTripsLoading] = useState(true);
@@ -276,8 +292,8 @@ const Index = () => {
   return (
     <>
       <Seo
-        title="lejapon.ma — Voyages d'immersion au Japon depuis Casablanca"
-        description="LeJapon.ma organise deux voyages par an au Japon depuis Casablanca : programme complet de 14 jours, vols, hôtels, transports JR, guide bilingue et prix tout inclus."
+        title="LeJapon.ma | Découvrez le Japon depuis le Maroc"
+        description="Découvrez LeJapon.ma, marque spécialisée Japon de Moroccan Express Travel & Events : des itinéraires pensés avec soin et le plaisir de voyager à votre rythme."
         canonical="/"
         prerenderReady={!tripsLoading && !extrasLoading}
         jsonLd={{
@@ -286,9 +302,7 @@ const Index = () => {
           name: "lejapon.ma",
           url: "https://www.lejapon.ma",
           areaServed: "MA",
-          description: "Agence de voyage premium spécialisée Japon, départs garantis depuis Casablanca.",
-          address: { "@type": "PostalAddress", addressLocality: "Casablanca", addressCountry: "MA" },
-          aggregateRating: { "@type": "AggregateRating", ratingValue: "4.9", reviewCount: "150" },
+          description: "LeJapon.ma, marque spécialisée Japon de Moroccan Express Travel & Events, propose des voyages depuis le Maroc.",
         }}
       />
       {/* HERO */}
@@ -334,7 +348,7 @@ const Index = () => {
               <h1 className="text-balance font-display text-[clamp(2.55rem,11.5vw,3.8rem)] leading-[0.98] tracking-[-0.025em] text-white sm:text-6xl md:text-7xl lg:text-[4rem] xl:text-[5.5rem]">
                 {(c.hero_title_l1 || "").split(",").map((part, i, arr) => (
                   <span key={i} className="block">
-                    {part.trim()}{i < arr.length - 1 ? "," : ""}
+                    {part.trim()}{i < arr.length - 1 ? "," : ""}{" "}
                   </span>
                 ))}
                 <span className="block text-gradient">{c.hero_title_l2}</span>
@@ -392,24 +406,9 @@ const Index = () => {
             />
           </div>
 
-          {/* trust badges */}
-          <div className="relative z-30 mt-5 flex flex-col items-start gap-3 text-xs text-white/80 sm:mt-7 sm:flex-row sm:flex-wrap sm:items-center sm:gap-6 sm:text-sm lg:mt-10">
-            <div className="flex items-center gap-2">
-              <div className="flex -space-x-2">
-                {[1,2,3,4].map(i => <div key={i} className="w-8 h-8 rounded-full bg-gradient-sunset border-2 border-white" />)}
-              </div>
-              <span><strong className="text-white">{c.hero_trust_count}</strong> {c.hero_trust_text}</span>
-            </div>
-            <a
-              href="https://maps.app.goo.gl/MY3hSdMrbv6pVZLm7?g_st=ac"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 hover:text-white transition-colors"
-            >
-              <div className="flex text-accent">{[1,2,3,4,5].map(i => <Star key={i} className="w-4 h-4 fill-current" />)}</div>
-              <span><strong className="text-white">{c.hero_rating_value}</strong> {c.hero_rating_text}</span>
-            </a>
-          </div>
+          <a href="https://maps.app.goo.gl/ineHnJq3o5DqGByH8" target="_blank" rel="noopener noreferrer" className="relative z-30 mt-5 inline-flex text-sm text-white/85 underline underline-offset-4 hover:text-white">
+            Découvrir les avis publics sur Google
+          </a>
         </div>
 
         {/* scroll hint */}
@@ -421,31 +420,6 @@ const Index = () => {
           <span>{c.hero_scroll}</span>
           <div className="w-px h-8 bg-white/40" />
         </a>
-      </section>
-
-      {/* STATS BAR */}
-      <section className="bg-foreground text-background">
-        <div className="container-app grid grid-cols-2 md:grid-cols-4 gap-6 py-10">
-          {[
-            { v: c.stat1_v, k: c.stat1_k },
-            { v: c.stat2_v, k: c.stat2_k },
-            { v: c.stat3_v, k: c.stat3_k },
-            { v: c.stat4_v, k: c.stat4_k },
-          ].map((s, i) => {
-            const Icon = statIcons[i];
-            return (
-              <div key={i} className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-accent/15 text-accent flex items-center justify-center">
-                  <Icon className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-display text-2xl">{s.v}</div>
-                  <div className="text-xs text-background/60">{s.k}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       </section>
 
       {/* COMPETITIVE ADVANTAGES */}
@@ -514,41 +488,6 @@ const Index = () => {
             ))}
           </div>
         )}
-      </section>
-
-      {/* COMPARISON */}
-      <section className="bg-foreground py-20 text-background md:py-28">
-        <div className="container-app">
-          <div className="mb-10 max-w-3xl">
-            <span className="eyebrow mb-3 !text-accent">{m.comparisonEyebrow}</span>
-            <h2 className="font-display text-3xl text-balance md:text-5xl">{m.comparisonTitle}</h2>
-          </div>
-          <div className="overflow-x-auto rounded-3xl border border-white/10 bg-white/[0.04]">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className="border-b border-white/10 text-left text-background/70">
-                  <th className="p-4 font-medium">{m.criteria}</th>
-                  <th className="p-4 font-medium">{m.classic}</th>
-                  <th className="p-4 font-medium">{m.lejapon}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {m.rows.map(([criterion, classic, lejapon]) => (
-                  <tr key={criterion} className="border-b border-white/10 last:border-0">
-                    <td className="p-4 font-semibold">{criterion}</td>
-                    <td className="p-4 text-background/65">{classic}</td>
-                    <td className="p-4">
-                      <span className="inline-flex items-start gap-2 font-medium">
-                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-                        {lejapon}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
       </section>
 
       {/* WHY US */}
@@ -671,34 +610,10 @@ const Index = () => {
         </div>
       </section>
 
-      {/* TESTIMONIALS */}
+      {/* Only link to public reviews until individual quotations are verified. */}
       <section className="container-app py-24 md:py-32">
-        <div className="max-w-2xl mb-14 text-center mx-auto">
-          <span className="eyebrow mb-3">{c.test_eyebrow}</span>
-          <h2 className="font-display md:text-5xl mt-3 text-balance text-3xl">{c.test_title_main} <span className="text-gradient">{c.test_title_accent}</span></h2>
-        </div>
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
-          {(c.testimonials ?? DEFAULT_TESTIMONIALS).map((tm: any, i: number) => (
-            <motion.figure key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.4, delay: i * 0.08 }}
-              className="card-modern flex min-h-[260px] flex-col p-6">
-              <div className="flex gap-0.5 text-accent mb-4">
-                {Array.from({ length: 5 }).map((_, j) => <Star key={j} className="w-4 h-4 fill-current" />)}
-              </div>
-              <blockquote className="mb-5 min-h-[6.5rem] flex-1 overflow-hidden text-sm leading-relaxed text-foreground/80">« {tm.quote} »</blockquote>
-              <figcaption className="flex items-center gap-3 pt-4 border-t border-border">
-                <div className="w-10 h-10 rounded-full bg-gradient-sunset flex items-center justify-center text-white font-semibold text-sm">
-                  {(tm.name || "?")[0]}
-                </div>
-                <div>
-                  <div className="font-semibold text-sm">{tm.name}</div>
-                  <div className="text-xs text-muted-foreground">{tm.city}</div>
-                </div>
-              </figcaption>
-            </motion.figure>
-          ))}
-        </div>
         <div className="mt-10 flex min-h-[190px] flex-col items-center justify-center rounded-3xl border border-border bg-background p-6 text-center shadow-soft">
-          <h3 className="font-display text-2xl">{m.reviewsTitle}</h3>
+          <h2 className="font-display text-2xl">{m.reviewsTitle}</h2>
           <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{m.reviewsText}</p>
           <a
             href="https://maps.app.goo.gl/ineHnJq3o5DqGByH8"

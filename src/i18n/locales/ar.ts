@@ -1,6 +1,6 @@
 export default {
-  nav: { home: "الصفحة الرئيسية", trips: "الرحلات", price: "الأسعار", programme: "البرنامج", blog: "المدونة", visa: "تأشيرة اليابان", experiences: "تجارب", about: "من نحن", journal: "المدونة", contact: "تواصل معنا", booking: "احجز الآن" },
-  cta: { explore: "اكتشف رحلاتنا", book: "احجز رحلتي", quote: "اطلب عرض سعر", more: "اعرف المزيد", continue: "متابعة", back: "رجوع", confirm: "تأكيد الحجز" },
+  nav: { home: "الصفحة الرئيسية", trips: "الرحلات", price: "الرحلات", programme: "البرنامج", blog: "المدونة", visa: "تأشيرة اليابان", experiences: "تجارب", about: "من نحن", journal: "المدونة", contact: "تواصل معنا", booking: "خطط لرحلتي" },
+  cta: { explore: "اكتشف رحلاتنا", book: "خطط لرحلتي", quote: "اطلب عرض سعر", more: "اعرف المزيد", continue: "متابعة", back: "رجوع", confirm: "إرسال طلبي" },
   hero: {
     eyebrow: "رحلات انغماس في اليابان · انطلاقا من الدار البيضاء",
     title: "اليابان، كحلم",
@@ -60,7 +60,7 @@ export default {
     imageAlt: "{{title}} — صورة {{count}}",
   },
   cta_band: { title: "مستعد لليابان؟", subtitle: "كوّن رحلتك، احصل على السعر فورا، واحجز مكانك.", button: "كوّن رحلتي" },
-  footer: { tagline: "رحلات انغماس في اليابان، انطلاقا من المغرب.", rights: "جميع الحقوق محفوظة." },
+  footer: { tagline: "LeJapon.ma علامة متخصصة في اليابان من Moroccan Express Travel & Events. رحلات مدروسة من المغرب ومساحة لاكتشاف اليابان بطريقتك.", rights: "جميع الحقوق محفوظة." },
   booking: {
     title: "كوّن رحلتك",
     subtitle: "سعر فوري — دون التزام.",

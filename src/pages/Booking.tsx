@@ -427,9 +427,9 @@ const Booking = () => {
         <div className="mx-auto max-w-4xl">
           <div className="mx-auto mb-12 max-w-2xl text-center">
             <div className="w-16 h-16 mx-auto mb-8 rounded-2xl bg-gradient-vermillion text-accent-foreground flex items-center justify-center font-display text-2xl shadow-cta">✓</div>
-            <h1 className="font-display text-4xl md:text-6xl mb-6">Votre réservation est enregistrée 🎉</h1>
+            <h1 className="font-display text-4xl md:text-6xl mb-6">Votre demande de voyage est bien reçue 🎉</h1>
             <p className="text-foreground/70 text-lg leading-relaxed">
-              Votre place pour le Japon est maintenant réservée. Notre équipe vous recontacte sous 24 heures pour confirmer les derniers détails.
+              Merci de nous confier ce projet. Notre équipe reviendra vers vous pour confirmer les disponibilités, les conditions et les prochaines étapes.
             </p>
             <div className="mt-8 rounded-2xl border border-accent/20 bg-accent-soft/30 p-4 text-left sm:p-5">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -623,8 +623,8 @@ const Booking = () => {
   return (
     <div className="container-app max-w-full overflow-x-hidden pb-36 pt-8 sm:py-12 md:py-20">
       <Seo
-        title="Réserver mon voyage au Japon — Composer votre séjour | lejapon.ma"
-        description="Composez votre voyage au Japon en 2 minutes : dates, formule, chambre et options. Prix instantané, paiement sécurisé, départs depuis Casablanca."
+        title="Préparer ma réservation au Japon | LeJapon.ma"
+        description="Choisissez votre départ, votre chambre et vos envies pour préparer une demande de voyage au Japon. Consultez le prix estimé avant de l'envoyer."
         canonical="/reserver"
       />
       <div className="grid max-w-full gap-8 lg:grid-cols-12 lg:items-start lg:gap-12 lg:pb-60">
@@ -727,9 +727,9 @@ const Booking = () => {
 
               {step === 2 && (
                 <div>
-                  <h2 className="font-display mb-2 text-2xl">Votre formule en 1 minute</h2>
+                  <h2 className="font-display mb-2 text-2xl">Un voyage à votre façon</h2>
                   <p className="mb-6 text-sm text-foreground/70">
-                    Voyageurs, chambre et hôtel. Les expériences spéciales resteront facultatives après réservation.
+                    Indiquez les voyageurs et choisissez la chambre qui vous convient. Vous pourrez encore découvrir les expériences facultatives après l’envoi de votre demande.
                   </p>
 
                   {selectedTrip && (

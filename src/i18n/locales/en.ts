@@ -1,6 +1,6 @@
 export default {
-  nav: { home: "Home", trips: "Trips", price: "Pricing", programme: "Programme", blog: "Blog", visa: "Japan Visa", experiences: "Experiences", about: "About", journal: "Journal", contact: "Contact", booking: "Book now" },
-  cta: { explore: "Discover our trips", book: "Book my trip", quote: "Request a quote", more: "Learn more", continue: "Continue", back: "Back", confirm: "Confirm booking" },
+  nav: { home: "Home", trips: "Trips", price: "Trips", programme: "Programme", blog: "Blog", visa: "Japan Visa", experiences: "Experiences", about: "About", journal: "Journal", contact: "Contact", booking: "Plan my trip" },
+  cta: { explore: "Discover our trips", book: "Plan my trip", quote: "Request a quote", more: "Learn more", continue: "Continue", back: "Back", confirm: "Send my request" },
   hero: {
     eyebrow: "Immersion trips to Japan · From Casablanca",
     title: "Japan, like a",
@@ -60,7 +60,7 @@ export default {
     imageAlt: "{{title}} — image {{count}}",
   },
   cta_band: { title: "Ready for Japan?", subtitle: "Configure your trip, get an instant price, and reserve your seat.", button: "Configure my trip" },
-  footer: { tagline: "Immersion trips to Japan, from Morocco.", rights: "All rights reserved." },
+  footer: { tagline: "LeJapon.ma, the Japan-focused brand of Moroccan Express Travel & Events. Thoughtfully planned journeys from Morocco, with room to discover Japan your way.", rights: "All rights reserved." },
   booking: {
     title: "Configure your trip",
     subtitle: "Real-time price — no commitment.",

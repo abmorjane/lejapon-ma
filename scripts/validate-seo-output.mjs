@@ -83,6 +83,10 @@ for (const route of manifest.prerenderRoutes) {
 }
 
 const homepage = await loadHtml("/");
+const homepageText = homepage.document.body.textContent?.replace(/\s+/g, " ") ?? "";
+if (/prix imbattables|deux voyages par an|4 places restantes|\+500 voyageurs|4[,.]9\/5|150 avis/i.test(homepageText)) {
+  throw new Error("Homepage contains an expired or unverified sales claim.");
+}
 const voyages = await loadHtml("/voyages");
 if (voyages.document.title === homepage.document.title) throw new Error("Voyages retained the homepage title.");
 if (new URL(voyages.document.querySelector('link[rel="canonical"]')?.getAttribute("href") ?? "").pathname !== "/voyages") {
@@ -108,7 +112,7 @@ const assertPillarPage = (route, page, { title, h1, text, links }) => {
 assertPillarPage("/voyages", voyages, {
   title: /Voyage Japon depuis le Maroc/i,
   h1: /Voyages organisés au Japon.*depuis le Maroc/i,
-  text: ["Quel prix pour un voyage organisé au Japon depuis le Maroc", "L’accompagnement LeJapon.ma"],
+  text: ["Plus de Japon pour votre budget", "L’accompagnement LeJapon.ma"],
   links: ["/programme", "/visa-japon-maroc", "/a-propos", "/reserver"],
 });
 
@@ -116,9 +120,12 @@ const programme = await loadHtml("/programme");
 assertPillarPage("/programme", programme, {
   title: /Programme voyage Japon/i,
   h1: /Programmes et itinéraires.*circuits au Japon/i,
-  text: ["Choisissez votre programme de voyage au Japon", "Du programme détaillé à la réservation"],
+  text: ["Votre itinéraire", "La suite de votre voyage commence ici"],
   links: ["/voyages", "/experiences", "/hotels", "/reserver"],
 });
+if (programme.document.body.textContent?.includes("Choisissez votre programme de voyage au Japon")) {
+  throw new Error("Programme reintroduced the redundant introduction before the selectors.");
+}
 if (/13\s*(?:et|ou|\/)\s*17\s*jours/i.test(programme.document.title)) {
   throw new Error("Programme title must not hardcode current circuit durations.");
 }
@@ -150,6 +157,16 @@ assertPillarPage("/a-propos", about, {
 const aboutText = about.document.body.textContent?.replace(/\s+/g, " ") ?? "";
 if (/\+500|\+30|\+10 ans|150 avis|4[,.]9\/5/i.test(aboutText)) {
   throw new Error("About page contains an unverified commercial figure.");
+}
+const contactPage = await loadHtml("/contact");
+for (const [route, page] of [["/a-propos", about], ["/contact", contactPage]]) {
+  const text = page.document.body.textContent?.replace(/\s+/g, " ") ?? "";
+  if (/4 Rue de Vimy|4 شارع فيمي|٤ زنقة فيمي/i.test(text)) {
+    throw new Error(`${route} presents a Casablanca departure as an agency address.`);
+  }
+  if (!/Rue Annour/i.test(text)) {
+    throw new Error(`${route} is missing the confirmed Temara agency address.`);
+  }
 }
 
 const blog = await loadHtml("/blog");

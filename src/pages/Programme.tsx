@@ -51,7 +51,9 @@ type Programme = {
 
 const WHATSAPP = "212711449838";
 const PROGRAMME_SEO_TITLE = "Programme voyage Japon : circuits et itinéraires | LeJapon.ma";
-const PROGRAMME_SEO_DESCRIPTION = "Explorez nos programmes de voyage au Japon : circuits, itinéraires, villes, rythme et étapes réellement proposés selon le départ.";
+const PROGRAMME_SEO_DESCRIPTION = "De Tokyo à Kyoto et au-delà, découvrez les itinéraires de nos voyages au Japon, leurs étapes et le rythme de chaque circuit avant de choisir votre départ.";
+const programmeCtaLabel = (programme: Programme) =>
+  programme.cta_url === "/contact" ? "Parler de ce voyage" : "Préparer mon voyage";
 
 export default function ProgrammePage() {
   const [rows, setRows] = useState<Programme[]>([]);
@@ -111,7 +113,7 @@ export default function ProgrammePage() {
       <div className="programme-page w-full max-w-full overflow-x-hidden">
       <ProgrammeHero active={active} loading={loading} />
 
-      <section className="container-app w-full max-w-full [overflow:clip] box-border px-4 sm:px-5 md:px-8 lg:px-12 py-10 md:py-14 min-h-[720px]">
+      <section className="container-app w-full max-w-full [overflow:clip] box-border px-4 sm:px-5 md:px-8 lg:px-12 py-6 md:py-10 min-h-[720px]">
         {loading ? (
           <div className="grid min-h-[560px] place-items-center text-muted-foreground">
             <div className="flex items-center">
@@ -124,23 +126,17 @@ export default function ProgrammePage() {
           </div>
         ) : (
           <>
-            <div className="mx-auto mb-9 max-w-3xl text-center md:mb-12">
-              <p className="eyebrow mb-3">Circuits publiés</p>
-              <h2 className="font-display text-3xl md:text-5xl text-balance">Choisissez votre programme de voyage au Japon</h2>
-              <p className="mt-4 leading-relaxed text-muted-foreground">
-                Comparez les durées et les étapes réellement proposées. Le détail jour par jour ci-dessous s’adapte au programme sélectionné, car le rythme et certaines visites peuvent varier selon le départ.
-              </p>
-            </div>
-
             {/* Tabs */}
-            <div className="flex justify-start sm:justify-center mb-10 md:mb-12 -mx-4 px-4 sm:-mx-5 sm:px-5 md:mx-0 md:px-0 overflow-x-auto overflow-y-hidden max-w-[100vw]">
+            <div aria-label="Choisir un programme de voyage" className="flex justify-start sm:justify-center mb-7 md:mb-10 -mx-4 px-4 sm:-mx-5 sm:px-5 md:mx-0 md:px-0 overflow-x-auto overflow-y-hidden max-w-[100vw]">
               <div className="inline-flex max-w-full p-1.5 bg-secondary rounded-full border border-border shadow-soft">
                 {rows.map((r) => (
                   <button
                     key={r.id}
+                    type="button"
+                    aria-pressed={r.id === active?.id}
                     onClick={() => setActiveId(r.id)}
                     className={cn(
-                      "px-4 sm:px-7 py-2.5 rounded-full text-sm font-semibold transition-all min-h-[44px]",
+                      "px-4 sm:px-7 py-2.5 rounded-full text-sm font-semibold transition-all min-h-[44px] whitespace-nowrap",
                       r.id === active?.id
                         ? "bg-foreground text-background shadow-md"
                         : "text-muted-foreground hover:text-foreground",
@@ -245,7 +241,7 @@ function ProgrammeHero({ active, loading }: { active?: Programme; loading: boole
             transition={{ delay: 0.18 }}
             className="text-muted-foreground mt-5 max-w-2xl mx-auto leading-relaxed text-[15px] sm:text-base px-0 sm:px-2 break-words"
           >
-            {active.description || `Découvrez les étapes et le rythme de ce programme de ${active.duration || "voyage"} au Japon.`}
+            {active.description || "De l’énergie de Tokyo aux rues de Kyoto, découvrez chaque étape du voyage et imaginez les moments que vous aurez envie de vivre."}
           </motion.p>
         )}
         {!loading && active && (
@@ -263,7 +259,7 @@ function ProgrammeHero({ active, loading }: { active?: Programme; loading: boole
               className="btn-outline inline-flex items-center justify-center gap-2 w-full sm:w-auto max-w-full min-h-[44px] px-5 sm:px-7 text-center"
               onClick={() => trackEvent("reservation_cta_clicked", { placement: "programme_hero", programme_id: active.id })}
             >
-              {active.cta_label || "Demander un devis"}
+              {programmeCtaLabel(active)}
             </Link>
           </motion.div>
         )}
@@ -278,19 +274,21 @@ function ProgrammeOverview({ programme }: { programme: Programme }) {
     <section aria-labelledby={`programme-overview-${programme.id}`} className="mb-10 rounded-3xl border border-border bg-secondary/35 p-5 sm:p-7 md:p-9">
       <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr] lg:items-start">
         <div>
-          <p className="eyebrow mb-3">Logique du circuit</p>
+          <p className="eyebrow mb-3">Votre itinéraire</p>
           <h2 id={`programme-overview-${programme.id}`} className="font-display text-3xl md:text-4xl text-balance">
-            Circuit Japon de {programme.duration || "plusieurs jours"} : villes, rythme et temps libres
+            Prenez le temps de vivre chaque étape
           </h2>
           <p className="mt-4 leading-relaxed text-muted-foreground">
-            {programme.description || "Chaque itinéraire équilibre grandes villes, étapes culturelles, déplacements organisés et temps pour découvrir le Japon à votre rythme."}
+            {cities.length > 0
+              ? `${cities.slice(0, 4).join(", ")} : autant de facettes du Japon à découvrir, entre visites partagées et moments à votre rythme.`
+              : "Chaque itinéraire fait dialoguer grandes villes, découvertes culturelles et moments plus libres, pour vous laisser vivre le Japon à votre rythme."}
           </p>
           <p className="mt-3 text-sm leading-7 text-muted-foreground">
-            Les visites, excursions optionnelles et journées libres sont indiquées dans le détail du programme actif. Vérifiez toujours le départ choisi avant de réserver.
+            Parcourez le voyage jour après jour : les visites et les moments libres peuvent changer selon le départ. Vous pourrez ensuite choisir vos dates parmi les <Link to="/voyages" className="font-semibold text-accent underline underline-offset-4">prochains voyages au Japon</Link>.
           </p>
         </div>
         <div className="rounded-2xl border border-border bg-background p-5">
-          <h3 className="font-display text-xl">Étapes publiées pour ce programme</h3>
+          <h3 className="font-display text-xl">Les villes de ce voyage</h3>
           {cities.length > 0 ? (
             <ul className="mt-4 flex flex-wrap gap-2" aria-label="Villes du circuit">
               {cities.map((city) => <li key={city} className="rounded-full bg-secondary px-3 py-1.5 text-sm font-medium">{city}</li>)}
@@ -298,9 +296,7 @@ function ProgrammeOverview({ programme }: { programme: Programme }) {
           ) : (
             <p className="mt-3 text-sm text-muted-foreground">Les étapes seront précisées avec le prochain programme publié.</p>
           )}
-          <p className="mt-5 text-sm leading-7 text-muted-foreground">
-            Tokyo, Kyoto, Osaka, Hiroshima et Miyajima figurent dans les circuits lorsque ces étapes sont prévues par le programme sélectionné.
-          </p>
+          <p className="mt-5 text-sm leading-7 text-muted-foreground">Chaque programme a son propre itinéraire : seules les étapes affichées ici correspondent à votre sélection.</p>
         </div>
       </div>
     </section>
@@ -323,7 +319,7 @@ function SimpleSummary({ active }: { active: Programme }) {
             </span>
           )}
         </div>
-        <h3 className="font-display text-3xl md:text-4xl mb-3 max-w-full break-words">Aperçu de {active.title}</h3>
+        <h3 className="font-display text-3xl md:text-4xl mb-3 max-w-full break-words">Le parcours en un regard</h3>
         {active.description && (
           <p className="text-muted-foreground leading-relaxed max-w-3xl break-words">{active.description}</p>
         )}
@@ -358,7 +354,7 @@ function SimpleSummary({ active }: { active: Programme }) {
       </div>
       {active.days.length > 0 && (
         <div>
-          <h3 className="font-display text-2xl md:text-3xl mb-6">Programme jour par jour</h3>
+          <h3 className="font-display text-2xl md:text-3xl mb-6">Votre voyage jour après jour</h3>
           <ol className="space-y-4">
             {active.days.map((d, i) => (
               <li key={i} className="bg-background rounded-2xl border border-border p-4 sm:p-5 md:p-6 flex gap-4 sm:gap-5 w-full max-w-full overflow-hidden box-border">
@@ -389,16 +385,16 @@ function SimpleSummary({ active }: { active: Programme }) {
 
 function ProgrammeLinks() {
   const links = [
-    ["Voir les prochains voyages", "Comparez les dates, les saisons et les prix des départs ouverts.", "/voyages"],
-    ["Choisir des expériences au Japon", "Complétez le circuit avec les activités proposées pour votre séjour.", "/experiences"],
-    ["Consulter les hôtels", "Découvrez les hébergements présentés par ville et par itinéraire.", "/hotels"],
-    ["Réserver un départ", "Configurez votre voyage et vérifiez le montant avant confirmation.", "/reserver"],
+    ["Trouver mon départ", "Comparez les dates, les saisons et les tarifs des voyages ouverts.", "/voyages"],
+    ["Choisir mes expériences", "Ajoutez, selon le voyage, les moments qui vous font envie.", "/experiences"],
+    ["Découvrir les hôtels", "Imaginez où vous retrouverez le calme après vos journées japonaises.", "/hotels"],
+    ["Préparer ma demande", "Choisissez votre départ et voyez le montant estimé avant l'envoi.", "/reserver"],
   ];
   return (
     <section aria-labelledby="programme-next-title" className="container-app px-4 sm:px-5 md:px-8 lg:px-12 pb-20 md:pb-28">
       <div className="rounded-3xl bg-foreground p-7 text-background sm:p-10 md:p-12">
         <p className="eyebrow !text-background/60 mb-3">Préparer la suite</p>
-        <h2 id="programme-next-title" className="font-display text-3xl md:text-4xl">Du programme détaillé à la réservation</h2>
+        <h2 id="programme-next-title" className="font-display text-3xl md:text-4xl">La suite de votre voyage commence ici</h2>
         <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {links.map(([label, description, to]) => (
             <article key={to} className="rounded-2xl border border-background/15 bg-background/5 p-5">
@@ -461,7 +457,7 @@ function RichDays({ programme }: { programme: Programme }) {
         <div className="rounded-3xl bg-foreground text-background p-5 sm:p-8 md:p-12 text-center w-full max-w-full overflow-hidden box-border">
           <h3 className="font-display text-2xl sm:text-3xl md:text-4xl mb-3 leading-tight">Prêt à partir au Japon ?</h3>
           <p className="text-background/70 max-w-xl mx-auto mb-6">
-            Notre équipe vous accompagne du premier devis à votre retour. Réservez votre place ou demandez un devis personnalisé.
+            Vous avez trouvé l'itinéraire qui vous inspire&nbsp;? Choisissez un départ et échangeons sur les détails de votre voyage.
           </p>
           <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-center gap-3">
             <Link
@@ -469,7 +465,7 @@ function RichDays({ programme }: { programme: Programme }) {
               className="btn-primary"
               onClick={() => trackEvent("reservation_cta_clicked", { placement: "programme_final", programme_id: programme.id })}
             >
-              {programme.cta_label || "Demander un devis"}
+              {programmeCtaLabel(programme)}
             </Link>
             {programme.pdf_url && (
               <a
@@ -632,7 +628,7 @@ function DaySection({ day, reverse, programme, showCta }: { day: ProgrammeDay; r
             className="btn-primary inline-flex items-center gap-2"
             onClick={() => trackEvent("reservation_cta_clicked", { placement: "programme_day", programme_id: programme.id, day_number: day.day_number })}
           >
-            {programme.cta_label || "Demander un devis"} <ChevronRight className="w-4 h-4" />
+            {programmeCtaLabel(programme)} <ChevronRight className="w-4 h-4" />
           </Link>
         </div>
       )}

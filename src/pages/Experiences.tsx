@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { Seo } from "@/components/Seo";
 import { useExtras, fmtExtraPrice } from "@/hooks/useExtras";
 import { Img } from "@/components/ui/Img";
@@ -32,14 +33,15 @@ const Experiences = () => {
   return (
     <div className="container-app py-20 md:py-28">
       <Seo
-        title="Extra plans & expériences au Japon — lejapon.ma"
-        description="Tokyo Disneyland, teamLab Planets, Universal Studios, soirée geisha, cérémonie du thé, geisha make-up : ajoutez des expériences uniques à votre voyage au Japon."
+        title="Expériences au Japon à vivre à votre façon | LeJapon.ma"
+        description="Cérémonie du thé, art immersif, parcs et découvertes culturelles : choisissez les expériences qui donneront à votre voyage au Japon une touche personnelle."
         canonical="/experiences"
         prerenderReady={!loading}
       />
       <p className="eyebrow mb-4">{t("experiences.eyebrow")}</p>
       <h1 className="font-display text-5xl md:text-7xl mb-6 max-w-3xl">{t("experiences.title")}</h1>
-      <p className="max-w-2xl text-foreground/70 text-lg mb-16">{t("experiences.body")}</p>
+      <p className="max-w-2xl text-foreground/70 text-lg mb-6">{t("experiences.body")}</p>
+      <p className="max-w-2xl text-foreground/70 leading-relaxed mb-12">Une cérémonie du thé, une installation d’art immersif ou une journée de jeux : chaque expérience donne une autre couleur au voyage, lorsqu’elle est proposée avec votre départ. Explorez les activités disponibles et choisissez celles qui vous ressemblent.</p>
       <div className="grid min-h-[640px] gap-px bg-border md:grid-cols-2 lg:grid-cols-3">
         {loading ? (
           <ExperienceGridSkeleton />
@@ -57,7 +59,7 @@ const Experiences = () => {
             </div>
             <div className="min-h-[175px] p-8">
               <div className="flex items-baseline justify-between mb-2">
-                <h3 className="font-display text-2xl">{e.name}</h3>
+                <h2 className="font-display text-2xl">{e.name}</h2>
                 <span className="text-accent text-sm whitespace-nowrap">{fmtExtraPrice(e.price_mad)}</span>
               </div>
               <p className="text-sm text-foreground/70">{e.description}</p>
@@ -69,6 +71,10 @@ const Experiences = () => {
             <p className="text-foreground/60">Aucune expérience disponible pour le moment.</p>
           </div>
         )}
+      </div>
+      <div className="mt-12 flex flex-wrap items-center gap-4 rounded-3xl bg-secondary/50 p-6 sm:p-8">
+        <p className="flex-1 text-lg">Envie d’imaginer le Japon qui vous ressemble&nbsp;?</p>
+        <Link to="/voyages" className="btn-primary">Découvrir les prochains voyages</Link>
       </div>
     </div>
   );

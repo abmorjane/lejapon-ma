@@ -202,7 +202,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
             </div>
             <Link
               to={bookingHref}
-              aria-label={`S'inscrire au voyage ${trip.title}`}
+              aria-label={`Choisir le voyage ${trip.title}`}
               className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-colors duration-200 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
               onClick={() => trackReservationClick("trip_card_arrow")}
             >
@@ -211,7 +211,7 @@ export function TripCard({ trip, index = 0, fallbackImage }: { trip: TripCardDat
           </div>
           <div className="flex min-h-[3.25rem] flex-wrap gap-2 border-t border-border pt-4">
             <Link to={bookingHref} className="btn-primary !px-4 !py-2 text-sm" onClick={() => trackReservationClick("trip_card_button")}>
-              Réserver
+              Choisir ce départ
             </Link>
             {programmeHref.startsWith("http") ? (
               <a href={programmeHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !px-4 !py-2 text-sm">

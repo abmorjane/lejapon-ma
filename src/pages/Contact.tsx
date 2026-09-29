@@ -1,24 +1,25 @@
 import { useState } from "react";
-import { Mail, MapPin, Loader2 } from "lucide-react";
+import { Mail, MapPin, Loader2, Phone, MessageCircle } from "lucide-react";
 import { Seo } from "@/components/Seo";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { useRecaptcha } from "@/hooks/useRecaptcha";
+import { useAgencySettings } from "@/hooks/useAgencySettings";
+import { confirmedPublicAgencyAddresses } from "@/lib/public-agency-addresses";
 
 const DEFAULTS = {
   eyebrow: "Contact",
   title_main: "Parlons de votre",
   title_accent: "voyage.",
-  intro: "Une question, un projet de voyage de groupe, une demande sur mesure ? Notre équipe vous répond sous 24 heures.",
+  intro: "Une question sur un départ, une envie de découvrir le Japon ou un projet à imaginer ensemble ? Écrivez-nous : notre équipe prendra le temps de vous répondre.",
   email: "info@lejapon.ma",
   agency_name: "Moroccan Express Travel & Events",
   addresses: [
     { city: "Temara", line: "Rue Annour, Hay El Wifaq 3, Temara" },
-    { city: "Casablanca", line: "4 Rue de Vimy, Casablanca" },
   ],
   success_title: "Message reçu.",
-  success_text: "Nous vous répondrons sous 24 heures à l'adresse indiquée.",
+  success_text: "Notre équipe vous répondra à l’adresse indiquée dès que possible.",
 };
 
 const isDev = import.meta.env.DEV;
@@ -55,6 +56,9 @@ function formatBackendError(data: any, fallback?: string) {
 const Contact = () => {
   const { toast } = useToast();
   const c = useSiteContent("site:contact", DEFAULTS);
+  const publicAddresses = confirmedPublicAgencyAddresses(c.addresses);
+  const agency = useAgencySettings();
+  const phoneDigits = agency.phone.replace(/[^\d]/g, "");
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", phone: "", message: "" });
@@ -145,21 +149,28 @@ const Contact = () => {
   return (
     <div className="container-app py-16 md:py-28">
       <Seo
-        title="Contact — lejapon.ma | Agence voyage Japon Casablanca & Témara"
-        description="Contactez LeJapon.ma (Moroccan Express Travel & Events) à Casablanca et Témara. Réponse sous 24h par email, téléphone ou formulaire."
+        title="Contactez notre équipe pour votre voyage au Japon | LeJapon.ma"
+        description="Une question sur nos voyages au Japon ? Échangez avec l'équipe LeJapon.ma par le formulaire ou par email et préparons ensemble votre prochain départ."
         canonical="/contact"
       />
       <div className="grid lg:grid-cols-12 gap-12 lg:gap-16">
         <div className="lg:col-span-5">
           <p className="eyebrow mb-4">{c.eyebrow}</p>
           <h1 className="font-display text-4xl sm:text-5xl md:text-6xl mb-6 md:mb-8">
-            {c.title_main} <span className="italic text-accent">{c.title_accent}</span>
+            Parlons de votre <span className="italic text-accent">Japon.</span>
           </h1>
           <p className="text-foreground/70 leading-relaxed mb-8 md:mb-10">
-            {c.intro}
+            Une question sur un départ, un itinéraire ou un séjour à imaginer ensemble&nbsp;? Racontez-nous votre projet. Notre équipe prendra le temps de vous répondre.
           </p>
 
           <div className="space-y-6">
+            <div>
+              <p className="eyebrow mb-3">Parlons-en</p>
+              <div className="flex flex-wrap gap-3">
+                <a href={`tel:+${phoneDigits}`} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-border px-4 text-sm font-semibold hover:border-accent hover:text-accent"><Phone className="h-4 w-4" /> Appeler l’équipe</a>
+                <a href={`https://wa.me/${phoneDigits}`} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center gap-2 rounded-full border border-border px-4 text-sm font-semibold hover:border-accent hover:text-accent"><MessageCircle className="h-4 w-4" /> Écrire sur WhatsApp</a>
+              </div>
+            </div>
             <div>
               <p className="eyebrow mb-3">Email</p>
               <a
@@ -175,7 +186,7 @@ const Contact = () => {
               <p className="eyebrow mb-3">Nos agences</p>
               <p className="font-display text-lg mb-4">{c.agency_name}</p>
               <ul className="space-y-4">
-                {(c.addresses ?? []).map((a) => (
+                {publicAddresses.map((a) => (
                   <li key={a.city} className="flex items-start gap-3 text-sm">
                     <MapPin className="w-4 h-4 text-accent shrink-0 mt-0.5" />
                     <span>
@@ -194,7 +205,7 @@ const Contact = () => {
             <div className="bg-secondary p-8 sm:p-12 text-center">
               <div className="w-14 h-14 mx-auto mb-6 rounded-2xl bg-gradient-vermillion text-accent-foreground flex items-center justify-center font-bold text-xl shadow-cta">✓</div>
               <h2 className="font-display text-3xl mb-3">{c.success_title}</h2>
-              <p className="text-foreground/70">{c.success_text}</p>
+              <p className="text-foreground/70">Merci pour votre message. Nous vous répondrons à l’adresse indiquée dès que possible.</p>
             </div>
           ) : (
             <form onSubmit={onSubmit} className="space-y-5">
@@ -239,7 +250,7 @@ const Contact = () => {
                 className="inline-flex items-center gap-2 bg-foreground text-background px-8 py-3 hover:bg-accent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {sending && <Loader2 className="w-4 h-4 animate-spin" />}
-                {sending ? "Envoi…" : "Envoyer"}
+                {sending ? "Envoi…" : "Envoyer mon message"}
               </button>
               {recaptchaEnabled && (
                 <p className="text-xs text-foreground/50 mt-3">

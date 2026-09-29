@@ -78,7 +78,7 @@ const Trips = () => {
           Voyages organisés au Japon <span className="text-accent">depuis le Maroc.</span>
         </h1>
         <p className="max-w-3xl text-foreground/70 text-lg leading-relaxed">
-          LeJapon.ma réunit sur une seule page les prochains départs depuis Casablanca, leurs dates, leur durée et leur tarif publié. Comparez les saisons, consultez le circuit correspondant et choisissez le voyage au Japon qui vous ressemble.
+          Le Japon se savoure autant dans ses grandes villes que dans ses instants plus calmes. Découvrez nos départs depuis Casablanca, choisissez la saison qui vous attire et avancez avec une équipe qui connaît la destination. Dates, itinéraires et tarifs sont présentés avant votre réservation.
         </p>
       </header>
 
@@ -87,7 +87,7 @@ const Trips = () => {
           <p className="eyebrow mb-3">Dates et disponibilités</p>
           <h2 id="departures-title" className="font-display text-3xl md:text-5xl text-balance">Nos prochains départs du Maroc vers le Japon</h2>
           <p className="mt-4 text-muted-foreground leading-relaxed">
-            Chaque fiche présente les informations commerciales du départ sélectionné. Les disponibilités, les dates et les prix ci-dessous proviennent directement de notre catalogue de voyages ouvert à la réservation.
+            Printemps, été ou automne : chaque départ a son rythme. Retrouvez ici les voyages actuellement ouverts, avec leurs dates et leurs prix, puis explorez le programme qui vous donne envie de partir.
           </p>
         </div>
 
@@ -113,7 +113,7 @@ const Trips = () => {
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex min-h-[420px] items-center rounded-3xl border border-dashed border-border p-8">
-            <p className="text-foreground/60">Aucun départ disponible pour ces critères. Modifiez les filtres ou revenez bientôt.</p>
+            <p className="text-foreground/60">Aucun voyage ne correspond à ces critères pour le moment. Essayez une autre saison ou <Link to="/contact" className="font-semibold text-accent underline underline-offset-4">parlez-nous de votre projet</Link>.</p>
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -127,27 +127,30 @@ const Trips = () => {
       <section aria-labelledby="price-title" className="mt-20 rounded-3xl border border-border bg-secondary/35 p-6 sm:p-8 md:p-12">
         <div className="grid gap-8 lg:grid-cols-[1.1fr_1fr] lg:items-start">
           <div>
-            <p className="eyebrow mb-3">Budget transparent</p>
-            <h2 id="price-title" className="font-display text-3xl md:text-4xl text-balance">Quel prix pour un voyage organisé au Japon depuis le Maroc&nbsp;?</h2>
+            <p className="eyebrow mb-3">Le prix, en toute clarté</p>
+            <h2 id="price-title" className="font-display text-3xl md:text-4xl text-balance">Plus de Japon pour votre budget</h2>
+            <p className="mt-4 text-foreground/80 leading-relaxed">
+              Avant de comparer deux prix, regardez aussi la saison, la durée, les hôtels, les transports, les visites incluses et l’accompagnement. Nos circuits relient ces éléments pour vous offrir un vrai voyage au Japon, pas seulement un billet d’avion.
+            </p>
             <p className="mt-4 text-muted-foreground leading-relaxed">
               {lowestPrice !== null ? (
                 <>
-                  Les départs actuellement ouverts affichent un prix de base {lowestPrice === highestPrice ? `de ${formatPrice(lowestPrice)} MAD` : `compris entre ${formatPrice(lowestPrice)} et ${formatPrice(highestPrice as number)} MAD`}. Ces montants restent liés au voyage choisi et sont mis à jour avec le catalogue.
+                  Pour les départs ouverts aujourd’hui, les prix de base commencent à {formatPrice(lowestPrice)} MAD{lowestPrice !== highestPrice ? ` et vont jusqu’à ${formatPrice(highestPrice as number)} MAD` : ""}. Choisissez votre voyage pour voir le détail des prestations et le montant estimé avec vos options.
                 </>
               ) : (
-                <>Le prix de chaque départ est publié dès que ses conditions commerciales sont ouvertes à la réservation.</>
+                <>Les tarifs apparaissent avec les prochains départs ouverts. Vous pouvez déjà découvrir les circuits et nous parler de votre projet.</>
               )}
             </p>
-            <Link to="/reserver" className="btn-primary mt-7 inline-flex">Composer mon voyage et vérifier le prix</Link>
+            <Link to="/reserver" className="btn-primary mt-7 inline-flex">Voir le prix de mon voyage</Link>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
             <article className="rounded-2xl border border-border bg-background p-5">
-              <h3 className="font-display text-xl">Ce que comprend le départ</h3>
-              <p className="mt-2 text-sm leading-7 text-muted-foreground">Le programme et le récapitulatif de réservation précisent les vols, hôtels, transports, visites et prestations incluses pour le circuit sélectionné.</p>
+              <h3 className="font-display text-xl">Voyagez l’esprit plus libre</h3>
+              <p className="mt-2 text-sm leading-7 text-muted-foreground">Sur les circuits proposés, les vols, les hôtels, les transports et plusieurs visites figurent dans les prestations prévues selon le programme. Déjeuners et dîners libres, lorsqu’ils sont prévus, deviennent une occasion de goûter le Japon à votre façon plutôt que de suivre un menu de groupe.</p>
             </article>
             <article className="rounded-2xl border border-border bg-background p-5">
-              <h3 className="font-display text-xl">Ce qui peut faire varier le montant</h3>
-              <p className="mt-2 text-sm leading-7 text-muted-foreground">La formule, le type de chambre, les expériences optionnelles, les offres en cours et les disponibilités sont calculés avant confirmation, sans masquer le total final.</p>
+              <h3 className="font-display text-xl">Personnalisez sans mauvaise surprise</h3>
+              <p className="mt-2 text-sm leading-7 text-muted-foreground">Chambre individuelle, formule ou expérience supplémentaire : ces choix enrichissent votre séjour, ils ne servent pas à compléter un prix d’appel. Le montant estimé apparaît avant l’envoi de votre demande, puis notre équipe confirme les disponibilités et les conditions.</p>
             </article>
           </div>
         </div>
@@ -157,16 +160,16 @@ const Trips = () => {
         <div className="max-w-3xl">
           <p className="eyebrow mb-3">Un voyage pensé de bout en bout</p>
           <h2 id="support-title" className="font-display text-3xl md:text-5xl text-balance">L’accompagnement LeJapon.ma, de Casablanca au Japon</h2>
-          <p className="mt-4 text-muted-foreground leading-relaxed">Le contenu exact varie selon le départ, mais chaque circuit est présenté avec un cadre lisible avant la réservation.</p>
+          <p className="mt-4 text-muted-foreground leading-relaxed">Vous savez où vous allez, tout en gardant de la place pour la découverte. Les prestations et la présence de l’équipe sont précisées pour chaque départ.</p>
         </div>
         <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {[
-            ["Départ depuis Casablanca", "Les dates, la durée et l’organisation du départ sont indiquées pour chaque voyage ouvert."],
-            ["Accompagnement selon le programme", "Le départ précise si un accompagnateur francophone parlant japonais est mobilisé, ainsi que les repères utiles pour voyager sereinement sur place."],
-            ["Hôtels et transports", "Consultez les hébergements et les déplacements prévus dans le programme du circuit."],
-            ["Journées libres", "Les temps libres apparaissent dans l’itinéraire afin de garder une place à vos découvertes personnelles."],
-            ["Expériences au Japon", "Des activités culturelles ou de loisirs peuvent compléter le programme selon vos envies."],
-            ["Assistance visa", "Les participants disposent d’un accompagnement pour préparer leur demande, sans garantie de délivrance."],
+            ["Le voyage commence à Casablanca", "Selon le départ, retrouvez le groupe et votre accompagnement dès les premières étapes de l’aventure."],
+            ["Des échanges plus simples au Japon", "Selon le programme, un accompagnateur francophone parlant japonais facilite les échanges et vous aide à comprendre les usages locaux."],
+            ["Moins de trajets à organiser", "Les hôtels et les transports prévus au programme vous évitent de construire seuls chaque étape du circuit."],
+            ["Du temps pour votre propre Japon", "Quand le programme le prévoit, profitez d’une journée ou d’un repas libre pour explorer un quartier, un café ou une spécialité qui vous tente."],
+            ["Des souvenirs qui vous ressemblent", "Cérémonie du thé, art immersif ou autres activités disponibles : ajoutez les expériences qui vous font vraiment envie."],
+            ["Un dossier de visa moins intimidant", "Nous vous aidons à réunir les pièces adaptées à votre situation. La délivrance du visa reste décidée par l’ambassade."],
           ].map(([title, text]) => (
             <article key={title} className="rounded-2xl border border-border bg-card p-6 shadow-soft">
               <h3 className="font-display text-xl">{title}</h3>
@@ -179,10 +182,9 @@ const Trips = () => {
       <section aria-labelledby="season-title" className="mt-20 grid gap-8 rounded-3xl bg-foreground p-7 text-background sm:p-10 lg:grid-cols-[1fr_auto] lg:items-center">
         <div className="max-w-3xl">
           <p className="eyebrow !text-background/60 mb-3">Saisons et itinéraires</p>
-          <h2 id="season-title" className="font-display text-3xl md:text-4xl">Choisir son circuit au Japon selon le départ</h2>
+          <h2 id="season-title" className="font-display text-3xl md:text-4xl">Quel Japon avez-vous envie de découvrir&nbsp;?</h2>
           <p className="mt-4 leading-relaxed text-background/75">
-            {seasons.length > 0 ? `Les départs disponibles couvrent actuellement ${seasons.join(" et ")}. ` : "Chaque saison révèle un Japon différent. "}
-            Comparez le rythme, les villes et les journées libres dans le programme détaillé avant de réserver.
+            Cerisiers au printemps, festivals en été ou couleurs d’automne : chaque saison révèle un autre Japon. Imaginez les moments que vous voulez vivre, puis plongez dans le <Link to="/programme" className="underline underline-offset-4">programme de chaque circuit</Link>.
           </p>
           <nav aria-label="Préparer son voyage au Japon" className="mt-6 flex flex-wrap gap-x-5 gap-y-3 text-sm font-semibold">
             <Link to="/programme" className="text-accent hover:underline underline-offset-4">Voir les circuits et itinéraires</Link>

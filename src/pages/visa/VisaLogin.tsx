@@ -252,7 +252,7 @@ export default function VisaLogin() {
               Visa Japon au Maroc&nbsp;: préparer votre demande sereinement
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-8 text-muted-foreground sm:text-lg">
-              LeJapon.ma accompagne les participants de ses voyages dans la préparation et la vérification de leur dossier. L’ambassade du Japon reste la seule autorité compétente pour fixer les règles, examiner la demande et décider de la délivrance du visa.
+              Un dossier de visa peut sembler complexe avant un voyage aussi attendu. Pour les participants à nos circuits, nous vous aidons à comprendre les étapes et à préparer les pièces adaptées à votre situation. La décision de délivrance appartient toujours à l’Ambassade du Japon.
             </p>
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
               <Button size="lg" className="min-h-12 cursor-pointer gap-2" onClick={() => scrollToAuth("signup", "hero")}>
@@ -317,7 +317,7 @@ export default function VisaLogin() {
               ))}
             </div>
             <p className="mt-5 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm leading-7 text-sky-950">
-              Notre rôle est de vous aider à préparer un dossier clair et complet. La décision finale appartient toujours à l’ambassade du Japon.
+              Vous gardez une vue claire sur les étapes et les documents à réunir. L’ambassade du Japon demeure seule décisionnaire.
             </p>
           </section>
 
@@ -329,7 +329,7 @@ export default function VisaLogin() {
                   <h2 id="visa-documents-title" className="font-display text-2xl">Documents à préparer selon votre situation</h2>
                 </div>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Ces listes viennent de la configuration documents visa LeJapon.ma et facilitent la préparation selon votre profil. La liste officielle de l’ambassade et toute demande complémentaire restent prioritaires.
+                  Choisissez votre situation pour voir les pièces à préparer. Ces listes vous servent de repère ; la liste officielle de l’ambassade et toute demande complémentaire restent prioritaires.
                 </p>
               </div>
               {checklists.length > 0 && (

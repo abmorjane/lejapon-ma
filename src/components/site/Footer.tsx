@@ -61,7 +61,7 @@ export const Footer = () => {
       <div className="border-t border-background/10">
         <div className="container-app py-6 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-background/50">
           <p>© {new Date().getFullYear()} LeJapon.ma — {t("footer.rights")}</p>
-          <p>Voyages premium au Japon depuis le Maroc</p>
+          <p>Le Japon à découvrir, à votre façon, depuis le Maroc.</p>
         </div>
       </div>
     </footer>

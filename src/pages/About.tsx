@@ -7,12 +7,13 @@ import torii from "@/assets/torii.jpg";
 import tea from "@/assets/tea-ceremony.jpg";
 import fuji from "@/assets/hero-fuji.jpg";
 import { useSiteContent } from "@/hooks/useSiteContent";
+import { confirmedPublicAgencyAddresses } from "@/lib/public-agency-addresses";
 
 const DEFAULTS = {
   hero_eyebrow: "À propos",
   hero_title_main: "Le Japon, raconté",
   hero_title_accent: "de l'intérieur.",
-  hero_intro: "LeJapon.ma est une agence spécialisée dans les voyages au Japon, offrant des expériences immersives uniques.",
+  hero_intro: "LeJapon.ma, marque spécialisée Japon de Moroccan Express Travel & Events, vous aide à découvrir le pays avec un voyage pensé pour vous.",
   story_eyebrow: "Notre histoire",
   story_title_main: "Une aventure née d'une",
   story_title_accent: "passion sincère.",
@@ -41,6 +42,7 @@ const fade = (delay = 0) => ({
 const About = () => {
   const c = useSiteContent("site:about", DEFAULTS);
   const contact = useSiteContent("site:contact", CONTACT_DEFAULTS);
+  const publicAddresses = confirmedPublicAgencyAddresses(contact.addresses);
   return (
     <>
       <Seo
@@ -61,7 +63,7 @@ const About = () => {
               Une agence marocaine spécialisée dans <span className="italic text-accent">les voyages au Japon.</span>
             </h1>
             <p className="mt-8 text-lg md:text-xl text-muted-foreground leading-relaxed max-w-2xl">
-              {c.hero_intro}
+              LeJapon.ma, marque spécialisée Japon de Moroccan Express Travel &amp; Events, imagine des circuits où l’on se sent accompagné tout en gardant le plaisir de découvrir par soi-même.
             </p>
           </motion.div>
           <motion.div {...fade(0.15)} className="lg:col-span-5">
@@ -92,12 +94,13 @@ const About = () => {
           <motion.div {...fade(0.1)} className="lg:col-span-7 order-1 lg:order-2">
             <p className="eyebrow mb-4">{c.story_eyebrow}</p>
             <h2 className="font-display text-4xl md:text-5xl leading-tight mb-8 text-balance">
-              LeJapon.ma, une expertise Japon portée par <span className="italic text-accent">Moroccan Express Travel &amp; Events.</span>
+              Une passion pour le Japon, portée par <span className="italic text-accent">une équipe au Maroc.</span>
             </h2>
             <div className="space-y-5 text-foreground/80 text-lg leading-relaxed">
               <p>{c.story_p1}</p>
               <p>{c.story_p2}</p>
               <p>{c.story_p3}</p>
+              <p>Le Japon est le cœur de LeJapon.ma. Nous prenons le temps de construire des voyages qui relient les grandes découvertes à des instants plus personnels, pour que vous ne traversiez pas simplement le pays : vous le viviez.</p>
             </div>
           </motion.div>
         </div>
@@ -132,15 +135,15 @@ const About = () => {
         <motion.div {...fade()} className="text-center max-w-2xl mx-auto mb-16">
           <p className="eyebrow mb-4">Notre approche</p>
           <h2 className="font-display text-4xl md:text-5xl leading-tight text-balance">
-            Quatre engagements, <span className="italic text-accent">une promesse.</span>
+            Ce qui rend le voyage <span className="italic text-accent">plus serein.</span>
           </h2>
         </motion.div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {[
-            { icon: ShieldCheck, t: "Une agence marocaine identifiée", d: "LeJapon.ma s'inscrit dans l'activité de Moroccan Express Travel & Events, avec des points de contact au Maroc." },
-            { icon: Compass, t: "Une marque spécialisée Japon", d: "Les circuits, hôtels, transports et expériences sont étudiés autour d'une destination unique : le Japon." },
-            { icon: HandHeart, t: "Un accompagnement humain", d: "L'équipe répond avant le départ et reste mobilisée pendant le parcours prévu pour le groupe." },
-            { icon: MapPin, t: "Une connaissance du terrain", d: "Les programmes s'appuient sur les villes, les usages et les partenaires mobilisés au Japon." },
+            { icon: ShieldCheck, t: "Une équipe à qui parler", d: "LeJapon.ma est la marque Japon de Moroccan Express Travel & Events : vous pouvez échanger avec une agence présente au Maroc." },
+            { icon: Compass, t: "Le Japon au cœur du voyage", d: "Chaque programme invite à découvrir plusieurs facettes du pays, au-delà des étapes incontournables." },
+            { icon: HandHeart, t: "Des réponses concrètes", d: "Notre équipe vous aide à choisir votre départ et à préparer les étapes importantes du voyage." },
+            { icon: MapPin, t: "Le goût du terrain", d: "Nos itinéraires s'appuient sur la connaissance des villes et des expériences proposées au Japon." },
           ].map((item, i) => (
             <motion.div key={item.t} {...fade(i * 0.08)} className="relative p-7 rounded-2xl border border-border bg-card shadow-soft">
               <div className="w-12 h-12 rounded-xl bg-accent/10 text-accent flex items-center justify-center mb-5">
@@ -160,13 +163,13 @@ const About = () => {
             <motion.div {...fade()} className="lg:col-span-7">
               <p className="eyebrow mb-4">Notre équipe</p>
               <h2 className="font-display text-4xl md:text-5xl leading-tight mb-8 text-balance">
-                Une équipe mobilisée <span className="italic text-accent">au Maroc et au Japon.</span>
+                Des personnes derrière <span className="italic text-accent">chaque départ.</span>
               </h2>
               <div className="space-y-6">
                 {[
-                  { t: "Conseillers au Maroc", d: "L'équipe accompagne le choix du départ, la réservation et la préparation du dossier avant le voyage." },
-                  { t: "Accompagnement adapté au programme", d: "Selon le voyage publié, un accompagnateur francophone parlant japonais peut faciliter les échanges et la compréhension des codes locaux." },
-                  { t: "Relais et partenaires au Japon", d: "La connaissance du terrain et les contacts locaux soutiennent l'organisation des étapes sur place." },
+                  { t: "Avant le départ", d: "Une équipe au Maroc vous aide à choisir votre voyage et à préparer votre réservation." },
+                  { t: "Pendant le voyage", d: "Selon le programme choisi, un accompagnateur francophone parlant japonais peut faciliter les échanges sur place." },
+                  { t: "Au fil des étapes", d: "Notre connaissance de la destination et les contacts locaux nourrissent l'organisation du circuit." },
                 ].map((item, i) => (
                   <motion.div key={item.t} {...fade(i * 0.08)} className="flex gap-5">
                     <div className="shrink-0 w-10 h-10 rounded-full bg-accent text-accent-foreground flex items-center justify-center font-display text-sm">
@@ -206,11 +209,11 @@ const About = () => {
             </div>
           </div>
           <div>
-            {(contact.addresses ?? []).length > 0 && (
+            {publicAddresses.length > 0 && (
               <>
                 <h3 className="font-display text-2xl">Nos points de contact au Maroc</h3>
                 <ul className="mt-5 grid gap-4">
-                  {contact.addresses.map((address) => (
+                  {publicAddresses.map((address) => (
                     <li key={`${address.city}-${address.line}`} className="flex gap-3 rounded-2xl border border-border bg-background p-5">
                       <MapPin className="mt-1 h-5 w-5 shrink-0 text-accent" />
                       <div>

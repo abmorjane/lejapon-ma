@@ -1,11 +1,11 @@
 export default {
-  nav: { home: "Accueil", trips: "Voyages", price: "Prix", programme: "Programme", blog: "Blog", visa: "Visa Japon", experiences: "Expériences", about: "À propos", journal: "Journal", contact: "Contact", booking: "Réserver" },
-  cta: { explore: "Découvrir nos voyages", book: "Réserver mon voyage", quote: "Demander un devis", more: "En savoir plus", continue: "Continuer", back: "Retour", confirm: "Confirmer la réservation" },
+  nav: { home: "Accueil", trips: "Voyages", price: "Voyages", programme: "Programme", blog: "Blog", visa: "Visa Japon", experiences: "Expériences", about: "À propos", journal: "Journal", contact: "Contact", booking: "Préparer mon voyage" },
+  cta: { explore: "Découvrir nos voyages", book: "Préparer mon voyage", quote: "Demander un devis", more: "En savoir plus", continue: "Continuer", back: "Retour", confirm: "Envoyer ma demande" },
   hero: {
     eyebrow: "Voyages d'immersion au Japon · Depuis Casablanca",
     title: "Le Japon, comme un",
     titleAccent: "rêve éveillé.",
-    subtitle: "Deux départs par an, des programmes pensés à la main, et une équipe maroco-japonaise qui vous accompagne du décollage au dernier coucher de soleil sur Kyoto.",
+    subtitle: "Des programmes pensés avec soin et une équipe attentive pour découvrir le Japon à votre rythme.",
     stats: { trips: "Voyages", clients: "Voyageurs", departures: "Départs / an", days: "Jours d'immersion" },
   },
   why: {
@@ -64,10 +64,10 @@ export default {
     subtitle: "Composez votre voyage, recevez votre prix instantanément, et réservez votre place.",
     button: "Composer mon voyage",
   },
-  footer: { tagline: "Nous sommes une agence de voyage spécialisée dans la destination Japon, votre satisfaction est notre raison d'être.", rights: "Tous droits réservés." },
+  footer: { tagline: "LeJapon.ma, marque spécialisée Japon de Moroccan Express Travel & Events. Des voyages pensés avec soin depuis le Maroc, et le plaisir de découvrir le Japon à votre façon.", rights: "Tous droits réservés." },
   booking: {
     title: "Composez votre voyage",
-    subtitle: "Prix en temps réel — sans engagement.",
+    subtitle: "Choisissez votre départ et vos envies ; voyez le montant estimé avant d’envoyer votre demande.",
     step: "Étape",
     of: "sur",
     s1: { title: "Quel voyage ?", trips: {
@@ -84,6 +84,6 @@ export default {
     s4: { title: "Ajoutez des expériences", optional: "Optionnel" },
     s5: { title: "Vos coordonnées", name: "Nom complet", email: "E-mail", phone: "Téléphone", city: "Ville", notes: "Demandes particulières", consent: "Je souhaite être contacté(e) pour finaliser ma réservation" },
     summary: { title: "Votre voyage", trip: "Voyage", formula: "Formule", travelers: "Voyageurs", extras: "Extras", total: "Total estimé", perPerson: "par personne", deposit: "Acompte (25 000 MAD / pers.)" },
-    success: { title: "Demande reçue.", body: "Notre équipe vous recontacte sous 24 heures pour confirmer votre place et préparer votre voyage.", reset: "Nouvelle simulation" },
+    success: { title: "Demande reçue.", body: "Notre équipe vous recontactera pour confirmer les disponibilités et préparer la suite.", reset: "Nouvelle simulation" },
   },
 };

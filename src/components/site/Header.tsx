@@ -25,8 +25,8 @@ export const Header = () => {
   const slugs = useRouteSlugs();
   const promo = useSiteContent("site:promo-bar", {
     enabled: true,
-    text: "Sakura 2026 · 4 places restantes",
-    cta_label: "Réserver maintenant",
+    text: "Le Japon vous attend",
+    cta_label: "Découvrir les voyages",
     cta_url: "/reserver",
     active_from: "",
     expires_at: "",
@@ -78,9 +78,14 @@ export const Header = () => {
   }, [commercialToday, linkedTripId]);
 
   const promoVisible = isPromotionCurrentlyVisible(promo, linkedPromoTrip, commercialNow);
+  const genericPromoText = i18n.language === "ar"
+    ? "رحلتك القادمة إلى اليابان تبدأ هنا"
+    : i18n.language === "en"
+      ? "Your next journey to Japan starts here"
+      : "Votre prochain voyage au Japon commence ici";
 
   const links = [
-    { to: pathFor(slugs, "trips"), label: t("nav.price") },
+    { to: pathFor(slugs, "trips"), label: t("nav.trips") },
     { to: pathFor(slugs, "programme"), label: t("nav.programme") },
     { to: pathFor(slugs, "blog"), label: t("nav.blog") },
     { to: "/visa-japon-maroc", label: "Visa" },
@@ -94,14 +99,14 @@ export const Header = () => {
         <div className="flex min-h-8 items-center justify-center bg-gradient-vermillion px-2 py-1.5 text-center text-[11px] font-medium leading-tight text-accent-foreground sm:min-h-9 sm:px-4 sm:py-2 sm:text-xs md:text-sm">
           <div className="flex max-w-full items-center justify-center gap-1.5 sm:gap-2">
             <Sparkles className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />
-            <span>{promo.text}</span>
+            <span>{genericPromoText}</span>
             {promo.cta_label && promo.cta_url && (
               <Link
-                to={promo.cta_url}
+                to="/voyages"
                 className="inline-flex min-h-7 shrink-0 items-center whitespace-nowrap font-semibold underline underline-offset-2 sm:min-h-8"
                 onClick={() => trackEvent("reservation_cta_clicked", { placement: "promo_bar" })}
               >
-                {promo.cta_label}
+                {t("cta.explore")}
               </Link>
             )}
           </div>

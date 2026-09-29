@@ -138,16 +138,16 @@ export default function HotelsPage() {
   return (
     <main className="min-h-screen bg-background">
       <Seo
-        title="Notre sélection d’hôtels par ville au Japon"
-        description="Découvrez les hôtels recommandés par LeJapon.ma à Tokyo, Kyoto, Osaka et dans les principales villes du Japon."
+        title="Hôtels au Japon pour nos itinéraires | LeJapon.ma"
+        description="Découvrez les adresses présentées par LeJapon.ma au Japon et imaginez le confort de chaque étape, de Tokyo à Kyoto selon votre itinéraire."
         canonical="/hotels"
         prerenderReady={!loading}
       />
       <section className="container py-14">
         <div className="max-w-3xl">
           <p className="text-sm font-medium uppercase tracking-[0.16em] text-accent">Hôtels au Japon</p>
-          <h1 className="mt-3 font-display text-4xl md:text-5xl">Notre sélection d’hôtels par ville au Japon</h1>
-          <p className="mt-4 text-lg text-muted-foreground">Des adresses soigneusement choisies pour préparer un séjour clair, confortable et cohérent avec chaque itinéraire.</p>
+          <h1 className="mt-3 font-display text-4xl md:text-5xl">Des hôtels pour vous sentir bien, d’une étape à l’autre</h1>
+          <p className="mt-4 text-lg text-muted-foreground">Un hôtel bien situé peut changer toute une journée : moins de temps en transport, plus de liberté pour flâner et un vrai moment de repos le soir. Parcourez les adresses présentées pour nos itinéraires ; les hébergements effectivement prévus sont précisés pour chaque départ.</p>
         </div>
 
         <div className="mt-8 flex flex-wrap gap-2">
@@ -211,6 +211,10 @@ export default function HotelsPage() {
             ))}
           </div>
         )}
+        <div className="mt-12 flex flex-wrap items-center gap-4 rounded-3xl bg-secondary/50 p-6 sm:p-8">
+          <p className="flex-1 text-lg">Prêt à découvrir le voyage derrière ces étapes&nbsp;?</p>
+          <Link to="/voyages" className="btn-primary">Voir les voyages au Japon</Link>
+        </div>
       </section>
     </main>
   );
