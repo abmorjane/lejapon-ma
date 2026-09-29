@@ -6,14 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run build:vite && npm run seo:generate && npm run seo:prerender && npm run seo:validate",
-    "build:vite": "vite build",
+    "build:vite": "node scripts/validate-build-env.mjs && vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
     "seo:generate": "node scripts/generate-sitemap.mjs",
     "seo:prerender": "node scripts/prerender.mjs",
     "seo:validate": "node scripts/validate-seo-output.mjs",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/validate-build-env.test.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {
