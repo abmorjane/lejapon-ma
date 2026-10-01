@@ -90,22 +90,26 @@ type FinanceSummary = {
     exchange_rate_erosion?: boolean;
   };
 };
-type SourceTable = "fit_quote_day_cost_lines" | "fit_quote_cost_lines" | "fit_quote_hotel_lines" | "fit_quote_flight_lines";
+type SupplierReconciliation = {
+  quoted_line_count: number;
+  estimated_quoted_scope_mad: number;
+  supplier_quoted_scope_mad: number;
+  variance_mad: number;
+  project_cost_after_supplier_quote_mad?: number;
+  gross_margin_after_supplier_quote_mad?: number;
+  gross_margin_rate_after_supplier_quote?: number | null;
+  significant_variance: boolean;
+  reconciled: boolean;
+  reconciled_at?: string | null;
+};
 type FinanceDb = {
   rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: RpcError | null }>;
   from: (table: string) => {
     select: (columns: string) => { order: (column: string) => Promise<{ data: unknown; error: RpcError | null }> };
-    update: (values: Record<string, unknown>) => { eq: (column: string, value: string) => { eq: (column: string, value: string) => Promise<{ error: RpcError | null }> } };
   };
 };
 
 const db = supabase as unknown as FinanceDb;
-const sourceTables: Record<CostLine["source_type"], SourceTable> = {
-  day_cost: "fit_quote_day_cost_lines",
-  cost_line: "fit_quote_cost_lines",
-  hotel: "fit_quote_hotel_lines",
-  flight: "fit_quote_flight_lines",
-};
 const categoryOrder = ["hotels", "guides", "transport", "tickets_activities", "luggage", "meals", "flights", "insurance", "agency_fees", "other"] as const;
 type CostGroupKey = (typeof categoryOrder)[number];
 const groupLabels: Record<CostGroupKey, string> = {
@@ -136,26 +140,29 @@ function groupFor(componentType: string): CostGroupKey {
   return "other";
 }
 
-export function FitFinancialPanel({ quoteId, readOnly = false }: { quoteId: string; readOnly?: boolean }) {
+export function FitFinancialPanel({ quoteId, readOnly = false, onStageCost }: { quoteId: string; readOnly?: boolean; onStageCost: (line: CostLine, patch: Record<string, unknown>) => void }) {
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
+  const [supplierReconciliation, setSupplierReconciliation] = useState<SupplierReconciliation | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CostDraft>>({});
   const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState("");
   const [error, setError] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data, error: summaryError }, { data: supplierRows }] = await Promise.all([
+    const [{ data, error: summaryError }, { data: reconciliationData, error: reconciliationError }, { data: supplierRows }] = await Promise.all([
       db.rpc("get_fit_financial_summary_v4", { p_quote_id: quoteId }),
+      db.rpc("get_fit_supplier_reconciliation_status_v1", { p_quote_id: quoteId }),
       db.from("suppliers").select("id,name").order("name"),
     ]);
     setLoading(false);
     if (summaryError) { setError(summaryError.message); return; }
+    if (reconciliationError) { setError(reconciliationError.message); return; }
     const nextSummary = data as FinanceSummary;
     setError("");
     setSummary(nextSummary);
+    setSupplierReconciliation(reconciliationData as SupplierReconciliation);
     setSuppliers((supplierRows || []) as Supplier[]);
     setDrafts(Object.fromEntries((nextSummary.components || []).map((line) => [line.source_id, { ...line }])));
   }, [quoteId]);
@@ -174,9 +181,11 @@ export function FitFinancialPanel({ quoteId, readOnly = false }: { quoteId: stri
     const numberOrNull = (value: unknown) => value === "" || value == null ? null : Number(value);
     const requiredNumber = (value: unknown, fallback: number) => value === "" || value == null ? fallback : Number(value);
     const values = [requiredNumber(draft.estimated_cost, 0), requiredNumber(draft.selling_price, 0), requiredNumber(draft.exchange_rate, 1), numberOrNull(draft.supplier_quoted_cost), numberOrNull(draft.confirmed_cost), numberOrNull(draft.final_cost)];
-    if (values.some((value) => value !== null && !Number.isFinite(value))) return toast.error("Vérifiez les montants et le taux de change.");
-    setSavingId(line.source_id);
-    const { error: saveError } = await db.from(sourceTables[line.source_type]).update({
+    if (values.some((value) => value !== null && !Number.isFinite(value))) {
+      toast.error("Vérifiez les montants et le taux de change.");
+      return;
+    }
+    const patch = {
       supplier_id: draft.supplier_id || null,
       estimated_cost: requiredNumber(draft.estimated_cost, 0),
       supplier_quoted_cost: numberOrNull(draft.supplier_quoted_cost),
@@ -191,20 +200,27 @@ export function FitFinancialPanel({ quoteId, readOnly = false }: { quoteId: stri
       supplier_invoice_id: draft.supplier_invoice_id || null,
       supplier_payment_id: draft.supplier_payment_id || null,
       financial_updated_at: new Date().toISOString(),
-    }).eq("id", line.source_id).eq("quote_id", quoteId);
-    setSavingId("");
-    if (saveError) return toast.error(saveError.message);
-    toast.success("Coût fournisseur enregistré.");
-    void load();
+    };
+    onStageCost(line, patch);
+    toast.success("Coût préparé. Enregistrez le devis pour valider la transaction complète.");
   };
   const update = (id: string, key: keyof CostDraft, value: unknown) => setDrafts((current) => ({ ...current, [id]: { ...current[id], [key]: value } }));
 
+  const reconcileSupplierCosts = async () => {
+    const reason = window.prompt("Expliquez la comparaison du devis fournisseur avec l'estimation et la décision tarifaire retenue :")?.trim();
+    if (!reason) return;
+    const { data, error: reconciliationError } = await db.rpc("reconcile_fit_supplier_costs_v1", { p_quote_id: quoteId, p_reason: reason });
+    if (reconciliationError) return toast.error(reconciliationError.message);
+    const result = data as { variance_mad?: number };
+    toast.success(`Devis global rapproché. Écart : ${fmtMAD(result.variance_mad || 0)}.`);
+    void load();
+  };
+
   if (loading) return <Card className="rounded-md p-5 text-sm text-muted-foreground" role="status"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Chargement de la rentabilité…</Card>;
-  if (error) return <Card className="rounded-md border-amber-300 p-5 text-sm text-amber-900"><AlertTriangle className="mr-2 inline h-4 w-4" />Migration financière V10 requise : {error}</Card>;
+  if (error) return <Card className="rounded-md border-amber-300 p-5 text-sm text-amber-900"><AlertTriangle className="mr-2 inline h-4 w-4" />Schéma financier FIT à vérifier (V10 / intégrité Japon V1) : {error}</Card>;
   if (!summary) return null;
 
   const alerts = summary.alerts || {};
-  const hasNegativeMargin = alerts.negative_estimated_margin || alerts.negative_confirmed_margin || alerts.negative_final_margin;
   const alertItems = [
     alerts.negative_estimated_margin && "La marge estimée est négative.",
     alerts.negative_confirmed_margin && "La marge confirmée est négative.",
@@ -215,12 +231,18 @@ export function FitFinancialPanel({ quoteId, readOnly = false }: { quoteId: stri
   ].filter(Boolean) as string[];
 
   return <section className="min-w-0 space-y-4" aria-labelledby="fit-finance-title">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 id="fit-finance-title" className="font-display text-xl">Coûts & rentabilité</h3><p className="text-sm text-muted-foreground">Synthèse commerciale en MAD. Les engagements et paiements restent gérés dans la section suivante.</p></div>
-      <Badge variant={hasNegativeMargin ? "destructive" : alerts.below_estimated_threshold ? "outline" : "secondary"}>{hasNegativeMargin ? "Marge à corriger" : alerts.below_estimated_threshold ? "Sous le seuil" : "Rentabilité suivie"}</Badge>
-    </div>
+    <div><h3 id="fit-finance-title" className="font-display text-xl">Détail des coûts par prestation</h3><p className="text-sm text-muted-foreground">Saisie opérationnelle. La synthèse financière consolidée, y compris le devis Japon global, figure dans le panneau principal.</p></div>
 
-    {alertItems.length > 0 && <Card className="rounded-md border-amber-300 bg-amber-50 p-4 text-amber-950"><div className="flex items-start gap-3"><TrendingDown className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">Alertes de rentabilité</p><ul className="mt-1 space-y-1 text-sm">{alertItems.map((item) => <li key={item}>• {item}</li>)}</ul></div></div></Card>}
+    <details className="rounded-md border border-border p-4"><summary className="flex cursor-pointer items-center gap-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Diagnostic financier legacy <Badge variant="outline">Non consolidé</Badge></summary><div className="mt-4 space-y-4">
+    {alertItems.length > 0 && <Card className="rounded-md border-amber-300 bg-amber-50 p-4 text-amber-950"><div className="flex items-start gap-3"><TrendingDown className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">Alertes de rentabilité V4</p><ul className="mt-1 space-y-1 text-sm">{alertItems.map((item) => <li key={item}>• {item}</li>)}</ul></div></div></Card>}
+
+    {supplierReconciliation && supplierReconciliation.quoted_line_count > 0 && <Card className={`rounded-md p-4 ${supplierReconciliation.significant_variance || !supplierReconciliation.reconciled ? "border-amber-400 bg-amber-50" : ""}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold">Réconciliation devis fournisseur / estimation</p>
+        <p className="text-sm">Devis fournisseur Japon global : estimé {fmtMAD(supplierReconciliation.estimated_quoted_scope_mad)} · devisé {fmtMAD(supplierReconciliation.supplier_quoted_scope_mad)} · écart {fmtMAD(supplierReconciliation.variance_mad)}.</p>
+        <p className="text-sm">Projection si cet écart est intégralement à notre charge : coût projet {fmtMAD(supplierReconciliation.project_cost_after_supplier_quote_mad || 0)} · marge brute {fmtMAD(supplierReconciliation.gross_margin_after_supplier_quote_mad || 0)} ({supplierReconciliation.gross_margin_rate_after_supplier_quote == null ? "—" : `${supplierReconciliation.gross_margin_rate_after_supplier_quote} %`}). Cette projection ne modifie ni le prix client ni les coûts du devis.</p>
+        <p className="text-sm font-medium">{supplierReconciliation.significant_variance ? "Écart significatif (au moins 1 000 MAD ou 5 %). " : ""}{supplierReconciliation.reconciled ? "Rapprochement audité." : "Envoi client bloqué tant que ce coût n'est pas rapproché."}</p>
+      </div>{!readOnly && <Button type="button" variant="outline" onClick={() => void reconcileSupplierCosts()}>Documenter le rapprochement</Button>}</div>
+    </Card>}
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <Metric label="Prix client" value={summary.selling_price_mad} emphasized />
@@ -233,7 +255,7 @@ export function FitFinancialPanel({ quoteId, readOnly = false }: { quoteId: stri
       <Metric label="Marge finale" value={summary.final_margin_mad} available={summary.final_line_count > 0} helper={summary.final_complete ? "Toutes les lignes finalisées" : "Coûts finaux incomplets"} danger={alerts.negative_final_margin} />
       <Metric label="Commission agence" value={summary.agency_gross_commission_mad} />
       <Metric label="Commission commercial" value={summary.sales_agent_commission_mad} />
-    </div>
+    </div></div></details>
 
     <div className="flex justify-start">
       <Button type="button" variant="outline" onClick={() => setDetailsOpen((open) => !open)} aria-expanded={detailsOpen} aria-controls="fit-cost-details">
@@ -244,7 +266,7 @@ export function FitFinancialPanel({ quoteId, readOnly = false }: { quoteId: stri
     {detailsOpen && <div id="fit-cost-details" className="space-y-4">
       <ReconciliationCard reconciliation={summary.reconciliation} />
       <div className="space-y-3">
-        {groups.map((group) => <CostGroup key={group.key} label={group.label} lines={group.lines} drafts={drafts} suppliers={suppliers} readOnly={readOnly} savingId={savingId} onUpdate={update} onSave={save} />)}
+        {groups.map((group) => <CostGroup key={group.key} label={group.label} lines={group.lines} drafts={drafts} suppliers={suppliers} readOnly={readOnly} savingId="" onUpdate={update} onSave={save} />)}
         {!summary.components?.length && <Card className="rounded-md p-8 text-center text-sm text-muted-foreground"><Calculator className="mx-auto mb-2 h-5 w-5" />Aucune prestation active n’entre dans le calcul financier.</Card>}
       </div>
     </div>}
