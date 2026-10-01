@@ -22,6 +22,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { fitCommercialLabel, fitCommercialStatus, fitCommercialTone, fitNextAction } from "@/lib/fit-commercial";
 import { FitFinancialPanel } from "@/components/fit/FitFinancialPanel";
 import { FitFinancialClosurePanel } from "@/components/fit/FitFinancialClosurePanel";
+import { calculateFitFinancialStages, calculateFitMarkup, financialDraftFingerprint, inspectFitFeeIntegrity } from "@/lib/fit-financial-integrity";
 
 const db = supabase as any;
 
@@ -542,10 +543,11 @@ const autoV2RecalcDayBase = (day: any, quote: any) => {
   const lines = recalcLines(day.cost_lines ?? []);
   const travelers = Math.max(1, numberValue(quote?.travelers_count || day.pax_group_size || 1));
   const groundCost = sumLines(lines, isSupplierCostLine);
+  const japanEligibleBase = sumLines(lines, (line) => isSupplierCostLine(line) && line.cost_owner === "japan_supplier_managed");
   const japanRate = day.japan_agency_fee_rate_override !== null && day.japan_agency_fee_rate_override !== undefined && String(day.japan_agency_fee_rate_override) !== ""
     ? numberValue(day.japan_agency_fee_rate_override)
     : numberValue(quote?.japan_agency_fee_rate ?? 10);
-  const japanFee = roundAmount((groundCost * japanRate) / 100, quote?.rounding_rule);
+  const japanFee = roundAmount((japanEligibleBase * japanRate) / 100, quote?.rounding_rule);
   const projectCost = groundCost + japanFee;
   return {
     ...day,
@@ -553,6 +555,7 @@ const autoV2RecalcDayBase = (day: any, quote: any) => {
     cost_mad: groundCost,
     selling_price_mad: projectCost,
     calculated_ground_cost: groundCost,
+    japan_fee_eligible_base_mad: japanEligibleBase,
     calculated_japan_agency_fee: japanFee,
     calculated_project_cost: projectCost,
     calculated_margin: 0,
@@ -623,6 +626,7 @@ const cloneTemplateLines = (template: any, travelers: number) => {
       is_client_visible: Boolean(line.is_client_visible),
       included_in_calculation: line.included_in_calculation !== false,
       cost_role: line.cost_role || (line.category === "agency_fee" ? "japan_agency_fee_auto" : "supplier_cost"),
+      cost_owner: line.category === "agency_fee" ? null : "japan_supplier_managed",
       partner_visible: line.partner_visible !== false,
       can_partner_disable: Boolean(line.is_optional),
       affects_partner_net_price: line.affects_partner_net_price !== false,
@@ -662,6 +666,10 @@ const dayFromTemplate = (template: any, index: number, travelers: number, quote?
   cost_jpy: numberValue(template?.estimated_cost_jpy),
   cost_mad: numberValue(template?.estimated_cost_mad),
   selling_price_mad: numberValue(template?.default_selling_price_mad),
+  japan_agency_fee_rate_override: null,
+  japan_agency_fee_exemption_reason: null,
+  japan_agency_fee_exempted_at: null,
+  japan_agency_fee_exempted_by: null,
   notes: "",
   internal_notes: template?.internal_notes ?? "",
   image_urls: template?.image_urls ?? [],
@@ -707,7 +715,7 @@ function legacyCalculateFitQuote(days: any[], quote: any, lines: any[], hotelLin
     activities_total_mad: categoryTotal("visit"),
     other_total_mad: categoryTotal("luggage") + categoryTotal("other") + specialCost,
   };
-  return { days: normalizedDays, specialLines: normalizedSpecialLines, totals };
+  return { days: normalizedDays, specialLines: normalizedSpecialLines, totals, additional_japan_managed_base_mad: 0 };
 }
 
 function autoV2CalculateFitQuote(days: any[], quote: any, lines: any[], hotelLines: any[], flightLines: any[]) {
@@ -720,9 +728,13 @@ function autoV2CalculateFitQuote(days: any[], quote: any, lines: any[], hotelLin
     .reduce((sum, line) => sum + numberValue(line.subtotal_mad), 0);
   const programGround = baseDays.reduce((sum, day) => sum + numberValue(day.calculated_ground_cost), 0);
   const programJapanFee = baseDays.reduce((sum, day) => sum + numberValue(day.calculated_japan_agency_fee), 0);
+  const otherJapanBase = sumLines(normalizedSpecialLines, (line) => isSupplierCostLine(line) && line.cost_owner === "japan_supplier_managed")
+    + hotelLines.filter((line) => line.cost_owner === "japan_supplier_managed").reduce((sum, line) => sum + numberValue(line.subtotal_mad), 0)
+    + flightLines.filter((line) => (line.status || "included") === "included" && line.cost_owner === "japan_supplier_managed").reduce((sum, line) => sum + numberValue(line.subtotal_mad), 0);
+  const otherJapanFee = roundAmount(otherJapanBase * numberValue(quote?.japan_agency_fee_rate ?? 10) / 100, quote?.rounding_rule);
   const programProject = baseDays.reduce((sum, day) => sum + numberValue(day.calculated_project_cost), 0);
   const groundTotal = programGround + hotelTotal + flightTotal + specialCost;
-  const projectTotal = groundTotal + programJapanFee;
+  const projectTotal = groundTotal + programJapanFee + otherJapanFee;
   const scope = quote?.margin_scope || "program_only";
   const marginBase = scope === "all"
     ? projectTotal
@@ -731,7 +743,7 @@ function autoV2CalculateFitQuote(days: any[], quote: any, lines: any[], hotelLin
       : scope === "program_hotels"
         ? programProject + hotelTotal
         : programProject;
-  const margin = roundAmount((marginBase * numberValue(quote?.lejapon_margin_rate ?? 20)) / 100, quote?.rounding_rule);
+  const margin = calculateFitMarkup(marginBase, numberValue(quote?.lejapon_margin_rate ?? 20), quote?.rounding_rule);
   const manual = numberValue(quote.manual_adjustment_mad);
   const discount = numberValue(quote.discount_mad);
   const totalSelling = Math.max(0, roundAmount(projectTotal + margin + manual - discount, quote?.rounding_rule));
@@ -763,7 +775,7 @@ function autoV2CalculateFitQuote(days: any[], quote: any, lines: any[], hotelLin
     margin_percent: totalSelling > 0 ? (realMargin / totalSelling) * 100 : 0,
     price_per_person_mad: totalSelling / travelers,
     ground_cost_total_mad: groundTotal,
-    japan_agency_fee_total_mad: programJapanFee,
+    japan_agency_fee_total_mad: programJapanFee + otherJapanFee,
     project_cost_total_mad: projectTotal,
     hotel_total_mad: hotelTotal,
     hotel_cost_mad: hotelTotal,
@@ -773,7 +785,7 @@ function autoV2CalculateFitQuote(days: any[], quote: any, lines: any[], hotelLin
     activities_total_mad: categoryTotal("visit") + categoryTotal("activities"),
     other_total_mad: categoryTotal("luggage") + categoryTotal("meal") + categoryTotal("other") + specialCost,
   };
-  return { days: normalizedDays, specialLines: normalizedSpecialLines, totals };
+  return { days: normalizedDays, specialLines: normalizedSpecialLines, totals, additional_japan_managed_base_mad: otherJapanBase };
 }
 
 function calculateFitQuote(days: any[], quote: any, lines: any[], hotelLines: any[], flightLines: any[]) {
@@ -830,6 +842,11 @@ export default function FitQuotes() {
   const [costLines, setCostLines] = useState<any[]>([]);
   const [hotelLines, setHotelLines] = useState<any[]>([]);
   const [flightLines, setFlightLines] = useState<any[]>([]);
+  // The legacy FIT editor still loads untyped rows; keep this draft aligned
+  // with the existing quote-row state until the whole editor is typed.
+  const [supplierQuote, setSupplierQuote] = useState<typeof selectedQuote | null>(null);
+  const [japanSuppliers, setJapanSuppliers] = useState<Array<{ id: string; name: string }>>([]);
+  const savedFinancialDraft = useRef<{ quoteId: string; fingerprint: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<any>(null);
@@ -907,6 +924,42 @@ export default function FitQuotes() {
   );
   const totals = calculation.totals;
   const calculatedQuoteDays = calculation.days;
+  const financialStages = useMemo(() => {
+    if (!isAutoV2(quoteForm)) return null;
+    const component = (line: (typeof costLines)[number], source: "day" | "other" | "hotel" | "flight", dayKey?: string) => ({
+      owner: line.cost_owner === "japan_supplier_managed" || line.cost_owner === "lejapon_direct" ? line.cost_owner : null,
+      source, dayKey,
+      estimatedMad: numberValue(line.subtotal_mad ?? line.total_mad),
+      quotedMad: line.supplier_quoted_cost == null ? null : numberValue(line.supplier_quoted_cost) * numberValue(line.exchange_rate_to_mad || 1),
+      confirmedMad: line.confirmed_cost == null ? null : numberValue(line.confirmed_cost) * numberValue(line.exchange_rate_to_mad || 1),
+      finalMad: line.final_cost == null ? null : numberValue(line.final_cost) * numberValue(line.exchange_rate_to_mad || 1),
+    });
+    const components = [
+      ...calculatedQuoteDays.flatMap((day) => (day.cost_lines ?? []).filter(isSupplierCostLine).map((line) => component(line, "day", day.local_id))),
+      ...calculation.specialLines.filter(isSupplierCostLine).map((line) => component(line, "other")),
+      ...hotelLines.map((line) => component(line, "hotel")),
+      ...flightLines.filter((line) => (line.status || "included") === "included").map((line) => component(line, "flight")),
+    ];
+    const dayRateOverrides = Object.fromEntries(calculatedQuoteDays.map((day) => [day.local_id, day.japan_agency_fee_rate_override === "" ? null : day.japan_agency_fee_rate_override]));
+    return calculateFitFinancialStages({ components, dayRateOverrides,
+      globalRate: numberValue(quoteForm.japan_agency_fee_rate ?? 10), roundingRule: quoteForm.rounding_rule,
+      markupRate: numberValue(quoteForm.lejapon_margin_rate ?? 20), clientSellingPriceMad: numberValue(totals.total_selling_price_mad),
+      supplierQuote: supplierQuote?.supplier_id && supplierQuote.quoted_amount !== "" && supplierQuote.quoted_amount != null ? {
+        quotedAmount: numberValue(supplierQuote.quoted_amount), currency: supplierQuote.currency || "MAD",
+        exchangeRateToMad: numberValue(supplierQuote.exchange_rate_to_mad || 1),
+        handlingMode: supplierQuote.handling_mode || "included",
+        handlingRate: supplierQuote.handling_mode === "separate" ? numberValue(supplierQuote.handling_rate) : null,
+        confirmedAmount: supplierQuote.confirmed_amount == null || supplierQuote.confirmed_amount === "" ? null : numberValue(supplierQuote.confirmed_amount),
+        finalAmount: supplierQuote.final_amount == null || supplierQuote.final_amount === "" ? null : numberValue(supplierQuote.final_amount),
+        confirmedExchangeRateToMad: supplierQuote.confirmed_exchange_rate_to_mad == null || supplierQuote.confirmed_exchange_rate_to_mad === "" ? null : numberValue(supplierQuote.confirmed_exchange_rate_to_mad),
+        finalExchangeRateToMad: supplierQuote.final_exchange_rate_to_mad == null || supplierQuote.final_exchange_rate_to_mad === "" ? null : numberValue(supplierQuote.final_exchange_rate_to_mad),
+      } : null,
+    });
+  }, [quoteForm, calculatedQuoteDays, calculation.specialLines, hotelLines, flightLines, supplierQuote, totals.total_selling_price_mad]);
+  const feeIntegrity = useMemo(
+    () => inspectFitFeeIntegrity({ ...quoteForm, ...totals, additional_japan_managed_base_mad: calculation.additional_japan_managed_base_mad ?? 0 }, calculatedQuoteDays),
+    [quoteForm, totals, calculatedQuoteDays, calculation.additional_japan_managed_base_mad],
+  );
   const calculatedCostLines = calculation.specialLines;
   const calculatedDayByLocal = useMemo(
     () => new Map(calculatedQuoteDays.map((day: any) => [day.local_id, day])),
@@ -922,6 +975,7 @@ export default function FitQuotes() {
       .sort((a, b) => numberValue(b.version_number) - numberValue(a.version_number));
   }, [quotes, selectedQuote]);
   const isHistoricalVersion = selectedQuote?.is_current_version === false;
+  const isFinanciallyImmutable = isHistoricalVersion || Boolean(selectedQuote?.accepted_snapshot_id);
 
   const publicExpiryInput = (() => {
     if (!quoteForm.public_link_expires_at) return "";
@@ -932,27 +986,31 @@ export default function FitQuotes() {
   })();
 
   const loadQuote = async (quote: any) => {
+    savedFinancialDraft.current = null;
     setSelectedQuote(quote);
-    setQuoteForm({
+    const loadedForm = {
       ...emptyQuote,
       ...quote,
       client_id: quote.client_id ?? "",
       travel_start_date: dateOnly(quote.travel_start_date),
       travel_end_date: dateOnly(quote.travel_end_date),
       valid_until: dateOnly(quote.valid_until),
-    });
-    const [{ data: days }, { data: dayLines }, { data: lines }, { data: hotels }, { data: flights }, { data: timelineRows }] = await Promise.all([
+    };
+    setQuoteForm(loadedForm);
+    const [{ data: days }, { data: dayLines }, { data: lines }, { data: hotels }, { data: flights }, { data: globalSupplierQuote }, { data: supplierRows }, { data: timelineRows }] = await Promise.all([
       db.from("fit_quote_days").select("*").eq("quote_id", quote.id).order("sort_order"),
       db.from("fit_quote_day_cost_lines").select("*").eq("quote_id", quote.id).order("sort_order"),
       db.from("fit_quote_cost_lines").select("*").eq("quote_id", quote.id).order("sort_order"),
       db.from("fit_quote_hotel_lines").select("*").eq("quote_id", quote.id).order("sort_order"),
       db.from("fit_quote_flight_lines").select("*").eq("quote_id", quote.id).order("sort_order"),
+      db.from("fit_japan_supplier_quote_totals").select("*").eq("quote_id", quote.id).maybeSingle(),
+      db.from("suppliers").select("id,name").order("name"),
       db.rpc("get_fit_quote_commercial_timeline_v3", { p_quote_id: quote.id }),
     ]);
     setTimeline(Array.isArray(timelineRows) ? timelineRows : []);
     const lineRows = dayLines ?? [];
     const quoteForCalculation = { ...emptyQuote, ...quote };
-    setQuoteDays((days ?? []).map((day: any) => recalcDay({
+    const loadedDays = (days ?? []).map((day) => recalcDay({
       ...day,
       local_id: day.local_key || day.id || crypto.randomUUID(),
       source_description: day.source_description ?? day.description_client ?? "",
@@ -961,11 +1019,18 @@ export default function FitQuotes() {
       rhythm: normalizeRhythm(day.day_pace ?? day.rhythm),
       day_pace: normalizeRhythm(day.day_pace ?? day.rhythm),
       meal_plan: day.meal_plan ?? day.meals ?? [],
-      cost_lines: lineRows.filter((line: any) => line.day_id === day.id).map((line: any) => ({ ...line, local_id: line.id ?? crypto.randomUUID() })),
-    }, quoteForCalculation)));
-    setCostLines((lines ?? []).map((line: any) => ({ ...line, local_id: line.id ?? crypto.randomUUID(), price_mad: line.price_mad ?? line.unit_cost_mad, times: line.times ?? 1 })));
-    setHotelLines((hotels ?? []).map((line: any) => ({ ...line, local_id: line.id ?? crypto.randomUUID() })));
-    setFlightLines((flights ?? []).map((line: any) => ({ ...line, local_id: line.id ?? crypto.randomUUID() })));
+      cost_lines: lineRows.filter((line) => line.day_id === day.id).map((line) => ({ ...line, local_id: line.id ?? crypto.randomUUID() })),
+    }, quoteForCalculation));
+    const loadedLines = (lines ?? []).map((line) => ({ ...line, local_id: line.id ?? crypto.randomUUID(), price_mad: line.price_mad ?? line.unit_cost_mad, times: line.times ?? 1 }));
+    const loadedHotels = (hotels ?? []).map((line) => ({ ...line, local_id: line.id ?? crypto.randomUUID() }));
+    const loadedFlights = (flights ?? []).map((line) => ({ ...line, local_id: line.id ?? crypto.randomUUID() }));
+    savedFinancialDraft.current = { quoteId: quote.id, fingerprint: financialDraftFingerprint(loadedForm, loadedDays, loadedLines, loadedHotels, loadedFlights, globalSupplierQuote) };
+    setQuoteDays(loadedDays);
+    setCostLines(loadedLines);
+    setHotelLines(loadedHotels);
+    setFlightLines(loadedFlights);
+    setSupplierQuote(globalSupplierQuote ?? null);
+    setJapanSuppliers(supplierRows ?? []);
   };
 
   const requestedQuoteId = searchParams.get("quote");
@@ -1231,7 +1296,7 @@ export default function FitQuotes() {
       await load();
       await loadQuote(duplicatedQuote);
       toast.success(`Devis ${data.new_reference} créé.`, {
-        description: `Copie de ${data.source_reference}. Le devis original reste inchangé.`,
+        description: `Copie de ${data.source_reference}. Les éventuels 0 % Japon copiés héritent du taux global : recalculez et sauvegardez ce brouillon avant diffusion. L’original reste inchangé.`,
       });
     } catch (error: any) {
       toast.error(error?.message || "Impossible de dupliquer ce devis FIT.");
@@ -1257,7 +1322,7 @@ export default function FitQuotes() {
       await loadQuote(createdQuote);
       void db.functions.invoke("send-admin-notification", { body: { event_type: "fit_quote_revision_ready", quote_id: createdQuote.id } });
       toast.success(`Version V${data.version_number} créée.`, {
-        description: `${data.family_reference} reste lié à son historique. V${data.version_number - 1} est désormais en lecture seule.`,
+        description: `${data.family_reference} reste lié à son historique. Vérifiez les taux Japon et sauvegardez la nouvelle version avant diffusion ; V${data.version_number - 1} reste en lecture seule.`,
       });
     } catch (error: any) {
       toast.error(error?.message || "Impossible de créer une nouvelle version.");
@@ -1273,9 +1338,25 @@ export default function FitQuotes() {
   };
 
   const addBlankDay = () => setQuoteDays((current) => current.concat(blankDay(current.length, quoteForm.travelers_count, quoteForm)));
-  const duplicateDay = (day: any) => setQuoteDays((current) => current.concat(recalcDay({ ...day, id: undefined, local_id: crypto.randomUUID(), sort_order: current.length, day_number: current.length + 1, title: `${day.title} (copie)`, cost_lines: (day.cost_lines ?? []).map((line: any) => ({ ...line, id: undefined, local_id: crypto.randomUUID() })) }, quoteForm)));
+  const duplicateDay = (day: (typeof quoteDays)[number]) => setQuoteDays((current) => current.concat(recalcDay({ ...day, id: undefined, local_id: crypto.randomUUID(), sort_order: current.length, day_number: current.length + 1, title: `${day.title} (copie)`, japan_agency_fee_rate_override: null, japan_agency_fee_exemption_reason: null, japan_agency_fee_exempted_at: null, japan_agency_fee_exempted_by: null, cost_lines: (day.cost_lines ?? []).map((line) => ({ ...line, id: undefined, local_id: crypto.randomUUID() })) }, quoteForm)));
   const removeDay = (localId: string) => setQuoteDays((current) => current.filter((day) => day.local_id !== localId).map((day, index) => ({ ...day, sort_order: index, day_number: index + 1 })));
   const updateDay = (localId: string, patch: any) => setQuoteDays((current) => current.map((day) => day.local_id === localId ? recalcDay({ ...day, ...patch }, quoteForm) : day));
+  const changeDayJapanFee = (day: (typeof quoteDays)[number], raw: string) => {
+    if (raw === "") {
+      updateDay(day.local_id, { japan_agency_fee_rate_override: null, japan_agency_fee_exemption_reason: null, japan_agency_fee_exempted_at: null, japan_agency_fee_exempted_by: null });
+      return;
+    }
+    const rate = Number(raw);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) return;
+    if (rate === 0) {
+      const reason = window.prompt("Pourquoi cette journée est-elle exonérée des frais fournisseur Japon ?", day.japan_agency_fee_exemption_reason || "")?.trim();
+      if (!reason) return toast.error("Une raison documentée est obligatoire pour 0 %.");
+      if (!user?.id) return toast.error("Utilisateur requis pour auditer l’exonération.");
+      updateDay(day.local_id, { japan_agency_fee_rate_override: 0, japan_agency_fee_exemption_reason: reason, japan_agency_fee_exempted_at: new Date().toISOString(), japan_agency_fee_exempted_by: user.id });
+      return;
+    }
+    updateDay(day.local_id, { japan_agency_fee_rate_override: rate, japan_agency_fee_exemption_reason: null, japan_agency_fee_exempted_at: null, japan_agency_fee_exempted_by: null });
+  };
   const generateDayWithAI = (day: any) => {
     updateDay(day.local_id, generateClientFields(day));
     toast.success("Champs client générés. Vous pouvez les ajuster avant sauvegarde.");
@@ -1286,7 +1367,7 @@ export default function FitQuotes() {
   const addDayLine = (dayId: string) => updateDay(dayId, {
     cost_lines: [
       ...(quoteDays.find((day) => day.local_id === dayId)?.cost_lines ?? []),
-      { local_id: crypto.randomUUID(), category: "other", label: "", price_mad: 0, quantity: 1, times: 1, fee_type: "fixed", percentage_rate: 0, notes: "", is_optional: false, is_client_visible: false, included_in_calculation: true, cost_role: "supplier_cost" },
+      { local_id: crypto.randomUUID(), category: "other", label: "", price_mad: 0, quantity: 1, times: 1, fee_type: "fixed", percentage_rate: 0, notes: "", is_optional: false, is_client_visible: false, included_in_calculation: true, cost_role: "supplier_cost", cost_owner: "japan_supplier_managed" },
     ],
   });
   const removeDayLine = (dayId: string, lineId: string) => updateDay(dayId, {
@@ -1330,18 +1411,19 @@ export default function FitQuotes() {
     optional: false,
     included_in_calculation: true,
     cost_role: "supplier_cost",
+    cost_owner: "lejapon_direct",
   }));
   const updateCostLine = (localId: string, patch: any) => setCostLines((current) => recalcSpecialLines(current.map((line) => (
     line.local_id === localId ? { ...line, ...patch } : line
   ))));
-  const addHotelLine = () => setHotelLines((current) => current.concat({ local_id: crypto.randomUUID(), city: "", hotel_name: "", image_url: "", category: quoteForm.hotel_category || "", room_type: quoteForm.room_type || "", rooms_count: 1, nights: 1, price_per_room_night_mad: 0, subtotal_mad: 0, public_notes: "", notes: "" }));
+  const addHotelLine = () => setHotelLines((current) => current.concat({ local_id: crypto.randomUUID(), city: "", hotel_name: "", image_url: "", category: quoteForm.hotel_category || "", room_type: quoteForm.room_type || "", rooms_count: 1, nights: 1, price_per_room_night_mad: 0, subtotal_mad: 0, public_notes: "", notes: "", cost_owner: "lejapon_direct" }));
   const updateHotelLine = (localId: string, patch: any) => setHotelLines((current) => current.map((line) => {
     if (line.local_id !== localId) return line;
     const next = { ...line, ...patch };
     next.subtotal_mad = Math.round(numberValue(next.rooms_count) * numberValue(next.nights) * numberValue(next.price_per_room_night_mad));
     return next;
   }));
-  const addFlightLine = () => setFlightLines((current) => current.concat({ local_id: crypto.randomUUID(), route: "", airline: "", status: "included", fare_per_person_mad: 0, passengers_count: quoteForm.travelers_count || 1, subtotal_mad: 0, public_notes: "", notes: "" }));
+  const addFlightLine = () => setFlightLines((current) => current.concat({ local_id: crypto.randomUUID(), route: "", airline: "", status: "included", fare_per_person_mad: 0, passengers_count: quoteForm.travelers_count || 1, subtotal_mad: 0, public_notes: "", notes: "", cost_owner: "lejapon_direct" }));
   const updateFlightLine = (localId: string, patch: any) => setFlightLines((current) => current.map((line) => {
     if (line.local_id !== localId) return line;
     const next = { ...line, ...patch };
@@ -1367,6 +1449,14 @@ export default function FitQuotes() {
 
   const saveQuote = async () => {
     if (!selectedQuote?.id) return toast.error("Sélectionnez un devis.");
+    if (isFinanciallyImmutable) return toast.error("Cette version est déjà acceptée ou historique. Créez une nouvelle version pour modifier le devis.");
+    if (feeIntegrity.unreasonedExemptions > 0) return toast.error("Justifiez les exonérations Japon à 0 % avant de sauvegarder. Aucun ancien taux ne sera modifié automatiquement.");
+    if (isAutoV2(quoteForm) && financialStages?.unclassifiedCosts) return toast.error("Qualifiez chaque coût avant la sauvegarde financière.");
+    if (supplierQuote && (!supplierQuote.supplier_id || supplierQuote.quoted_amount === "" || supplierQuote.quoted_amount == null
+      || !supplierQuote.quoted_at || numberValue(supplierQuote.exchange_rate_to_mad) <= 0
+      || (supplierQuote.handling_mode === "separate" && (supplierQuote.handling_rate === "" || supplierQuote.handling_rate == null)))) {
+      return toast.error("Complétez le devis global fournisseur, son taux de change et le mode de handling avant d'enregistrer.");
+    }
     setSaving(true);
     try {
       const quoteCalculation = calculateFitQuote(quoteDays, quoteForm, costLines, hotelLines, flightLines);
@@ -1374,15 +1464,10 @@ export default function FitQuotes() {
       const normalizedSpecialLines = quoteCalculation.specialLines;
       const nextVersion = Math.max(1, numberValue(selectedQuote.version_number || quoteForm.version_number || 1));
       const quotePayload = cleanPayload(fitQuotePayload(
-        quoteForm,
+        { ...quoteForm, share_enabled: false },
         quoteCalculation.totals,
         { version_number: nextVersion },
       ));
-      const { error: quoteError } = await db.from("fit_quotes").update(quotePayload).eq("id", selectedQuote.id);
-      if (quoteError) throw quoteError;
-
-      throwIfSupabaseError(await db.from("fit_quote_day_cost_lines").delete().eq("quote_id", selectedQuote.id), "Suppression anciennes lignes journée");
-      throwIfSupabaseError(await db.from("fit_quote_days").delete().eq("quote_id", selectedQuote.id), "Suppression anciens jours");
       const dayRows = normalizedDays.map((day, index) => ({
         quote_id: selectedQuote.id,
         template_id: day.template_id || null,
@@ -1416,7 +1501,11 @@ export default function FitQuotes() {
         cost_mad: numberValue(day.cost_mad),
         selling_price_mad: numberValue(day.selling_price_mad),
         japan_agency_fee_rate_override: day.japan_agency_fee_rate_override === "" || day.japan_agency_fee_rate_override === undefined ? null : numberValue(day.japan_agency_fee_rate_override),
+        japan_agency_fee_exemption_reason: day.japan_agency_fee_rate_override === 0 ? day.japan_agency_fee_exemption_reason?.trim() || null : null,
+        japan_agency_fee_exempted_at: day.japan_agency_fee_rate_override === 0 ? day.japan_agency_fee_exempted_at || null : null,
+        japan_agency_fee_exempted_by: day.japan_agency_fee_rate_override === 0 ? day.japan_agency_fee_exempted_by || null : null,
         calculated_ground_cost: numberValue(day.calculated_ground_cost ?? day.cost_mad),
+        japan_fee_eligible_base_mad: numberValue(day.japan_fee_eligible_base_mad),
         calculated_japan_agency_fee: numberValue(day.calculated_japan_agency_fee),
         calculated_project_cost: numberValue(day.calculated_project_cost ?? day.cost_mad),
         calculated_margin: numberValue(day.calculated_margin),
@@ -1426,14 +1515,8 @@ export default function FitQuotes() {
         internal_notes: day.internal_notes || null,
         image_urls: Array.isArray(day.image_urls) ? day.image_urls : listFromText(day.image_urls),
       }));
-      const { data: insertedDays, error: dayError } = dayRows.length
-        ? await db.from("fit_quote_days").insert(dayRows).select("id,local_key")
-        : { data: [], error: null };
-      if (dayError) throw dayError;
-      const dayIdByLocal = new Map((insertedDays ?? []).map((day: any) => [day.local_key, day.id]));
       const dayLineRows = normalizedDays.flatMap((day) => (day.cost_lines ?? []).map((line: any, index: number) => ({
-        quote_id: selectedQuote.id,
-        day_id: dayIdByLocal.get(day.local_id),
+        day_local_key: day.local_id,
         template_line_id: line.template_line_id || null,
         sort_order: index,
         category: line.category || "other",
@@ -1451,17 +1534,11 @@ export default function FitQuotes() {
         is_client_visible: Boolean(line.is_client_visible),
         included_in_calculation: line.included_in_calculation !== false,
         cost_role: line.cost_role || (line.category === "agency_fee" ? "japan_agency_fee_auto" : "supplier_cost"),
+        cost_owner: line.cost_owner || null,
         ...financialOverlayPayload(line, numberValue(line.subtotal_mad), numberValue(line.subtotal_mad)),
-      })).filter((line: any) => line.day_id));
-      if (dayLineRows.length) {
-        const { error } = await db.from("fit_quote_day_cost_lines").insert(dayLineRows);
-        if (error) throw error;
-      }
+      })));
 
-      throwIfSupabaseError(await db.from("fit_quote_cost_lines").delete().eq("quote_id", selectedQuote.id), "Suppression anciennes lignes spéciales");
-      if (normalizedSpecialLines.length) {
-        const { error } = await db.from("fit_quote_cost_lines").insert(normalizedSpecialLines.map((line, index) => ({
-          quote_id: selectedQuote.id,
+      const specialRows = normalizedSpecialLines.map((line, index) => ({
           sort_order: index,
           category: line.category || "other",
           label: line.label || "",
@@ -1473,15 +1550,11 @@ export default function FitQuotes() {
           optional: Boolean(line.optional),
           included_in_calculation: line.included_in_calculation !== false,
           cost_role: line.cost_role || (line.category === "agency_fee" ? "japan_agency_fee_auto" : "supplier_cost"),
+          cost_owner: line.cost_owner || null,
           ...financialOverlayPayload(line, numberValue(line.total_mad ?? line.subtotal_mad), numberValue(line.selling_price_mad)),
-        })));
-        if (error) throw error;
-      }
+        }));
 
-      throwIfSupabaseError(await db.from("fit_quote_hotel_lines").delete().eq("quote_id", selectedQuote.id), "Suppression anciens hôtels");
-      if (hotelLines.length) {
-        const { error } = await db.from("fit_quote_hotel_lines").insert(hotelLines.map((line, index) => ({
-          quote_id: selectedQuote.id,
+      const hotelRows = hotelLines.map((line, index) => ({
           sort_order: index,
           city: line.city || null,
           hotel_name: line.hotel_name || null,
@@ -1494,15 +1567,11 @@ export default function FitQuotes() {
           subtotal_mad: numberValue(line.subtotal_mad),
           notes: line.notes || null,
           public_notes: line.public_notes || null,
+          cost_owner: line.cost_owner || null,
           ...financialOverlayPayload(line, numberValue(line.subtotal_mad), numberValue(line.subtotal_mad)),
-        })));
-        if (error) throw error;
-      }
+        }));
 
-      throwIfSupabaseError(await db.from("fit_quote_flight_lines").delete().eq("quote_id", selectedQuote.id), "Suppression anciens vols");
-      if (flightLines.length) {
-        const { error } = await db.from("fit_quote_flight_lines").insert(flightLines.map((line, index) => ({
-          quote_id: selectedQuote.id,
+      const flightRows = flightLines.map((line, index) => ({
           sort_order: index,
           route: line.route || null,
           airline: line.airline || null,
@@ -1512,18 +1581,46 @@ export default function FitQuotes() {
           subtotal_mad: numberValue(line.subtotal_mad),
           notes: line.notes || null,
           public_notes: line.public_notes || null,
+          cost_owner: line.cost_owner || null,
           ...financialOverlayPayload(line, numberValue(line.subtotal_mad), numberValue(line.subtotal_mad)),
-        })));
-        if (error) throw error;
-      }
-      await archiveGeneratedDocuments(selectedQuote.id, nextVersion);
-      toast.success("Devis sauvegardé — lien client et PDF mis à jour.");
-      const refreshed = { ...selectedQuote, ...quotePayload };
+        }));
+      const editableHeaderKeys = new Set([
+        "client_name", "travelers_count", "travel_start_date", "travel_end_date", "hotel_category", "room_type", "currency", "language", "notes",
+        "japan_agency_fee_rate", "lejapon_margin_rate", "margin_scope", "rounding_rule", "manual_adjustment_mad", "discount_mad", "public_deposit_mad",
+        "public_payment_deadline", "valid_until", "client_notes", "payment_conditions", "booking_conditions", "cancellation_conditions",
+        "production_public_note", "japan_request_reference", "japan_request_deadline", "japan_response_notes", "japan_confirmed_price",
+        "japan_conditions", "japan_valid_until", "inclusions", "exclusions",
+      ]);
+      const header = Object.fromEntries(Object.entries(quotePayload).filter(([key]) => editableHeaderKeys.has(key)));
+      if (!isAutoV2(quoteForm)) for (const [key, value] of Object.entries(quoteCalculation.totals)) header[key] = value;
+      const { data: savedModel, error: saveError } = await db.rpc("save_fit_financial_model_v1", {
+        p_quote_id: selectedQuote.id,
+        p_expected_revision: numberValue(selectedQuote.financial_revision),
+        p_header: header,
+        p_days: dayRows.map(({ quote_id: _quoteId, japan_agency_fee_exempted_at: _exemptedAt, japan_agency_fee_exempted_by: _exemptedBy, ...row }) => row),
+        p_day_lines: dayLineRows,
+        p_cost_lines: specialRows,
+        p_hotels: hotelRows,
+        p_flights: flightRows,
+        p_supplier_quote: supplierQuote?.supplier_id ? Object.fromEntries(Object.entries(supplierQuote).filter(([key]) => [
+          "supplier_id", "quoted_amount", "currency", "exchange_rate_to_mad", "handling_mode", "handling_rate", "quoted_at", "supplier_reference",
+          "document_id", "notes_internal", "confirmed_amount", "final_amount", "confirmed_exchange_rate_to_mad", "final_exchange_rate_to_mad",
+        ].includes(key))) : null,
+      });
+      if (saveError) throw saveError;
+      toast.success("Devis sauvegardé. Vérifiez les montants puis réactivez explicitement le lien client.");
+      const refreshed = { ...selectedQuote, ...header, ...quoteCalculation.totals, share_enabled: false, financial_revision: savedModel?.financial_revision };
       setSelectedQuote(refreshed);
       await load();
       await loadQuote(refreshed);
     } catch (error: any) {
-      toast.error(error?.message ?? "Impossible d'enregistrer.");
+      toast.error(error?.message?.includes("fit_financial_revision_conflict")
+        ? "Ce devis a été modifié depuis son ouverture. Rechargez les données avant d'enregistrer."
+        : error?.message?.includes("accepted_fit_version_read_only")
+          ? "Cette version est déjà acceptée. Créez une nouvelle version avant de modifier le devis."
+        : error?.message?.includes("dependent_fit_records_require_new_version")
+          ? "Ce devis possède déjà des sélections client ou des demandes fournisseur. Créez une nouvelle version avant de modifier son modèle financier."
+        : `${error?.message ?? "Impossible d'enregistrer."} Aucune modification financière n'a été enregistrée.`);
     } finally {
       setSaving(false);
     }
@@ -1648,6 +1745,7 @@ export default function FitQuotes() {
   };
 
   const approveForPayment = async () => {
+    if (!await ensureClientFinancialIntegrity()) return;
     await updateProduction({
       status: "admin_approved_for_payment",
       production_status: "admin_approved_for_payment",
@@ -1661,11 +1759,29 @@ export default function FitQuotes() {
     }, "admin_approved_for_payment");
   };
 
+  const ensureClientFinancialIntegrity = async () => {
+    if (!selectedQuote?.id || savedFinancialDraft.current?.quoteId !== selectedQuote.id
+        || savedFinancialDraft.current.fingerprint !== financialDraftFingerprint(quoteForm, quoteDays, costLines, hotelLines, flightLines, supplierQuote)) {
+      toast.error("Sauvegardez et vérifiez le devis avant toute action client : la version affichée diffère des données contrôlées par le serveur.");
+      return false;
+    }
+    if (feeIntegrity.blocked) {
+      toast.error(`FINANCIAL INTEGRITY ERROR : ${feeIntegrity.issues.join(" ; ")}`);
+      return false;
+    }
+    const { error } = await db.rpc("assert_fit_quote_financial_integrity_v1", { p_quote_id: selectedQuote.id });
+    if (error) {
+      toast.error(`Devis bloqué : ${error.message}`);
+      return false;
+    }
+    return true;
+  };
+
   const enableShare = async () => {
-    if (!selectedQuote?.id) return;
+    if (!selectedQuote?.id) return false;
+    if (!await ensureClientFinancialIntegrity()) return false;
     if (!quoteForm.share_token) {
-      await regenerateShare();
-      return;
+      return regenerateShare();
     }
     const expiresAt = quoteForm.public_link_expires_at || null;
     const { error } = await db.rpc("set_public_fit_quote_link", {
@@ -1673,23 +1789,31 @@ export default function FitQuotes() {
       p_enabled: true,
       p_expires_at: expiresAt,
     });
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
     const patch = { share_enabled: true, public_link_revoked_at: null };
     const next = { ...selectedQuote, ...quoteForm, ...patch };
     setSelectedQuote(next);
     setQuoteForm(next);
     await navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
     toast.success("Lien client activé et copié.");
+    return true;
   };
 
   const regenerateShare = async () => {
-    if (!selectedQuote?.id) return;
+    if (!selectedQuote?.id) return false;
+    if (!await ensureClientFinancialIntegrity()) return false;
     const expiresAt = quoteForm.public_link_expires_at || null;
     const { data, error } = await db.rpc("regenerate_public_fit_quote_token", {
       p_quote_id: selectedQuote.id,
       p_expires_at: expiresAt,
     });
-    if (error || !data?.token) return toast.error(error?.message || "Impossible de régénérer le lien.");
+    if (error || !data?.token) {
+      toast.error(error?.message || "Impossible de régénérer le lien.");
+      return false;
+    }
     const patch = {
       share_token: data.token,
       share_enabled: true,
@@ -1702,12 +1826,14 @@ export default function FitQuotes() {
     setQuoteForm(next);
     await navigator.clipboard?.writeText(`${window.location.origin}/devis-fit/${data.token}`).catch(() => undefined);
     toast.success("Nouveau lien privé généré et copié. L’ancien lien est invalide.");
+    return true;
   };
 
   const sendToClient = async () => {
     if (!selectedQuote?.id || isHistoricalVersion) return;
-    if (!quoteForm.share_token) await regenerateShare();
-    else await enableShare();
+    if (!await ensureClientFinancialIntegrity()) return;
+    const linkReady = !quoteForm.share_token ? await regenerateShare() : await enableShare();
+    if (!linkReady) return;
     const sentAt = new Date().toISOString();
     const { error } = await db.rpc("set_fit_commercial_status_v3", {
       p_quote_id: selectedQuote.id,
@@ -1715,7 +1841,21 @@ export default function FitQuotes() {
       p_reason: null,
       p_override: false,
     });
-    if (error) return toast.error(error.message);
+    if (error) {
+      const { error: revokeError } = await db.rpc("set_public_fit_quote_link", {
+        p_quote_id: selectedQuote.id,
+        p_enabled: false,
+        p_expires_at: quoteForm.public_link_expires_at || null,
+      });
+      toast.error(revokeError
+        ? `${error.message} — révocation du lien à vérifier : ${revokeError.message}`
+        : `${error.message} — lien client désactivé.`);
+      if (!revokeError) {
+        setSelectedQuote((current) => ({ ...current, share_enabled: false }));
+        setQuoteForm((current) => ({ ...current, share_enabled: false }));
+      }
+      return;
+    }
     const patch = { status: "sent", commercial_status: "sent", production_status: "sent_to_client", sent_at: sentAt };
     setSelectedQuote((current: any) => ({ ...current, ...patch }));
     setQuoteForm((current: any) => ({ ...current, ...patch }));
@@ -1725,6 +1865,7 @@ export default function FitQuotes() {
 
   const copyShare = async () => {
     if (!shareUrl) return toast.error("Générez d’abord un lien client.");
+    if (!quoteForm.share_enabled) return toast.error("Ce lien client est désactivé. Vérifiez le devis puis réactivez-le avant de le partager.");
     await navigator.clipboard?.writeText(shareUrl);
     toast.success("Lien client copié.");
   };
@@ -1794,6 +1935,7 @@ export default function FitQuotes() {
 
   const downloadPdf = async (kind: "client" | "internal") => {
     if (!selectedQuote?.id) return toast.error("Sélectionnez un devis.");
+    if (kind === "client" && !await ensureClientFinancialIntegrity()) return;
     const quote = { ...selectedQuote, ...quoteForm, ...totals };
     const bytes = kind === "client"
       ? await generateFitClientPdf({ quote, days: calculatedQuoteDays, costLines: calculatedCostLines, hotelLines, flightLines })
@@ -1816,6 +1958,7 @@ export default function FitQuotes() {
 
   const previewClientPdf = async () => {
     if (!selectedQuote?.id) return toast.error("Sélectionnez un devis.");
+    if (!await ensureClientFinancialIntegrity()) return;
     const quote = { ...selectedQuote, ...quoteForm, ...totals };
     const bytes = await generateFitClientPdf({ quote, days: calculatedQuoteDays, costLines: calculatedCostLines, hotelLines, flightLines });
     const blob = new Blob([bytes], { type: "application/pdf" });
@@ -2017,11 +2160,12 @@ export default function FitQuotes() {
                       </div>
                       <p className="text-sm text-muted-foreground">{quoteForm.client_name || "Client FIT"} · {quoteForm.travelers_count} voyageur(s)</p>
                       {isHistoricalVersion && <p className="mt-1 text-sm font-semibold text-amber-700">Version historique en lecture seule</p>}
+                      {!isHistoricalVersion && isFinanciallyImmutable && <p className="mt-1 text-sm font-semibold text-amber-700">Version acceptée : créez une nouvelle version pour modifier son modèle financier.</p>}
                       {quoteForm.duplicated_from_id && <p className="mt-1 text-sm font-semibold text-accent">Copie de {quoteForm.duplicated_from_reference || quotes.find((item) => item.id === quoteForm.duplicated_from_id)?.quote_number || "un devis FIT"}</p>}
                       {quotes.some((item) => item.duplicated_from_id === selectedQuote.id) && <p className="mt-1 text-xs text-muted-foreground">Dupliqué en {quotes.filter((item) => item.duplicated_from_id === selectedQuote.id).map((item) => item.quote_number).join(", ")}</p>}
                     </div>
                     <div className="hidden flex-wrap justify-end gap-2 md:flex">
-                      <Button onClick={saveQuote} disabled={saving || isHistoricalVersion}><Save className="h-4 w-4" /> {saving ? "Enregistrement…" : "Sauver"}</Button>
+                      <Button onClick={saveQuote} disabled={saving || isFinanciallyImmutable}><Save className="h-4 w-4" /> {saving ? "Enregistrement…" : "Sauver"}</Button>
                       <Button variant="secondary" onClick={sendToClient} disabled={isHistoricalVersion}><Send className="h-4 w-4" /> Envoyer au client</Button>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild><Button variant="outline"><MoreHorizontal className="h-4 w-4" /> Actions</Button></DropdownMenuTrigger>
@@ -2068,7 +2212,7 @@ export default function FitQuotes() {
                   </div>
 
                   <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-border bg-background/95 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))] shadow-lg backdrop-blur md:hidden">
-                    <Button className="min-h-11 flex-1" onClick={saveQuote} disabled={saving || isHistoricalVersion}><Save className="h-4 w-4" /> Sauver</Button>
+                    <Button className="min-h-11 flex-1" onClick={saveQuote} disabled={saving || isFinanciallyImmutable}><Save className="h-4 w-4" /> Sauver</Button>
                     <Button className="min-h-11 flex-1" variant="secondary" onClick={sendToClient} disabled={isHistoricalVersion}><Send className="h-4 w-4" /> Envoyer</Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild><Button className="min-h-11" variant="outline" aria-label="Plus d’actions"><MoreHorizontal className="h-5 w-5" /> Plus</Button></DropdownMenuTrigger>
@@ -2097,7 +2241,14 @@ export default function FitQuotes() {
                     </details>
                   )}
 
-                  <FitFinancialPanel quoteId={selectedQuote.id} readOnly={isHistoricalVersion} />
+                  <FitFinancialPanel key={`${selectedQuote.id}-${selectedQuote.financial_revision ?? 0}`} quoteId={selectedQuote.id} readOnly={isFinanciallyImmutable} onStageCost={(line, patch) => {
+                    if (line.source_type === "day_cost") {
+                      const day = quoteDays.find((item) => (item.cost_lines ?? []).some((cost) => cost.local_id === line.source_id));
+                      if (day) updateDayLine(day.local_id, line.source_id, patch);
+                    } else if (line.source_type === "cost_line") updateCostLine(line.source_id, patch);
+                    else if (line.source_type === "hotel") updateHotelLine(line.source_id, patch);
+                    else updateFlightLine(line.source_id, patch);
+                  }} />
                   <FitFinancialClosurePanel quoteId={selectedQuote.id} readOnly={isHistoricalVersion} />
 
                   {shareUrl && (
@@ -2154,17 +2305,53 @@ export default function FitQuotes() {
 
                   <div className="grid gap-3 md:grid-cols-6">
                     <Metric label="Coût terrain" value={fmtMAD(totals.ground_cost_total_mad ?? totals.total_cost_mad)} />
-                    <Metric label="Frais agence Japon" value={fmtMAD(totals.japan_agency_fee_total_mad ?? 0)} />
+                    <Metric label="Handling Japon estimé" value={fmtMAD(totals.japan_agency_fee_total_mad ?? 0)} />
                     <Metric label="Coût projet" value={fmtMAD(totals.project_cost_total_mad ?? totals.total_cost_mad)} />
-                    <Metric label="Marge LeJapon.ma" value={`${fmtMAD(totals.margin_amount_mad)} · ${totals.margin_percent.toFixed(1)}%`} />
+                    <Metric label="Profit brut / marge sur vente" value={`${fmtMAD(totals.margin_amount_mad)} · ${feeIntegrity.grossMarginRate.toFixed(2)}%`} />
                     <Metric label="Vente" value={fmtMAD(totals.total_selling_price_mad)} />
                     <Metric label="Prix/pers." value={fmtMAD(totals.price_per_person_mad)} />
                   </div>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <Metric label="Taux frais agence Japon" value={`${numberValue(quoteForm.japan_agency_fee_rate ?? 10)}%`} />
-                    <Metric label="Taux marge LeJapon.ma" value={`${numberValue(quoteForm.lejapon_margin_rate ?? 20)}%`} />
-                    <Metric label="Scope de marge" value={marginScopes.find((scope) => scope.value === quoteForm.margin_scope)?.label || "Programme uniquement"} />
-                  </div>
+                  {isAutoV2(quoteForm) ? <div className="grid gap-3 md:grid-cols-3">
+                    <Metric label="Taux fournisseur Japon configuré" value={`${feeIntegrity.configuredRate}%`} />
+                    <Metric label="Taux effectivement appliqué" value={`${feeIntegrity.weightedEffectiveRate.toFixed(2)}%`} />
+                    <Metric label="Base soumise aux frais Japon" value={fmtMAD(feeIntegrity.feeBase)} />
+                    <Metric label="Markup LeJapon.ma" value={`${feeIntegrity.markupRate}%`} />
+                    <Metric label="Scope du markup" value={marginScopes.find((scope) => scope.value === quoteForm.margin_scope)?.label || "Programme uniquement"} />
+                  </div> : <p className="text-sm text-muted-foreground">Calcul historique : les frais Japon automatiques et le markup V2 ne s’appliquent pas à ce devis.</p>}
+                  {financialStages && <section className="space-y-3 rounded-lg border p-4" aria-label="États financiers FIT">
+                    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">Estimation et devis fournisseur Japon</h3><Badge variant={financialStages.unclassifiedCosts ? "destructive" : "secondary"}>{financialStages.unclassifiedCosts ? `${financialStages.unclassifiedCosts} coût(s) à qualifier` : "Périmètre qualifié"}</Badge></div>
+                    <p className="text-sm text-muted-foreground">Base gérée par le fournisseur : {fmtMAD(financialStages.estimatedSupplierBaseMad)} · handling estimé : {fmtMAD(financialStages.estimatedJapanHandlingMad)} · total fournisseur estimé : {fmtMAD(financialStages.estimatedSupplierTotalMad)}. Les achats directs LeJapon.ma n'entrent pas dans cette assiette.</p>
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{(["estimated", "quoted", "confirmed", "final"] as const).map((key) => {
+                      const stage = financialStages[key];
+                      const label = { estimated: "Estimation", quoted: "Devis fournisseur", confirmed: "Confirmé", final: "Final" }[key];
+                      return <Card key={key} className="space-y-1 p-3 text-sm"><p className="font-semibold">{label}{!stage.complete ? " — partiel" : ""}</p>
+                        <p>Coût projet : {fmtMAD(stage.projectCostMad)}</p><p>Markup LeJapon : {stage.markupRate}% · référence {fmtMAD(stage.markupReferenceMad)}</p>
+                        <p>Référence théorique (markup sur coût complet) : {fmtMAD(stage.sellingReferenceMad)}</p><p>Prix client actuel inchangé : {fmtMAD(stage.clientSellingPriceMad)}</p>
+                        <p>Profit brut projeté : {fmtMAD(stage.grossProfitMad)}</p><p>Marge sur prix de vente : {stage.marginOnSellingPricePercent.toFixed(2)}%</p>
+                        {!stage.complete && <p className="font-medium text-amber-700">{stage.completedCosts}/{stage.requiredCosts} coûts documentés — ne pas interpréter comme marge complète.</p>}
+                      </Card>;
+                    })}</div>
+                    {!supplierQuote && !isFinanciallyImmutable && <Button variant="outline" type="button" onClick={() => setSupplierQuote({ supplier_id: "", quoted_amount: "", currency: "MAD", exchange_rate_to_mad: 1, handling_mode: "included", handling_rate: null, quoted_at: new Date().toISOString().slice(0, 10), confirmed_amount: null, final_amount: null })}>Saisir le devis global fournisseur</Button>}
+                    {supplierQuote && <fieldset disabled={isFinanciallyImmutable} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div><Label>Fournisseur Japon</Label><Select disabled={isFinanciallyImmutable} value={supplierQuote.supplier_id || "unselected"} onValueChange={(value) => setSupplierQuote((current) => ({ ...current, supplier_id: value }))}><SelectTrigger><SelectValue placeholder="Choisir un fournisseur" /></SelectTrigger><SelectContent><SelectItem value="unselected" disabled>Choisir un fournisseur</SelectItem>{japanSuppliers.map((supplier) => <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>)}</SelectContent></Select></div>
+                      <div><Label>Montant global reçu</Label><Input disabled={isFinanciallyImmutable} type="number" min="0" value={supplierQuote.quoted_amount ?? ""} onChange={(event) => setSupplierQuote((current) => ({ ...current, quoted_amount: event.target.value }))} /></div>
+                      <div><Label>Devise</Label><Select disabled={isFinanciallyImmutable} value={supplierQuote.currency || "MAD"} onValueChange={(value) => setSupplierQuote((current) => ({ ...current, currency: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["MAD", "JPY", "USD", "EUR"].map((currency) => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}</SelectContent></Select></div>
+                      <div><Label>Taux de conversion vers MAD</Label><Input disabled={isFinanciallyImmutable} type="number" min="0.000001" step="any" value={supplierQuote.exchange_rate_to_mad ?? 1} onChange={(event) => setSupplierQuote((current) => ({ ...current, exchange_rate_to_mad: event.target.value }))} /></div>
+                      <div><Label>Handling fournisseur</Label><Select disabled={isFinanciallyImmutable} value={supplierQuote.handling_mode || "included"} onValueChange={(value) => setSupplierQuote((current) => ({ ...current, handling_mode: value, handling_rate: value === "included" ? null : current.handling_rate }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="included">Inclus dans le devis (défaut)</SelectItem><SelectItem value="separate">À ajouter séparément</SelectItem></SelectContent></Select></div>
+                      {supplierQuote.handling_mode === "separate" && <div><Label>Taux handling séparé (%)</Label><Input disabled={isFinanciallyImmutable} type="number" min="0" max="100" value={supplierQuote.handling_rate ?? ""} onChange={(event) => setSupplierQuote((current) => ({ ...current, handling_rate: event.target.value }))} /></div>}
+                      <div><Label>Date du devis</Label><Input disabled={isFinanciallyImmutable} type="date" value={String(supplierQuote.quoted_at || "").slice(0, 10)} onChange={(event) => setSupplierQuote((current) => ({ ...current, quoted_at: event.target.value }))} /></div>
+                      <div><Label>Référence fournisseur</Label><Input disabled={isFinanciallyImmutable} value={supplierQuote.supplier_reference || ""} onChange={(event) => setSupplierQuote((current) => ({ ...current, supplier_reference: event.target.value }))} /></div>
+                      <div className="sm:col-span-2"><Label>Notes internes du devis fournisseur</Label><Textarea disabled={isFinanciallyImmutable} rows={2} value={supplierQuote.notes_internal || ""} onChange={(event) => setSupplierQuote((current) => ({ ...current, notes_internal: event.target.value }))} /></div>
+                      <div><Label>Montant confirmé</Label><Input disabled={isFinanciallyImmutable} type="number" min="0" value={supplierQuote.confirmed_amount ?? ""} onChange={(event) => setSupplierQuote((current) => ({ ...current, confirmed_amount: event.target.value }))} /></div>
+                      {supplierQuote.currency !== "MAD" && <div><Label>Taux confirmé vers MAD</Label><Input disabled={isFinanciallyImmutable} type="number" min="0.000001" step="any" value={supplierQuote.confirmed_exchange_rate_to_mad ?? ""} onChange={(event) => setSupplierQuote((current) => ({ ...current, confirmed_exchange_rate_to_mad: event.target.value }))} /></div>}
+                      <div><Label>Montant final payé</Label><Input disabled={isFinanciallyImmutable} type="number" min="0" value={supplierQuote.final_amount ?? ""} onChange={(event) => setSupplierQuote((current) => ({ ...current, final_amount: event.target.value }))} /></div>
+                      {supplierQuote.currency !== "MAD" && <div><Label>Taux final payé vers MAD</Label><Input disabled={isFinanciallyImmutable} type="number" min="0.000001" step="any" value={supplierQuote.final_exchange_rate_to_mad ?? ""} onChange={(event) => setSupplierQuote((current) => ({ ...current, final_exchange_rate_to_mad: event.target.value }))} /></div>}
+                    </fieldset>}
+                    {financialStages.supplierDifferenceMad != null && <p role={financialStages.significantSupplierVariance ? "alert" : undefined} className={`text-sm font-semibold ${financialStages.significantSupplierVariance ? "text-amber-700" : ""}`}>{financialStages.supplierDifferenceMad > 0 ? `Le devis fournisseur dépasse l'estimation de ${fmtMAD(financialStages.supplierDifferenceMad)}.` : financialStages.supplierDifferenceMad < 0 ? `Le devis fournisseur est inférieur à l'estimation de ${fmtMAD(Math.abs(financialStages.supplierDifferenceMad))}.` : "Le devis fournisseur correspond à l'estimation."} Écart : {financialStages.supplierDifferencePercent?.toFixed(2) ?? "—"} %. Impact projeté sur le coût : {fmtMAD(financialStages.quoted.projectCostMad - financialStages.estimated.projectCostMad)} ; sur le profit : {fmtMAD(financialStages.quoted.grossProfitMad - financialStages.estimated.grossProfitMad)} ; sur la marge : {(financialStages.quoted.marginOnSellingPricePercent - financialStages.estimated.marginOnSellingPricePercent).toFixed(2)} point(s). Le prix client n'est pas modifié automatiquement.</p>}
+                  </section>}
+                  {feeIntegrity.blocked && <div role="alert" className="rounded-lg border border-destructive bg-destructive/10 p-3 text-sm font-semibold text-destructive">
+                    FINANCIAL INTEGRITY ERROR — actions client bloquées : {feeIntegrity.issues.join(" ; ")}.
+                  </div>}
                   {totals.margin_amount_mad < 0 && (
                     <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm font-medium text-destructive">
                       Attention : marge négative. Ce warning est interne et n'apparaît jamais côté client.
@@ -2224,7 +2411,8 @@ export default function FitQuotes() {
                                   <SelectContent>{rhythmOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
                                 </Select>
                               </Field>
-                              <Field label="Override frais Japon %"><Input type="number" placeholder={`${numberValue(quoteForm.japan_agency_fee_rate ?? 10)}% global`} value={day.japan_agency_fee_rate_override ?? ""} onChange={(event) => updateDay(day.local_id, { japan_agency_fee_rate_override: event.target.value === "" ? "" : +event.target.value })} /></Field>
+                              <Field label="Taux Japon spécifique % (vide = héritage)"><Input type="number" min="0" max="100" placeholder={`${numberValue(quoteForm.japan_agency_fee_rate ?? 10)}% global`} value={day.japan_agency_fee_rate_override ?? ""} onChange={(event) => changeDayJapanFee(day, event.target.value)} /></Field>
+                              {day.japan_agency_fee_rate_override === 0 && <div className="md:col-span-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">Exonération 0 % : {day.japan_agency_fee_exemption_reason || "motif manquant — décision historique à revoir"}. <Button type="button" size="sm" variant="outline" onClick={() => changeDayJapanFee(day, "0")}>Justifier / modifier</Button></div>}
                               <div className="md:col-span-4 grid gap-2 md:grid-cols-4">
                                 <Metric label="Coût terrain jour" value={fmtMAD(pricedDay.calculated_ground_cost ?? pricedDay.cost_mad)} compact />
                                 <Metric label="Frais agence Japon" value={fmtMAD(pricedDay.calculated_japan_agency_fee ?? 0)} compact />
@@ -2411,6 +2599,7 @@ function DayCostTable({ day, quote, updateLine, addLine, removeLine }: { day: an
               <Switch checked={Boolean(line.is_client_visible)} onCheckedChange={(checked) => updateLine(day.local_id, line.local_id, { is_client_visible: checked })} />
               <Switch checked={Boolean(line.is_optional)} onCheckedChange={(checked) => updateLine(day.local_id, line.local_id, { is_optional: checked, is_client_visible: checked ? true : line.is_client_visible })} />
               <Button size="icon" variant="ghost" onClick={() => removeLine(day.local_id, line.local_id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+              {isSupplierCostLine(line) && <div className="col-span-full max-w-sm"><CostOwnerSelect value={line.cost_owner} onChange={(value) => updateLine(day.local_id, line.local_id, { cost_owner: value })} /></div>}
             </div>
           ))}
           {isAutoV2(quote) && (
@@ -2421,7 +2610,7 @@ function DayCostTable({ day, quote, updateLine, addLine, removeLine }: { day: an
               <span>-</span>
               <span>-</span>
               <span className="font-semibold">{fmtMAD(day.calculated_japan_agency_fee || 0)}</span>
-              <span>Calculé sur le coût terrain journée</span>
+              <span>Sur {fmtMAD(day.japan_fee_eligible_base_mad || 0)} gérés par le fournisseur Japon</span>
               <span>Oui</span>
               <span>Non</span>
               <span>Non</span>
@@ -2435,6 +2624,17 @@ function DayCostTable({ day, quote, updateLine, addLine, removeLine }: { day: an
       </div>
     </div>
   );
+}
+
+function CostOwnerSelect({ value, onChange }: { value?: string | null; onChange: (value: string) => void }) {
+  return <Select value={value || "unclassified"} onValueChange={onChange}>
+    <SelectTrigger aria-label="Responsable du coût"><SelectValue /></SelectTrigger>
+    <SelectContent>
+      <SelectItem value="unclassified" disabled>À qualifier — historique</SelectItem>
+      <SelectItem value="japan_supplier_managed">Géré par le fournisseur Japon</SelectItem>
+      <SelectItem value="lejapon_direct">Acheté directement par LeJapon.ma</SelectItem>
+    </SelectContent>
+  </Select>;
 }
 
 function HotelLines({ lines, addLine, updateLine, removeLine }: { lines: any[]; addLine: () => void; updateLine: (id: string, patch: any) => void; removeLine: (id: string) => void }) {
@@ -2459,6 +2659,7 @@ function HotelLines({ lines, addLine, updateLine, removeLine }: { lines: any[]; 
             <Textarea rows={2} value={line.public_notes ?? ""} onChange={(event) => updateLine(line.local_id, { public_notes: event.target.value })} />
             <Textarea rows={2} value={line.notes ?? ""} onChange={(event) => updateLine(line.local_id, { notes: event.target.value })} />
             <Button size="icon" variant="ghost" onClick={() => removeLine(line.local_id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+            <div className="col-span-full max-w-sm"><CostOwnerSelect value={line.cost_owner} onChange={(value) => updateLine(line.local_id, { cost_owner: value })} /></div>
           </div>
         ))}
       </div>
@@ -2491,6 +2692,7 @@ function FlightLines({ lines, addLine, updateLine, removeLine }: { lines: any[];
             <Input value={line.public_notes ?? ""} onChange={(event) => updateLine(line.local_id, { public_notes: event.target.value })} />
             <Input value={line.notes ?? ""} onChange={(event) => updateLine(line.local_id, { notes: event.target.value })} />
             <Button size="icon" variant="ghost" onClick={() => removeLine(line.local_id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+            <div className="col-span-full max-w-sm"><CostOwnerSelect value={line.cost_owner} onChange={(value) => updateLine(line.local_id, { cost_owner: value })} /></div>
           </div>
         ))}
       </div>
@@ -2516,6 +2718,7 @@ function SpecialLines({ lines, addLine, updateLine, removeLine }: { lines: any[]
             <Input value={line.notes ?? ""} onChange={(event) => updateLine(line.local_id, { notes: event.target.value })} />
             <Switch checked={line.included_in_calculation !== false} onCheckedChange={(checked) => updateLine(line.local_id, { included_in_calculation: checked })} />
             <Button size="icon" variant="ghost" onClick={() => removeLine(line.local_id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+            <div className="col-span-full max-w-sm"><CostOwnerSelect value={line.cost_owner} onChange={(value) => updateLine(line.local_id, { cost_owner: value })} /></div>
           </div>
         ))}
       </div>
@@ -2593,8 +2796,8 @@ function QuoteForm({ form, setForm, clients, compact = false }: { form: any; set
               </Select>
             </Field>
             <Field label="Frais agence Japon %"><Input type="number" value={form.japan_agency_fee_rate ?? 10} onChange={(event) => update("japan_agency_fee_rate", +event.target.value)} /></Field>
-            <Field label="Marge LeJapon.ma %"><Input type="number" value={form.lejapon_margin_rate ?? 20} onChange={(event) => update("lejapon_margin_rate", +event.target.value)} /></Field>
-            <Field label="Scope marge">
+            <Field label="Markup LeJapon.ma %"><Input type="number" value={form.lejapon_margin_rate ?? 20} onChange={(event) => update("lejapon_margin_rate", +event.target.value)} /></Field>
+            <Field label="Assiette du markup">
               <Select value={form.margin_scope || "program_only"} onValueChange={(value) => update("margin_scope", value)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{marginScopes.map((scope) => <SelectItem key={scope.value} value={scope.value}>{scope.label}</SelectItem>)}</SelectContent>
@@ -2730,7 +2933,7 @@ function TemplateForm({ form, setForm }: { form: any; setForm: (form: any) => vo
       <Field label="Guide requis"><Switch checked={Boolean(form.guide_required)} onCheckedChange={(checked) => update("guide_required", checked)} /></Field>
       <Field label="Nuit hôtel"><Switch checked={Boolean(form.hotel_night)} onCheckedChange={(checked) => update("hotel_night", checked)} /></Field>
       <Field label="Actif"><Switch checked={Boolean(form.is_active)} onCheckedChange={(checked) => update("is_active", checked)} /></Field>
-      <Field label="Marge %"><Input type="number" value={form.margin_percent ?? 20} onChange={(event) => update("margin_percent", +event.target.value)} /></Field>
+      <Field label="Markup %"><Input type="number" value={form.margin_percent ?? 20} onChange={(event) => update("margin_percent", +event.target.value)} /></Field>
       <div className="md:col-span-4 grid gap-2 sm:grid-cols-5">
         <Metric label="Coût terrain jour" value={fmtMAD(pricing.groundCost)} compact />
         <Metric label="Frais agence Japon" value={fmtMAD(pricing.japanFee)} compact />
