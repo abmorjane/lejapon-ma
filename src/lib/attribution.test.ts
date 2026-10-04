@@ -48,6 +48,35 @@ describe("marketing attribution", () => {
     expect(result.last_touch.oppref).toBeUndefined();
   });
 
+  it("keeps opaque ChatGPT IDs when the same campaign refreshes after URL cleanup", () => {
+    const campaign = "utm_source=chatgpt&utm_medium=paid&utm_campaign=voyage_japon_maroc&utm_content=test-ad";
+    capture(`https://www.lejapon.ma/voyages?${campaign}&click_id=exact%2Fclick&chatgpt_campaign_id=campaign-1&chatgpt_ad_group_id=group-1&chatgpt_ad_account_id=account-1`);
+    const refreshed = capture(`https://www.lejapon.ma/voyages?${campaign}`, "", "2026-09-28T11:00:00.000Z");
+    expect(refreshed.last_touch).toMatchObject({
+      click_id: "exact%2Fclick", openai_click_ref: "exact%2Fclick",
+      chatgpt_campaign_id: "campaign-1", chatgpt_ad_group_id: "group-1", chatgpt_ad_account_id: "account-1",
+    });
+  });
+
+  it("replaces an explicit click ID without silently changing the first touch", () => {
+    const campaign = "utm_source=chatgpt&utm_medium=paid&utm_campaign=voyage_japon_maroc";
+    const initial = capture(`https://www.lejapon.ma/voyages?${campaign}&click_id=first-click`);
+    const next = capture(`https://www.lejapon.ma/voyages?${campaign}&click_id=second-click`, "", "2026-09-28T11:00:00.000Z");
+    expect(next.first_touch.click_id).toBe(initial.first_touch.click_id);
+    expect(next.last_touch.click_id).toBe("second-click");
+  });
+
+  it("never carries ChatGPT click IDs to a different source or campaign", () => {
+    capture("https://www.lejapon.ma/voyages?utm_source=chatgpt&utm_campaign=autumn&click_id=chatgpt-click&chatgpt_campaign_id=old-campaign");
+    const google = capture("https://www.lejapon.ma/voyages?utm_source=google&utm_campaign=autumn");
+    expect(google.last_touch.source_normalized).toBe("google");
+    expect(google.last_touch.click_id).toBeUndefined();
+    expect(google.last_touch.chatgpt_campaign_id).toBeUndefined();
+    const otherCampaign = capture("https://www.lejapon.ma/voyages?utm_source=chatgpt&utm_campaign=sakura");
+    expect(otherCampaign.last_touch.click_id).toBeUndefined();
+    expect(otherCampaign.last_touch.chatgpt_campaign_id).toBeUndefined();
+  });
+
   it("creates first touch once and updates last touch for a new real acquisition", () => {
     capture("https://www.lejapon.ma/voyages?utm_source=ig&utm_campaign=sakura");
     const result = capture("https://www.lejapon.ma/reserver?utm_source=google&utm_medium=cpc&utm_campaign=brand", "https://www.google.com/", "2026-09-28T11:00:00.000Z");
