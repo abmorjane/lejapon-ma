@@ -85,6 +85,7 @@ La clé locale `lejapon.marketing_attribution.v1` ne contient aucune PII. Elle c
 
 - First-touch : créé une seule fois ; direct, reload et navigation interne ne l’écrasent jamais.
 - Last-touch : mis à jour uniquement lorsqu’une nouvelle acquisition réelle est détectée.
+- Après nettoyage de l'URL, une nouvelle capture avec la même source et les mêmes UTMs conserve les identifiants opaques précédents absents de l'URL. Une nouvelle source/campagne ou un nouveau clic explicite ne réutilise pas les anciens identifiants.
 - Normalisation : ChatGPT/OpenAI → `chatgpt_paid`, Instagram → `instagram`, Facebook → `facebook`, Google → `google`, absence de signal → `direct`, autre referrer → `other`.
 
 À l’insert, ces deux objets sont copiés dans `bookings.marketing_first_touch` et `bookings.marketing_last_touch`. La migration est additive, limite la taille, la forme, les clés et les sources autorisées. Le JSONB est préféré à une table 1:1 afin de garder l’écriture atomique dans le flux public existant et de ne créer ni nouveau endpoint PostgREST ni nouvelle politique RLS.

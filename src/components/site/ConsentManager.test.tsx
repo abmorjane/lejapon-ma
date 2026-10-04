@@ -52,6 +52,16 @@ describe("public consent UI", () => {
     expect(accept.closest("aside")).toHaveAttribute("dir", "rtl");
   });
 
+  it("renders the English choice and preferences without changing categories", async () => {
+    setLang("en");
+    show("/en/faq");
+    expect(await screen.findByRole("button", { name: "Accept all" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reject all" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Customize" }));
+    expect(await screen.findByRole("switch", { name: "Audience measurement" })).toBeVisible();
+    expect(screen.getByRole("switch", { name: "Marketing" })).toBeVisible();
+  });
+
   it("leaves consent unknown when the preferences dialog closes without saving", async () => {
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Personnaliser" }));

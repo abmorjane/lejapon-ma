@@ -209,6 +209,27 @@ export const captureAttribution = (input: CaptureAttributionInput): MarketingAtt
   if (existing && isDirect) return existing;
   if (existing && !hasAcquisitionSignal) return existing;
 
+  // Opaque IDs are removed from the visible URL after the first capture. A
+  // refresh with the same campaign must not erase them, but another campaign
+  // (or another source) must never inherit an unrelated click.
+  const previous = existing?.last_touch;
+  const sameCampaign = previous
+    && previous.source_normalized === touch.source_normalized
+    && previous.source_original.toLowerCase() === touch.source_original.toLowerCase()
+    && !touch.click_id && !touch.oppref
+    && (["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "fbclid", "gclid"] as const)
+      .every((key) => previous[key] === touch[key])
+    && (["chatgpt_campaign_id", "chatgpt_ad_group_id", "chatgpt_ad_account_id"] as const)
+      .every((key) => touch[key] === undefined || previous[key] === touch[key]);
+  if (sameCampaign) {
+    for (const key of ["oppref", "click_id", "chatgpt_campaign_id", "chatgpt_ad_group_id", "chatgpt_ad_account_id"] as const) {
+      if (touch[key] === undefined && previous[key] !== undefined) {
+        Object.assign(touch, { [key]: previous[key] });
+      }
+    }
+    touch.openai_click_ref = touch.oppref ?? touch.click_id;
+  }
+
   const next: MarketingAttribution = existing
     ? { ...existing, last_touch: touch }
     : { version: 1, first_touch: touch, last_touch: touch };
